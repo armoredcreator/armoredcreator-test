@@ -218,6 +218,9 @@ class TelegramSource:
                     continue
                 yield (int(getattr(message, "id", 0) or 0), int(topic_id), topic_name, message, original_url)
 
+    def mark_ingested(self, telegram_message_id: str) -> None:
+        self._seen.add(int(telegram_message_id))
+
     def fetch_next(self) -> SyncMessage | None:
         return asyncio.run(self.fetch_next_async())
 
