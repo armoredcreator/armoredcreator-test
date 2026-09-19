@@ -177,13 +177,17 @@ class TelegramSource:
     async def fetch_next_async(self) -> SyncMessage | None:
         source = os.getenv("ARMORED_SYNC_SOURCE", "-1003788989075")
         source_id = os.getenv("ARMORED_SYNC_SOURCE_ID", source)
+        # Telethon treats a numeric source passed as a string as an entity
+        # username and fails to resolve it. Preserve usernames, but normalize
+        # Telegram numeric IDs to int before issuing API requests.
+        source_ref = int(source) if str(source).lstrip("-").isdigit() else source
 
         if self._topic_iterator is None:
             await self.reader.connect()
-            topics = await self._discover_topics(source)
+            topics = await self._discover_topics(source_ref)
             if not topics:
                 raise RuntimeError(f"Nenhum tópico de fórum encontrado na fonte Telegram {source}.")
-            self._topic_iterator = self._candidate_iterator(source, topics)
+            self._topic_iterator = self._candidate_iterator(source_ref, topics)
 
         async for candidate in self._topic_iterator:
             message_id, topic_id, topic_name, message, original_url = candidate
