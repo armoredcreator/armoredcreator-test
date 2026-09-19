@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -64,11 +65,22 @@ class SyncService:
             return int(row["id"])
 
         suffix = source.suffix or ".mp4"
-        partial = self.storage.database / f"{telegram_message_id}{suffix}.part"
         digest = self._sha256(source)
         item_id = None
+        partial: Path | None = None
         try:
-            item_id = self.db.create_item(telegram_message_id)
+            try:
+                item_id = self.db.create_item(telegram_message_id)
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE constraint failed: items.telegram_message_id" not in str(exc):
+                    raise
+                row = self.db.conn.execute(
+                    "SELECT id FROM items WHERE telegram_message_id=?",
+                    (telegram_message_id,),
+                ).fetchone()
+                if row is None:
+                    raise
+                return int(row["id"])
             original = self.storage.original(item_id, suffix)
             partial = original.with_suffix(original.suffix + ".part")
             shutil.copy2(source, partial)
@@ -81,5 +93,6 @@ class SyncService:
             self.db.set_original(item_id, original, original.stat().st_size, digest)
             return item_id
         except Exception:
-            partial.unlink(missing_ok=True)
+            if partial is not None:
+                partial.unlink(missing_ok=True)
             raise
