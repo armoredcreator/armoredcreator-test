@@ -16,7 +16,7 @@ class Recovery:
         if self.db.get(item_id).state == State.PUBLISHED:
             self.pipeline.cleanup(item_id)
             return
-        if not self.db.claim(item_id, worker_id):
+        if not self.db.claim(item_id, worker_id, self.pipeline.lease_seconds):
             raise RuntimeError("item-already-claimed")
         try:
             self._reconcile_claimed(item_id, worker_id)
@@ -25,6 +25,8 @@ class Recovery:
 
     def _reconcile_claimed(self, item_id: int, worker_id: str) -> None:
         item = self.db.get(item_id)
+        if not self.db.renew_claim(item_id, worker_id):
+            raise RuntimeError("claim-lost")
 
         if item.state == State.PUBLISHED:
             self.pipeline.cleanup(item_id)
@@ -75,4 +77,4 @@ class Recovery:
         else:
             self.db.transition(item_id, State.VISION, "rebuild-vision-from-original")
 
-        self.pipeline.run_claimed(item_id)
+        self.pipeline.run_claimed(item_id, worker_id)
