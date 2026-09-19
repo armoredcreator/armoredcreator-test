@@ -17,6 +17,10 @@ class Database:
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY,
             telegram_message_id TEXT NOT NULL UNIQUE,
+            source_id TEXT NOT NULL DEFAULT 'telegram',
+            topic_id INTEGER,
+            topic_name TEXT,
+            original_url TEXT,
             state TEXT NOT NULL,
             original_path TEXT NOT NULL,
             working_path TEXT,
@@ -45,11 +49,24 @@ class Database:
         );
         """)
         self.conn.commit()
+        self._migrate_columns()
 
-    def create_item(self, telegram_message_id: str, original_path: Path) -> int:
+    def _migrate_columns(self) -> None:
+        existing = {r[1] for r in self.conn.execute('PRAGMA table_info(items)').fetchall()}
+        for name, sql in [
+            ('source_id', "ALTER TABLE items ADD COLUMN source_id TEXT NOT NULL DEFAULT 'telegram'"),
+            ('topic_id', "ALTER TABLE items ADD COLUMN topic_id INTEGER"),
+            ('topic_name', "ALTER TABLE items ADD COLUMN topic_name TEXT"),
+            ('original_url', "ALTER TABLE items ADD COLUMN original_url TEXT"),
+        ]:
+            if name not in existing:
+                self.conn.execute(sql)
+        self.conn.commit()
+
+    def create_item(self, telegram_message_id: str, original_path: Path, source_id: str = 'telegram', topic_id: int | None = None, topic_name: str | None = None, original_url: str | None = None) -> int:
         cur = self.conn.execute(
-            "INSERT INTO items (telegram_message_id,state,original_path) VALUES (?,?,?)",
-            (telegram_message_id, State.RECEIVED.value, str(original_path)),
+            "INSERT INTO items (telegram_message_id,source_id,topic_id,topic_name,original_url,state,original_path) VALUES (?,?,?,?,?,?,?)",
+            (telegram_message_id, source_id, topic_id, topic_name, original_url, State.RECEIVED.value, str(original_path)),
         )
         item_id = int(cur.lastrowid)
         self.conn.execute(
