@@ -149,11 +149,14 @@ class Database:
     def publication(self, item_id: int):
         return self.conn.execute("SELECT * FROM publications WHERE item_id=?", (item_id,)).fetchone()
 
-    def claim(self, item_id: int, worker_id: str) -> bool:
+    def claim(self, item_id: int, worker_id: str, lease_seconds: int = 300) -> bool:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
         cur = self.conn.execute(
             "UPDATE items SET claimed_by=?, claimed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
-            "WHERE id=? AND state != ? AND (claimed_by IS NULL OR claimed_by=?)",
-            (worker_id, item_id, State.PUBLISHED.value, worker_id),
+            "WHERE id=? AND state != ? AND (claimed_by IS NULL OR claimed_by=? "
+            "OR claimed_at IS NULL OR claimed_at < datetime('now', ?))",
+            (worker_id, item_id, State.PUBLISHED.value, worker_id, "-"+str(lease_seconds)+" seconds"),
         )
         self.conn.commit()
         return cur.rowcount == 1
