@@ -69,9 +69,11 @@ class RecoveryTests(unittest.TestCase):
     def test_recovery_rebuilds_working_when_result_missing(self):
         Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub).run(self.item)
         row = self.db.get(self.item)
-        # Simulate a crash before publication with the durable result removed.
-        row.result_path.unlink()
+        # Simulate a crash before publication after the result disappears.
         self.db.transition(self.item, State.STUDIO, "test-result-missing")
+        result = self.storage.result(self.item, row.affiliate_name or "recover-final")
+        result.unlink(missing_ok=True)
+        self.db.set_result(self.item, result)
         Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item)
         self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
         self.assertEqual(self.pub.count, 1)
