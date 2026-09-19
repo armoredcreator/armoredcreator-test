@@ -1,8 +1,10 @@
 from __future__ import annotations
+
 from .database import Database
 from .models import PublicationCheck, State
 from .services import Publisher, StudioService, VisionService
 from .storage import Storage
+
 
 class Pipeline:
     def __init__(self, db: Database, storage: Storage, vision: VisionService, studio: StudioService, publisher: Publisher):
@@ -10,6 +12,9 @@ class Pipeline:
         self.vision, self.studio, self.publisher = vision, studio, publisher
 
     def run(self, item_id: int, worker_id: str = "pipeline") -> None:
+        if self.db.get(item_id).state == State.PUBLISHED:
+            self.cleanup(item_id)
+            return
         if not self.db.claim(item_id, worker_id):
             raise RuntimeError("item-already-claimed")
         try:
@@ -25,6 +30,9 @@ class Pipeline:
 
         try:
             if not self.db.original_intact(item_id):
+                original = item.original_path
+                if not original.exists():
+                    raise FileNotFoundError("immutable-original-missing")
                 raise IOError("immutable-original-integrity-failed")
 
             if item.state in (State.RECEIVED, State.RECOVERY):
