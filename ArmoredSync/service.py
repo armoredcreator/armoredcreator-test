@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,7 @@ class SyncMessage:
 
 
 class LocalSource:
-    """Deterministic source used by the isolated lab and E2E tests."""
+    """Deterministic offline source used by the lab and E2E tests."""
 
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -35,29 +36,72 @@ class LocalSource:
             if message_id in self._seen:
                 continue
             self._seen.add(message_id)
-            return SyncMessage(path, message_id, "local", original_url=os.getenv("ARMORED_TEST_ORIGINAL_URL"))
+            return SyncMessage(
+                path,
+                message_id,
+                "local",
+                original_url=os.getenv("ARMORED_TEST_ORIGINAL_URL"),
+            )
         return None
 
 
 class TelegramSource:
-    """Optional real Telegram source. Imported lazily so the lab stays offline-safe."""
+    """Real Telegram video source.
 
-    def __init__(self, reader: Any):
+    It downloads exactly one candidate at a time into the isolated workspace
+    and returns a SyncMessage. SQLite/SyncService remains the canonical ingest
+    boundary. No absolute project path is embedded in the source.
+    """
+
+    URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
+
+    def __init__(self, root: Path, reader: Any):
+        self.root = Path(root)
         self.reader = reader
         self._iterator = None
+        self._seen: set[int] = set()
 
     async def fetch_next_async(self) -> SyncMessage | None:
+        source = os.getenv("ARMORED_SYNC_SOURCE")
+        if not source:
+            raise RuntimeError("ARMORED_SYNC_SOURCE não configurado")
+
         if self._iterator is None:
-            source = os.getenv("ARMORED_SYNC_SOURCE")
-            if not source:
-                raise RuntimeError("ARMORED_SYNC_SOURCE não configurado")
+            await self.reader.connect()
             self._iterator = self.reader.get_messages(source, limit=None)
+
         async for message in self._iterator:
+            message_id = int(getattr(message, "id", 0) or 0)
+            if not message_id or message_id in self._seen:
+                continue
             if not getattr(message, "video", None):
                 continue
-            raise RuntimeError(
-                "TelegramSource precisa de um downloader explícito para preservar "
-                "o contrato imutável do Sync; use LocalSource no laboratório."
+
+            self._seen.add(message_id)
+            target = self.root / "storage" / "sync" / f"{message_id}.mp4"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists() or target.stat().st_size <= 0:
+                await message.download_media(file=str(target))
+            if not target.exists() or target.stat().st_size <= 0:
+                raise RuntimeError(f"Telegram não baixou o vídeo {message_id}")
+
+            text = str(getattr(message, "message", "") or "")
+            urls = self.URL_RE.findall(text)
+            original_url = urls[0] if urls else None
+
+            topic_id = getattr(message, "reply_to_top_id", None)
+            if topic_id is None:
+                reply = getattr(message, "reply_to", None)
+                topic_id = getattr(reply, "reply_to_top_id", None) if reply else None
+
+            topic_name = os.getenv("ARMORED_SYNC_TOPIC_NAME")
+            return SyncMessage(
+                target,
+                str(message_id),
+                "telegram",
+                int(topic_id) if topic_id else None,
+                topic_name,
+                original_url,
             )
         return None
 
@@ -66,7 +110,7 @@ class TelegramSource:
 
 
 class ArmoredSync:
-    """Fonte + ingestão canônica. SQLite continua sendo a fonte de verdade."""
+    """Source + canonical ingestion boundary."""
 
     def __init__(self, sync: SyncService, source: Any):
         self.sync = sync
