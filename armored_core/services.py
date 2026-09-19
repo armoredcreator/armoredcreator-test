@@ -36,7 +36,7 @@ class SyncService:
     def __init__(self, db: Database, storage: Storage) -> None:
         self.db, self.storage = db, storage
 
-    def ingest(self, source: Path, telegram_message_id: str) -> int:
+    def ingest(self, source: Path, telegram_message_id: str, source_id: str = 'telegram', topic_id: int | None = None, topic_name: str | None = None, original_url: str | None = None) -> int:
         source = source.resolve()
         if not source.is_file():
             raise FileNotFoundError(source)
@@ -52,6 +52,7 @@ class SyncService:
         item_id = self.db.create_item(
             telegram_message_id,
             self.storage.original(item_id=0, suffix=suffix),
+            source_id=source_id, topic_id=topic_id, topic_name=topic_name, original_url=original_url,
         )
         original = self.storage.original(item_id, suffix)
 
