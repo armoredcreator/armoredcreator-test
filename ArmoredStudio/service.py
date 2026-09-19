@@ -24,8 +24,13 @@ class ArmoredStudio:
         if not source.exists():
             raise FileNotFoundError(source)
 
-        output = self.root / "videos" / str(item.id) / "studio.mp4"
-        output.parent.mkdir(parents=True, exist_ok=True)
+        workspace = self.root / "videos" / str(item.id)
+        workspace.mkdir(parents=True, exist_ok=True)
+        working = workspace / f"{item.id}_.mp4"
+        output = workspace / "studio.mp4"
+        if source != working:
+            shutil.copy2(source, working)
+        source = working
 
         ffmpeg = os.getenv("ARMORED_FFMPEG", "ffmpeg")
         if shutil.which(ffmpeg):
@@ -45,7 +50,7 @@ class ArmoredStudio:
 
         if not output.exists() or output.stat().st_size <= 0:
             raise RuntimeError("Studio produziu uma saída inválida")
-        return StudioResult(source, output)
+        return StudioResult(working, output)
 
 
 def build(root: Path, **_kwargs):
