@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
+import os
 
 from .database import Database
 from .models import State
@@ -31,11 +32,19 @@ class Coordinator:
             from ArmoredHub.service import ArmoredHub
             from ArmoredStudio.service import ArmoredStudio
             from ArmoredVision.service import ArmoredVision
-            from ArmoredSync.service import ArmoredSync, LocalSource
+            from ArmoredSync.service import LocalSource, TelegramReader, TelegramSource
             vision=ArmoredVision()
             studio=ArmoredStudio(storage.root)
             publisher=ArmoredHub(storage.root)
-            source=LocalSource(storage.root/"input")
+            if os.getenv("ARMORED_REAL_TELEGRAM", "0") == "1":
+                api_id = os.getenv("TELEGRAM_API_ID")
+                api_hash = os.getenv("TELEGRAM_API_HASH")
+                if not api_id or not api_hash:
+                    raise RuntimeError("TELEGRAM_API_ID e TELEGRAM_API_HASH são obrigatórios")
+                reader = TelegramReader(storage.root, int(api_id), api_hash)
+                source = TelegramSource(storage.root, reader)
+            else:
+                source=LocalSource(storage.root/"input")
             return cls(db,storage,vision,studio,publisher,source)
         return cls(db,storage,bindings.vision,bindings.studio,bindings.publisher,bindings.source)
 
