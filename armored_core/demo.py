@@ -2,6 +2,7 @@ from pathlib import Path
 import tempfile
 from .database import Database
 from .pipeline import Pipeline
+from .models import PublicationCheck
 from .services import PublicationResult, StudioResult, SyncService, VisionResult
 from .storage import Storage
 
@@ -24,8 +25,8 @@ class DemoPublisher:
     def __init__(self):
         self.published = {}
 
-    def is_published(self, item):
-        return item.item_id in self.published
+    def check_publication(self, item):
+        return PublicationCheck.CONFIRMED if item.item_id in self.published else PublicationCheck.ABSENT
 
     def publish(self, item):
         mid = f"telegram-{item.item_id}"
