@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import shutil
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -60,10 +59,7 @@ class SyncService:
         if not source.is_file():
             raise FileNotFoundError(source)
 
-        row = self.db.conn.execute(
-            "SELECT id FROM items WHERE telegram_message_id=?",
-            (telegram_message_id,),
-        ).fetchone()
+        row = self.db.conn.execute("SELECT id FROM items WHERE telegram_message_id=?", (telegram_message_id,)).fetchone()
         if row:
             return int(row["id"])
 
@@ -72,7 +68,7 @@ class SyncService:
         digest = self._sha256(source)
         item_id = None
         try:
-            item_id = self.db.create_item(telegram_message_id, self.storage.database)
+            item_id = self.db.create_item(telegram_message_id)
             original = self.storage.original(item_id, suffix)
             partial = original.with_suffix(original.suffix + ".part")
             shutil.copy2(source, partial)
@@ -82,22 +78,8 @@ class SyncService:
                 partial.unlink(missing_ok=True)
                 raise IOError("original-copy-verification-failed")
             partial.replace(original)
-            self.db.conn.execute(
-                "UPDATE items SET original_path=?, original_size=?, original_sha256=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (str(original), original.stat().st_size, digest, item_id),
-            )
-            self.db.conn.commit()
+            self.db.set_original(item_id, original, original.stat().st_size, digest)
             return item_id
-        except sqlite3.IntegrityError:
-            if partial.exists():
-                partial.unlink(missing_ok=True)
-            row = self.db.conn.execute(
-                "SELECT id FROM items WHERE telegram_message_id=?",
-                (telegram_message_id,),
-            ).fetchone()
-            if row:
-                return int(row["id"])
-            raise
         except Exception:
             partial.unlink(missing_ok=True)
             raise
