@@ -57,9 +57,12 @@ class IntegrityAndConcurrencyTests(unittest.TestCase):
             ids=[]; errors=[]
             def run():
                 db = Database(storage.database / "db.sqlite")
-                try: ids.append(SyncService(db, storage).ingest(src, "same-message"))
-                finally: db.close()
-                except Exception as exc: errors.append(exc)
+                try:
+                    ids.append(SyncService(db, storage).ingest(src, "same-message"))
+                except Exception as exc:
+                    errors.append(exc)
+                finally:
+                    db.close()
             a=threading.Thread(target=run); b=threading.Thread(target=run)
             a.start(); b.start(); a.join(); b.join()
             self.assertFalse(errors, errors)
