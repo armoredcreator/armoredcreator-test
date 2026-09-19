@@ -63,6 +63,48 @@ class Database:
                 self.conn.execute(sql)
         self.conn.commit()
 
+    def reserve_item(
+        self,
+        telegram_message_id: str,
+        source_id: str = 'telegram',
+        topic_id: int | None = None,
+        topic_name: str | None = None,
+        original_url: str | None = None,
+    ) -> int:
+        """Reserve the canonical item identity without creating any file.
+
+        The transaction remains open until the caller has materialized the
+        original directly into storage/videos/{item_id}/.
+        """
+        cur = self.conn.execute(
+            "INSERT INTO items (telegram_message_id,source_id,topic_id,topic_name,original_url,state,original_path) VALUES (?,?,?,?,?,?,?)",
+            (
+                telegram_message_id,
+                source_id,
+                topic_id,
+                topic_name,
+                original_url,
+                State.RECEIVED.value,
+                "",
+            ),
+        )
+        item_id = int(cur.lastrowid)
+        self.conn.execute(
+            "INSERT INTO state_events (item_id,new_state,reason) VALUES (?,?,?)",
+            (item_id, State.RECEIVED.value, "ingest-reserved"),
+        )
+        return item_id
+
+    def finalize_original_path(self, item_id: int, path: Path) -> None:
+        self.conn.execute(
+            "UPDATE items SET original_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (str(path), item_id),
+        )
+        self.conn.commit()
+
+    def rollback_ingest(self) -> None:
+        self.conn.rollback()
+
     def create_item(self, telegram_message_id: str, original_path: Path, source_id: str = 'telegram', topic_id: int | None = None, topic_name: str | None = None, original_url: str | None = None) -> int:
         cur = self.conn.execute(
             "INSERT INTO items (telegram_message_id,source_id,topic_id,topic_name,original_url,state,original_path) VALUES (?,?,?,?,?,?,?)",
