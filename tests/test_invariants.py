@@ -64,6 +64,31 @@ class InvariantTests(unittest.TestCase):
             self.assertEqual(a, b)
             db.close()
 
+    def test_telegram_style_materializer_writes_only_canonical_workspace(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            st = Storage(root)
+            db = Database(st.database / "db.sqlite")
+            sync = SyncService(db, st)
+
+            def materialize(target):
+                target.write_bytes(b"TELEGRAM-BYTES")
+
+            from armored_core.services import IngestMessage
+            i = sync.ingest_message(IngestMessage(
+                telegram_message_id="1383",
+                source_id="telegram",
+                original_url="https://shopee.com.br/example",
+                materialize=materialize,
+            ))
+            item = db.get(i)
+            self.assertEqual(item.original_path, st.original(i))
+            self.assertTrue(item.original_path.is_file())
+            self.assertEqual(item.original_path.read_bytes(), b"TELEGRAM-BYTES")
+            self.assertFalse((root / "storage" / "sync").exists())
+            self.assertEqual([p.name for p in item.workspace.iterdir()], [f"{i}_linkoriginal.mp4"])
+            db.close()
+
     def test_missing_original_blocks_processing(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
