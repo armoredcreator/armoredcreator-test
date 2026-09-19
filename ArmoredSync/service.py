@@ -85,9 +85,8 @@ class TelegramSource:
         self._seen: set[int] = set()
 
     async def fetch_next_async(self) -> SyncMessage | None:
-        source = os.getenv("ARMORED_SYNC_SOURCE")
-        if not source:
-            raise RuntimeError("ARMORED_SYNC_SOURCE não configurado")
+        source = os.getenv("ARMORED_SYNC_SOURCE", "-1003788989075")
+        source_id = os.getenv("ARMORED_SYNC_SOURCE_ID", source)
 
         if self._iterator is None:
             await self.reader.connect()
@@ -121,9 +120,9 @@ class TelegramSource:
             return SyncMessage(
                 target,
                 str(message_id),
-                "telegram",
+                source_id,
                 int(topic_id) if topic_id else None,
-                topic_name,
+                topic_name or "✨ GRUPO GRÁTIS DESAFIO 30 DIAS - SHOPEE VÍDEOS",
                 original_url,
             )
         return None
