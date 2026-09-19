@@ -1,7 +1,7 @@
 import tempfile, unittest
 from pathlib import Path
 from armored_core.database import Database
-from armored_core.models import State
+from armored_core.models import PublicationCheck, State
 from armored_core.pipeline import Pipeline
 from armored_core.recovery import Recovery
 from armored_core.services import PublicationResult, StudioResult, SyncService, VisionResult
@@ -17,7 +17,7 @@ class S:
 
 class PublishThenCrash:
     def __init__(self): self.published=set(); self.calls=0
-    def is_published(self,item): return item.item_id in self.published
+    def check_publication(self,item): return PublicationCheck.CONFIRMED if item.item_id in self.published else PublicationCheck.ABSENT
     def publish(self,item):
         self.calls += 1
         self.published.add(item.item_id)
