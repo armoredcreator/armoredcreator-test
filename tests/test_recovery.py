@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from armored_core.database import Database
-from armored_core.models import State
+from armored_core.models import PublicationCheck, State
 from armored_core.pipeline import Pipeline
 from armored_core.recovery import Recovery
 from armored_core.services import PublicationResult, StudioResult, SyncService, VisionResult
