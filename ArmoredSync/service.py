@@ -35,7 +35,7 @@ class LocalSource:
             if message_id in self._seen:
                 continue
             self._seen.add(message_id)
-            return SyncMessage(path, message_id, "local")
+            return SyncMessage(path, message_id, "local", original_url=os.getenv("ARMORED_TEST_ORIGINAL_URL"))
         return None
 
 
