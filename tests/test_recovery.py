@@ -105,9 +105,9 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
         self.assertTrue(working.exists())
         self.assertTrue(result.exists())
-        working.unlink()
-        result.unlink()
         Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item)
+        self.assertFalse(working.exists())
+        self.assertFalse(result.exists())
         self.assertTrue(self.db.get(self.item).original_path.exists())
 
     def test_unknown_publication_never_publishes(self):
