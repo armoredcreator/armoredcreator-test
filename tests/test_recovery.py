@@ -73,10 +73,19 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual([p.name for p in row.workspace.iterdir()], [row.original_path.name])
 
     def test_recovery_rebuilds_working_when_result_missing(self):
-        Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub).run(self.item)
-        row = self.db.get(self.item)
-        row.result_path.unlink(missing_ok=True)
-        self.db.transition(self.item, State.STUDIO, "test-result-missing")
+        p = Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub)
+        self.db.transition(self.item, State.VISION, "test-recovery")
+        v = Vision().identify(self.db.get(self.item))
+        self.db.set_vision(self.item, v.affiliate_name, v.affiliate_url)
+        self.db.transition(self.item, State.STUDIO, "test-recovery")
+        w = self.storage.working(self.item)
+        w.write_bytes(b"VIDEO")
+        self.db.set_working(self.item, w)
+        r = self.storage.result(self.item, "recover-final")
+        r.write_bytes(b"VIDEO")
+        self.db.set_result(self.item, r)
+        self.db.transition(self.item, State.PUBLISHING, "test-recovery")
+        r.unlink()
         Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item)
         self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
         self.assertEqual(self.pub.count, 1)
@@ -135,6 +144,7 @@ class RecoveryTests(unittest.TestCase):
         Recovery(self.db, self.storage, Vision(), Studio(self.storage), crashing).reconcile(self.item)
         self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
         self.assertEqual(crashing.count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
