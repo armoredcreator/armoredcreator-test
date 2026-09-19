@@ -24,16 +24,18 @@ class ArmoredStudio:
         if not source.exists():
             raise FileNotFoundError(source)
 
-        workspace = self.root / "videos" / str(item.id)
+        workspace = self.root / "videos" / str(item.item_id)
         workspace.mkdir(parents=True, exist_ok=True)
-        working = workspace / f"{item.id}_.mp4"
+        working = workspace / f"{item.item_id}_.mp4"
         output = workspace / "studio.mp4"
         if source != working:
             shutil.copy2(source, working)
         source = working
 
         ffmpeg = os.getenv("ARMORED_FFMPEG", "ffmpeg")
-        if shutil.which(ffmpeg):
+        if os.getenv("ARMORED_STUDIO_FORCE_COPY", "0") == "1" and os.getenv("ARMORED_STUDIO_ALLOW_COPY", "0") == "1":
+            shutil.copy2(source, output)
+        elif shutil.which(ffmpeg):
             cmd = [
                 ffmpeg, "-y", "-i", str(source),
                 "-map", "0:v:0", "-map", "0:a?",
