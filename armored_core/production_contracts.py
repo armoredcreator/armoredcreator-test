@@ -7,6 +7,10 @@ from typing import Protocol
 class SourceMessage:
     source_path: Path
     telegram_message_id: str
+    source_id: str = "telegram"
+    topic_id: int | None = None
+    topic_name: str | None = None
+    original_url: str | None = None
 
 class SourceAdapter(Protocol):
     def fetch_next(self) -> SourceMessage | None: ...
