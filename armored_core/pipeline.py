@@ -9,7 +9,15 @@ class Pipeline:
         self.db, self.storage = db, storage
         self.vision, self.studio, self.publisher = vision, studio, publisher
 
-    def run(self, item_id: int) -> None:
+    def run(self, item_id: int, worker_id: str = "pipeline") -> None:
+        if not self.db.claim(item_id, worker_id):
+            raise RuntimeError("item-already-claimed")
+        try:
+            self._run_claimed(item_id)
+        finally:
+            self.db.release(item_id, worker_id)
+
+    def _run_claimed(self, item_id: int) -> None:
         item = self.db.get(item_id)
         if item.state == State.PUBLISHED:
             self.cleanup(item_id)
