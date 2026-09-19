@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 from .database import Database
-from .models import Item
+from .models import Item, PublicationCheck
 from .storage import Storage
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ class StudioService(Protocol):
     def process(self, item: Item) -> StudioResult: ...
 
 class Publisher(Protocol):
-    def is_published(self, item: Item) -> bool: ...
+    def check_publication(self, item: Item) -> PublicationCheck: ...
     def publish(self, item: Item) -> PublicationResult: ...
 
 class SyncService:
@@ -55,17 +55,13 @@ class SyncService:
         )
         original = self.storage.original(item_id, suffix)
 
-        try:
-            shutil.copy2(source, original)
-            if not original.is_file() or original.stat().st_size != source.stat().st_size:
-                raise IOError("original-copy-verification-failed")
-            self.db.conn.execute(
-                "UPDATE items SET original_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (str(original), item_id),
-            )
-            self.db.conn.commit()
-        except Exception:
-            # The DB record remains RECEIVED with its expected original path.
-            # Recovery must refuse to process an item whose immutable original is absent.
-            raise
+        shutil.copy2(source, original)
+        if not original.is_file() or original.stat().st_size != source.stat().st_size:
+            raise IOError("original-copy-verification-failed")
+
+        self.db.conn.execute(
+            "UPDATE items SET original_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (str(original), item_id),
+        )
+        self.db.conn.commit()
         return item_id
