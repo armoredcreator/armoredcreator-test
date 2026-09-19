@@ -23,6 +23,13 @@ class PublishThenCrash:
         self.published.add(item.item_id)
         raise RuntimeError("crash-after-external-publication")
 
+class UnknownPublisher:
+    def __init__(self): self.calls=0
+    def check_publication(self,item): return PublicationCheck.UNKNOWN
+    def publish(self,item):
+        self.calls += 1
+        return PublicationResult(True, "must-not-be-called")
+
 class SafePublisher(PublishThenCrash):
     def publish(self,item):
         self.calls += 1; self.published.add(item.item_id)
@@ -44,6 +51,18 @@ class PublicationCrashTests(unittest.TestCase):
             self.assertEqual(publisher.calls,1)
             self.assertTrue(row.original_path.exists())
             self.assertEqual([p.name for p in row.workspace.iterdir()],[row.original_path.name])
+            db.close()
+
+    def test_uncertain_publication_check_never_publishes(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); st=Storage(root); db=Database(st.database/"db.sqlite")
+            src=root/"source.mp4"; src.write_bytes(b"VIDEO")
+            item=SyncService(db,st).ingest(src,"telegram-2")
+            publisher=UnknownPublisher()
+            with self.assertRaises(RuntimeError):
+                Pipeline(db,st,V(),S(st),publisher).run(item)
+            self.assertEqual(publisher.calls,0)
+            self.assertEqual(db.get(item).state,State.FAILED)
             db.close()
 
 if __name__=="__main__": unittest.main()
