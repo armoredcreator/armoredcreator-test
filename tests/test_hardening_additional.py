@@ -102,8 +102,12 @@ class HardeningTests(unittest.TestCase):
         results = []
 
         def claim(worker):
-            barrier.wait()
-            results.append(self.db.claim(self.item, worker, 300))
+            db = Database(self.storage.database / "armoredcreator.db")
+            try:
+                barrier.wait()
+                results.append(db.claim(self.item, worker, 300))
+            finally:
+                db.close()
 
         threads = [threading.Thread(target=claim, args=(f"worker-{i}",)) for i in range(2)]
         for thread in threads:
