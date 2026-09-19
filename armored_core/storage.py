@@ -1,10 +1,13 @@
 from __future__ import annotations
+
 import os
 from pathlib import Path
+
 
 def project_root() -> Path:
     configured = os.getenv("ARMORED_ROOT")
     return Path(configured).expanduser().resolve() if configured else Path(__file__).resolve().parents[1]
+
 
 class Storage:
     def __init__(self, root: Path | None = None) -> None:
@@ -21,6 +24,9 @@ class Storage:
         path = self.videos / str(item_id)
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def pending_original(self, suffix: str = ".mp4") -> Path:
+        return self.database / f"pending-original{suffix}.reservation"
 
     def original(self, item_id: int, suffix: str = ".mp4") -> Path:
         return self.workspace(item_id) / f"{item_id}_linkoriginal{suffix}"
