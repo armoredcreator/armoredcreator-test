@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 import sqlite3
 from pathlib import Path
+
 from .models import Item, State
+
 
 class Database:
     def __init__(self, path: Path) -> None:
@@ -14,15 +17,20 @@ class Database:
     def _init(self) -> None:
         self.conn.executescript("""
         PRAGMA journal_mode=WAL;
+        PRAGMA busy_timeout=5000;
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY,
             telegram_message_id TEXT NOT NULL UNIQUE,
             state TEXT NOT NULL,
             original_path TEXT NOT NULL,
+            original_size INTEGER,
+            original_sha256 TEXT,
             working_path TEXT,
             result_path TEXT,
             affiliate_name TEXT,
             affiliate_url TEXT,
+            claimed_by TEXT,
+            claimed_at TEXT,
             last_error TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -44,7 +52,20 @@ class Database:
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         """)
+        self._ensure_columns()
         self.conn.commit()
+
+    def _ensure_columns(self) -> None:
+        cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(items)")}
+        additions = {
+            "original_size": "INTEGER",
+            "original_sha256": "TEXT",
+            "claimed_by": "TEXT",
+            "claimed_at": "TEXT",
+        }
+        for name, definition in additions.items():
+            if name not in cols:
+                self.conn.execute(f"ALTER TABLE items ADD COLUMN {name} {definition}")
 
     def create_item(self, telegram_message_id: str, original_path: Path) -> int:
         cur = self.conn.execute(
@@ -73,6 +94,17 @@ class Database:
 
     def transition(self, item_id: int, new_state: State, reason: str = "") -> None:
         old = self.get(item_id).state
+        allowed = {
+            State.RECEIVED: {State.VISION, State.RECOVERY, State.FAILED},
+            State.VISION: {State.STUDIO, State.RECOVERY, State.FAILED},
+            State.STUDIO: {State.PUBLISHING, State.RECOVERY, State.FAILED},
+            State.PUBLISHING: {State.PUBLISHED, State.RECOVERY, State.FAILED},
+            State.PUBLISHED: set(),
+            State.RECOVERY: {State.VISION, State.STUDIO, State.PUBLISHING, State.PUBLISHED, State.FAILED},
+            State.FAILED: {State.RECOVERY},
+        }
+        if new_state not in allowed[old]:
+            raise ValueError(f"invalid-state-transition:{old}->{new_state}")
         self.conn.execute(
             "UPDATE items SET state=?, last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (new_state.value, item_id),
@@ -91,49 +123,44 @@ class Database:
         self.conn.commit()
 
     def set_working(self, item_id: int, path: Path) -> None:
-        self.conn.execute(
-            "UPDATE items SET working_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (str(path), item_id),
-        )
+        self.conn.execute("UPDATE items SET working_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (str(path), item_id))
         self.conn.commit()
 
     def set_result(self, item_id: int, path: Path) -> None:
-        self.conn.execute(
-            "UPDATE items SET result_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (str(path), item_id),
-        )
+        self.conn.execute("UPDATE items SET result_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (str(path), item_id))
         self.conn.commit()
 
     def fail(self, item_id: int, error: str) -> None:
-        self.conn.execute(
-            "UPDATE items SET state=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (State.FAILED.value, error, item_id),
-        )
-        self.conn.execute(
-            "INSERT INTO state_events (item_id,new_state,reason) VALUES (?,?,?)",
-            (item_id, State.FAILED.value, error),
-        )
+        self.conn.execute("UPDATE items SET state=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (State.FAILED.value, error, item_id))
+        self.conn.execute("INSERT INTO state_events (item_id,new_state,reason) VALUES (?,?,?)", (item_id, State.FAILED.value, error))
         self.conn.commit()
 
     def publication_started(self, item_id: int) -> None:
         self.conn.execute(
-            "INSERT INTO publications(item_id,idempotency_key) VALUES(?,?) "
-            "ON CONFLICT(item_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP",
+            "INSERT INTO publications(item_id,idempotency_key) VALUES(?,?) ON CONFLICT(item_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP",
             (item_id, f"armoredcreator:item:{item_id}"),
         )
         self.conn.commit()
 
     def publication_confirmed(self, item_id: int, message_id: str) -> None:
-        self.conn.execute(
-            "UPDATE publications SET published_message_id=?, confirmed=1, updated_at=CURRENT_TIMESTAMP WHERE item_id=?",
-            (message_id, item_id),
-        )
+        self.conn.execute("UPDATE publications SET published_message_id=?, confirmed=1, updated_at=CURRENT_TIMESTAMP WHERE item_id=?", (message_id, item_id))
         self.conn.commit()
 
     def publication(self, item_id: int):
-        return self.conn.execute(
-            "SELECT * FROM publications WHERE item_id=?", (item_id,)
-        ).fetchone()
+        return self.conn.execute("SELECT * FROM publications WHERE item_id=?", (item_id,)).fetchone()
+
+    def claim(self, item_id: int, worker_id: str) -> bool:
+        cur = self.conn.execute(
+            "UPDATE items SET claimed_by=?, claimed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
+            "WHERE id=? AND state != ? AND (claimed_by IS NULL OR claimed_by=?)",
+            (worker_id, item_id, State.PUBLISHED.value, worker_id),
+        )
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def release(self, item_id: int, worker_id: str) -> None:
+        self.conn.execute("UPDATE items SET claimed_by=NULL, claimed_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=? AND claimed_by=?", (item_id, worker_id))
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
