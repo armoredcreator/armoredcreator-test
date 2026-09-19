@@ -24,8 +24,8 @@ class Pipeline:
             return
 
         try:
-            if not item.original_path.is_file():
-                raise FileNotFoundError(f"immutable-original-missing: {item.original_path}")
+            if not self.db.original_intact(item_id):
+                raise IOError("immutable-original-integrity-failed")
 
             if item.state in (State.RECEIVED, State.RECOVERY):
                 self.db.transition(item_id, State.VISION, "pipeline-start")
