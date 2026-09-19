@@ -1,7 +1,7 @@
 import tempfile
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 from armored_core.database import Database
 from armored_core.models import PublicationCheck, State
