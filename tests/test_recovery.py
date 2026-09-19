@@ -93,5 +93,33 @@ class RecoveryTests(unittest.TestCase):
         Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item)
         self.assertTrue(self.db.get(self.item).original_path.exists())
 
+    def test_cleanup_interruption_is_recoverable(self):
+        Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub).run(self.item)
+        row = self.db.get(self.item)
+        working, result = row.working_path, row.result_path
+        working.write_bytes(b"leftover")
+        result.write_bytes(b"leftover")
+        with patch.object(Path, "unlink", side_effect=OSError("simulated-cleanup-failure")):
+            with self.assertRaises(OSError):
+                Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub).cleanup(self.item)
+        self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
+        self.assertTrue(working.exists())
+        self.assertTrue(result.exists())
+        working.unlink()
+        result.unlink()
+        Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item)
+        self.assertTrue(self.db.get(self.item).original_path.exists())
+
+    def test_unknown_publication_never_publishes(self):
+        class UnknownPublisher(Publisher):
+            def publish(self, item):
+                raise AssertionError("publish must not be called")
+            def check_publication(self, item):
+                return PublicationCheck.UNKNOWN
+
+        with self.assertRaises(RuntimeError):
+            Pipeline(self.db, self.storage, Vision(), Studio(self.storage), UnknownPublisher()).run(self.item)
+        self.assertEqual(self.db.get(self.item).state, State.FAILED)
+
 if __name__ == "__main__":
     unittest.main()
