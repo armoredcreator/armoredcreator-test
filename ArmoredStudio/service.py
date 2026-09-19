@@ -7,6 +7,7 @@ from pathlib import Path
 
 from armored_core.models import Item
 from armored_core.services import StudioResult
+from armored_core.storage import Storage
 
 
 class ArmoredStudio:
@@ -18,16 +19,21 @@ class ArmoredStudio:
 
     def __init__(self, root: Path):
         self.root = Path(root)
+        self.storage = Storage(self.root)
 
     def process(self, item: Item) -> StudioResult:
         source = Path(item.working_path or item.original_path)
         if not source.exists():
             raise FileNotFoundError(source)
 
-        workspace = self.root / "videos" / str(item.item_id)
-        workspace.mkdir(parents=True, exist_ok=True)
-        working = workspace / f"{item.item_id}_.mp4"
-        output = workspace / "studio.mp4"
+        workspace = self.storage.workspace(item.item_id)
+        working = self.storage.working(item.item_id)
+        output = self.storage.result(
+            item.item_id,
+            affiliate_url=item.affiliate_url,
+            affiliate_name=item.affiliate_name,
+        )
+
         if source != working:
             shutil.copy2(source, working)
         source = working
