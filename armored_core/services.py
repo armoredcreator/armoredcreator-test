@@ -1,36 +1,45 @@
 from __future__ import annotations
+
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
 from .database import Database
 from .models import Item, PublicationCheck
 from .storage import Storage
+
 
 @dataclass(frozen=True)
 class VisionResult:
     affiliate_name: str
     affiliate_url: str
 
+
 @dataclass(frozen=True)
 class StudioResult:
     working_path: Path
     result_path: Path
+
 
 @dataclass(frozen=True)
 class PublicationResult:
     confirmed: bool
     message_id: str | None
 
+
 class VisionService(Protocol):
     def identify(self, item: Item) -> VisionResult: ...
+
 
 class StudioService(Protocol):
     def process(self, item: Item) -> StudioResult: ...
 
+
 class Publisher(Protocol):
     def check_publication(self, item: Item) -> PublicationCheck: ...
     def publish(self, item: Item) -> PublicationResult: ...
+
 
 class SyncService:
     def __init__(self, db: Database, storage: Storage) -> None:
@@ -51,13 +60,16 @@ class SyncService:
         suffix = source.suffix or ".mp4"
         item_id = self.db.create_item(
             telegram_message_id,
-            self.storage.original(item_id=0, suffix=suffix),
+            self.storage.pending_original(suffix),
         )
         original = self.storage.original(item_id, suffix)
-
-        shutil.copy2(source, original)
-        if not original.is_file() or original.stat().st_size != source.stat().st_size:
+        original.parent.mkdir(parents=True, exist_ok=True)
+        partial = original.with_suffix(original.suffix + ".part")
+        shutil.copy2(source, partial)
+        if not partial.is_file() or partial.stat().st_size != source.stat().st_size:
+            partial.unlink(missing_ok=True)
             raise IOError("original-copy-verification-failed")
+        partial.replace(original)
 
         self.db.conn.execute(
             "UPDATE items SET original_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
