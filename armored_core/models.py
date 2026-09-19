@@ -28,3 +28,7 @@ class Item:
     result_path: Path | None
     affiliate_name: str | None
     affiliate_url: str | None
+    source_id: str = "telegram"
+    original_url: str | None = None
+    topic_id: int | None = None
+    topic_name: str | None = None
