@@ -28,8 +28,8 @@ class Publisher:
         self.count = 0
         self.ids = set()
 
-    def is_published(self, item):
-        return item.item_id in self.ids
+    def check_publication(self, item):
+        return PublicationCheck.CONFIRMED if item.item_id in self.ids else PublicationCheck.ABSENT
 
     def publish(self, item):
         self.count += 1
