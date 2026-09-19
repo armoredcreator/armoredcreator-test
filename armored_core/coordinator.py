@@ -43,11 +43,14 @@ class Coordinator:
         if self.source is None:
             raise RuntimeError("source adapter is not configured")
         message = self.source.fetch_next()
+        if hasattr(message, "__await__"):
+            import asyncio
+            message = asyncio.run(message)
         if message is None:
             return None
         source_path = Path(message.source_path)
         message_id = str(message.telegram_message_id)
-        return self.sync.ingest(source_path, message_id)
+        return self.sync.ingest(source_path, message_id, getattr(message, "source_id", "telegram"), getattr(message, "topic_id", None), getattr(message, "topic_name", None), getattr(message, "original_url", None))
 
     def run(self, item_id: int) -> None:
         self.pipeline.run(item_id)
