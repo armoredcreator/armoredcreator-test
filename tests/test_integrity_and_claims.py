@@ -43,17 +43,20 @@ class IntegrityAndConcurrencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td); storage = Storage(root)
             src = root / "source.mp4"; src.write_bytes(b"VIDEO")
-            db1 = Database(storage.database / "db.sqlite"); db2 = Database(storage.database / "db.sqlite")
+            db1 = None; db2 = None
             ids=[]; errors=[]
-            def run(db):
+            def run():
+                db = Database(storage.database / "db.sqlite")
                 try: ids.append(SyncService(db, storage).ingest(src, "same-message"))
+                finally: db.close()
                 except Exception as exc: errors.append(exc)
-            a=threading.Thread(target=run,args=(db1,)); b=threading.Thread(target=run,args=(db2,))
+            a=threading.Thread(target=run); b=threading.Thread(target=run)
             a.start(); b.start(); a.join(); b.join()
             self.assertFalse(errors, errors)
             self.assertEqual(ids[0], ids[1])
-            self.assertEqual(db1.conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
-            db1.close(); db2.close()
+            check = Database(storage.database / "db.sqlite")
+            self.assertEqual(check.conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], 1)
+            check.close()
 
     def test_invalid_state_transition_is_rejected(self):
         with tempfile.TemporaryDirectory() as td:
