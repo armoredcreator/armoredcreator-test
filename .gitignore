@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+storage/database/*.db
+storage/database/*.db-*
+storage/logs/*
+!storage/logs/.gitkeep
+storage/videos/*
+!storage/videos/.gitkeep
+storage/backups/*
+!storage/backups/.gitkeep
