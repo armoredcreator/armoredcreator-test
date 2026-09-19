@@ -30,6 +30,16 @@ class IntegrityAndConcurrencyTests(unittest.TestCase):
             self.assertIsNone(db.get(item).original_path)
             db.close()
 
+    def test_publication_key_is_stable_and_auditable(self):
+        with tempfile.TemporaryDirectory() as td:
+            storage = Storage(Path(td)); db = Database(storage.database / "db.sqlite")
+            item = db.create_item("telegram-pub-key")
+            db.publication_started(item)
+            row = db.publication(item)
+            self.assertEqual(row["idempotency_key"], f"armoredcreator:item:{item}")
+            self.assertEqual(row["idempotency_key"], db.publication_key(item))
+            db.close()
+
     def test_state_transition_is_compare_and_set(self):
         with tempfile.TemporaryDirectory() as td:
             storage = Storage(Path(td)); db = Database(storage.database / "db.sqlite")
