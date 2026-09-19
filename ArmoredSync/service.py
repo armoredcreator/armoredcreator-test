@@ -45,6 +45,29 @@ class LocalSource:
         return None
 
 
+class TelegramReader:
+    """Small path-safe Telethon adapter owned by ArmoredSync."""
+
+    def __init__(self, root: Path, api_id: int, api_hash: str):
+        try:
+            from telethon import TelegramClient
+        except ImportError as exc:
+            raise RuntimeError("Dependência Telethon ausente; instale as dependências do Sync.") from exc
+        session = Path(root) / "credentials" / "telegram" / "session" / "armoredsync"
+        session.parent.mkdir(parents=True, exist_ok=True)
+        self.client = TelegramClient(str(session), api_id, api_hash)
+
+    async def connect(self):
+        await self.client.start()
+
+    async def disconnect(self):
+        if self.client.is_connected():
+            await self.client.disconnect()
+
+    async def get_messages(self, source, limit=None):
+        return self.client.iter_messages(source, limit=limit)
+
+
 class TelegramSource:
     """Real Telegram video source.
 
