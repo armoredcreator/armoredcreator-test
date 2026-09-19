@@ -21,12 +21,11 @@ class Storage:
             path.mkdir(parents=True, exist_ok=True)
 
     def workspace(self, item_id: int) -> Path:
+        if item_id <= 0:
+            raise ValueError("item_id must be positive")
         path = self.videos / str(item_id)
         path.mkdir(parents=True, exist_ok=True)
         return path
-
-    def pending_original(self, suffix: str = ".mp4") -> Path:
-        return self.database / f"pending-original{suffix}.reservation"
 
     def original(self, item_id: int, suffix: str = ".mp4") -> Path:
         return self.workspace(item_id) / f"{item_id}_linkoriginal{suffix}"
