@@ -7,23 +7,28 @@ from .storage import Storage
 
 
 class Pipeline:
-    def __init__(self, db: Database, storage: Storage, vision: VisionService, studio: StudioService, publisher: Publisher):
+    def __init__(self, db: Database, storage: Storage, vision: VisionService, studio: StudioService, publisher: Publisher, lease_seconds: int = 300):
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
         self.db, self.storage = db, storage
         self.vision, self.studio, self.publisher = vision, studio, publisher
+        self.lease_seconds = lease_seconds
 
     def run(self, item_id: int, worker_id: str = "pipeline") -> None:
         if self.db.get(item_id).state == State.PUBLISHED:
             self.cleanup(item_id)
             return
-        if not self.db.claim(item_id, worker_id):
+        if not self.db.claim(item_id, worker_id, self.lease_seconds):
             raise RuntimeError("item-already-claimed")
         try:
             self.run_claimed(item_id)
         finally:
             self.db.release(item_id, worker_id)
 
-    def run_claimed(self, item_id: int) -> None:
+    def run_claimed(self, item_id: int, worker_id: str | None = None) -> None:
         item = self.db.get(item_id)
+        if worker_id is not None and not self.db.renew_claim(item_id, worker_id):
+            raise RuntimeError("claim-lost")
         if item.state == State.PUBLISHED:
             self.cleanup(item_id)
             return
@@ -36,6 +41,8 @@ class Pipeline:
                 raise IOError("immutable-original-integrity-failed")
 
             if item.state in (State.RECEIVED, State.RECOVERY):
+                if worker_id is not None and not self.db.renew_claim(item_id, worker_id):
+                    raise RuntimeError("claim-lost")
                 self.db.transition(item_id, State.VISION, "pipeline-start")
 
             item = self.db.get(item_id)
@@ -43,6 +50,8 @@ class Pipeline:
                 raise RuntimeError("FAILED item requires deterministic recovery before pipeline.run")
 
             if item.state == State.VISION:
+                if worker_id is not None and not self.db.renew_claim(item_id, worker_id):
+                    raise RuntimeError("claim-lost")
                 v = self.vision.identify(item)
                 self.db.set_vision(item_id, v.affiliate_name, v.affiliate_url)
                 self.db.transition(item_id, State.STUDIO, "vision-complete")
@@ -51,6 +60,8 @@ class Pipeline:
             if item.state == State.STUDIO:
                 if not item.affiliate_name:
                     raise RuntimeError("studio-requires-affiliate-metadata")
+                if worker_id is not None and not self.db.renew_claim(item_id, worker_id):
+                    raise RuntimeError("claim-lost")
                 studio = self.studio.process(item)
                 if not studio.working_path.is_file() or not studio.result_path.is_file():
                     raise FileNotFoundError("studio-did-not-produce-required-files")
@@ -64,10 +75,14 @@ class Pipeline:
                     raise FileNotFoundError("publication-result-missing")
                 self.db.publication_started(item_id)
 
+                if worker_id is not None and not self.db.renew_claim(item_id, worker_id):
+                    raise RuntimeError("claim-lost")
                 check = self.publisher.check_publication(item)
                 if check == PublicationCheck.UNKNOWN:
                     raise RuntimeError("publication-check-uncertain-refusing-to-publish")
                 if check == PublicationCheck.ABSENT:
+                    if worker_id is not None and not self.db.renew_claim(item_id, worker_id):
+                        raise RuntimeError("claim-lost")
                     result = self.publisher.publish(item)
                     if not result.confirmed:
                         raise RuntimeError("publication-not-confirmed")
