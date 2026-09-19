@@ -1,6 +1,6 @@
 from __future__ import annotations
 from .database import Database
-from .models import State
+from .models import PublicationCheck, State
 from .services import Publisher, StudioService, VisionService
 from .storage import Storage
 
@@ -48,7 +48,10 @@ class Pipeline:
                     raise FileNotFoundError("publication-result-missing")
                 self.db.publication_started(item_id)
 
-                if not self.publisher.is_published(item):
+                check = self.publisher.check_publication(item)
+                if check == PublicationCheck.UNKNOWN:
+                    raise RuntimeError("publication-check-uncertain-refusing-to-publish")
+                if check == PublicationCheck.ABSENT:
                     result = self.publisher.publish(item)
                     if not result.confirmed:
                         raise RuntimeError("publication-not-confirmed")
