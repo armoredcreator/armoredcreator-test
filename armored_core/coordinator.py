@@ -59,9 +59,42 @@ class Coordinator:
             return cls(db, storage, vision, studio, publisher, source)
         return cls(db, storage, bindings.vision, bindings.studio, bindings.publisher, bindings.source)
 
+    async def ingest_once_async(self):
+        if self.source is None:
+            raise RuntimeError("Sync source não configurado")
+
+        fetch_async = getattr(self.source, "fetch_next_async", None)
+        if fetch_async is None:
+            message = self.source.fetch_next()
+        else:
+            message = await fetch_async()
+
+        if message is None:
+            return None
+
+        item_id = await self.sync.ingest_message_async(
+            IngestMessage(
+                telegram_message_id=str(message.telegram_message_id),
+                source_id=getattr(message, "source_id", "telegram"),
+                topic_id=getattr(message, "topic_id", None),
+                topic_name=getattr(message, "topic_name", None),
+                original_url=getattr(message, "original_url", None),
+                source_path=getattr(message, "source_path", None),
+                materialize=getattr(message, "materialize", None),
+            )
+        )
+        marker = getattr(self.source, "mark_ingested", None)
+        if marker is not None:
+            marker(str(message.telegram_message_id))
+        return item_id
+
     def ingest_once(self):
         if self.source is None:
             raise RuntimeError("Sync source não configurado")
+        if getattr(self.source, "fetch_next_async", None) is not None:
+            import asyncio
+            return asyncio.run(self.ingest_once_async())
+
         message = self.source.fetch_next()
         if message is None:
             return None
