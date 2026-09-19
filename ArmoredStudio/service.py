@@ -22,8 +22,14 @@ class ArmoredStudio:
         self.storage = Storage(self.root)
 
     def process(self, item: Item) -> StudioResult:
-        source = Path(item.working_path or item.original_path)
-        if not source.exists():
+        # The immutable original is a prerequisite even when recovery resumes
+        # from an existing working artifact.
+        original = Path(item.original_path)
+        if not original.is_file():
+            raise FileNotFoundError(original)
+
+        source = Path(item.working_path or original)
+        if not source.is_file():
             raise FileNotFoundError(source)
 
         workspace = self.storage.workspace(item.item_id)
@@ -34,13 +40,23 @@ class ArmoredStudio:
             affiliate_name=item.affiliate_name,
         )
 
+        # Prevent a stale result from being mistaken for a successful retry.
+        if output.exists():
+            output.unlink()
+
         if source != working:
             shutil.copy2(source, working)
         source = working
 
         ffmpeg = os.getenv("ARMORED_FFMPEG", "ffmpeg")
-        if os.getenv("ARMORED_STUDIO_FORCE_COPY", "0") == "1" and os.getenv("ARMORED_STUDIO_ALLOW_COPY", "0") == "1":
+        processed = False
+
+        if (
+            os.getenv("ARMORED_STUDIO_FORCE_COPY", "0") == "1"
+            and os.getenv("ARMORED_STUDIO_ALLOW_COPY", "0") == "1"
+        ):
             shutil.copy2(source, output)
+            processed = True
         elif shutil.which(ffmpeg):
             cmd = [
                 ffmpeg, "-y", "-i", str(source),
@@ -51,13 +67,20 @@ class ArmoredStudio:
             completed = subprocess.run(cmd, capture_output=True, text=True)
             if completed.returncode != 0:
                 raise RuntimeError(f"Studio/FFmpeg falhou: {completed.stderr[-1200:]}")
+            processed = True
         elif os.getenv("ARMORED_STUDIO_ALLOW_COPY", "0") == "1":
             shutil.copy2(source, output)
+            processed = True
         else:
             raise RuntimeError("FFmpeg não encontrado e fallback de cópia não está habilitado")
 
-        if not output.exists() or output.stat().st_size <= 0:
+        # Existence alone is never the success condition: a processing branch
+        # above must have completed successfully before the artifact is accepted.
+        if not processed:
+            raise RuntimeError("Studio não confirmou o processamento")
+        if not output.is_file() or output.stat().st_size <= 0:
             raise RuntimeError("Studio produziu uma saída inválida")
+
         return StudioResult(working, output)
 
 
