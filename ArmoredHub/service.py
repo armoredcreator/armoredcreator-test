@@ -59,7 +59,7 @@ class ArmoredHub:
         message_id = record.get("message_id")
         api_id = os.getenv("TELEGRAM_API_ID")
         api_hash = os.getenv("TELEGRAM_API_HASH")
-        chat_id = os.getenv("ARMORED_CREATOR_GROUP_ID")
+        chat_id = os.getenv("ARMORED_CREATOR_GROUP_ID", "-1004341972306")
         if not message_id or not api_id or not api_hash or not chat_id:
             return False
 
@@ -109,7 +109,7 @@ class ArmoredHub:
     def _publish_telegram(self, item: Item, state: dict, key: str, output: Path) -> PublicationResult:
         token = os.getenv("ARMORED_CREATOR_BOT_TOKEN")
         chat_id = os.getenv("ARMORED_CREATOR_GROUP_ID")
-        topic_id = os.getenv("ARMORED_HUB_TOPIC_ID")
+        topic_id = os.getenv("ARMORED_HUB_TOPIC_ID", "228")
         if not token or not chat_id or not topic_id:
             raise RuntimeError(
                 "Telegram Hub exige ARMORED_CREATOR_BOT_TOKEN, "
