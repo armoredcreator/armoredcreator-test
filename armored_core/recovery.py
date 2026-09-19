@@ -25,12 +25,9 @@ class Recovery:
             self.pipeline.cleanup(item_id)
             return
 
-        if not item.original_path.is_file():
-            raise FileNotFoundError(
-                f"cannot-recover-without-immutable-original: {item.original_path}"
-            )
+        if not self.db.original_intact(item_id):
+            raise IOError("cannot-recover-without-immutable-original-integrity")
 
-        previous_state = item.state
         self.db.transition(item_id, State.RECOVERY, "startup-recovery")
         item = self.db.get(item_id)
 
