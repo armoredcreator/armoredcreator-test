@@ -47,3 +47,8 @@ No external queue, Redis, RabbitMQ, Celery, or service-specific storage is requi
 ## Recovery
 
 Recovery reconciles the canonical state with the files and publisher idempotency record. It never deletes an original and never republishes an item already confirmed as published.
+
+
+## Validation gate
+
+This prototype is not approved for migration until the full recovery and publication-idempotency battery passes in CI.
