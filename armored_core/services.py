@@ -68,9 +68,7 @@ class SyncService:
             return int(row["id"])
 
         suffix = source.suffix or ".mp4"
-        final = self.storage.videos / "_incoming"
-        final.mkdir(parents=True, exist_ok=True)
-        partial = final / f"{telegram_message_id}{suffix}.part"
+        partial = self.storage.database / f"{telegram_message_id}{suffix}.part"
         digest = self._sha256(source)
         item_id = None
         try:
