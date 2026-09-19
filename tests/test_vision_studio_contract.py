@@ -22,7 +22,7 @@ class FakeAPI:
         }
 
 
-class VisionStudioContractTests:
+class VisionStudioContractTests(unittest.TestCase):
     def _item(self, root):
         storage = Storage(root)
         original = storage.original(1)
@@ -115,8 +115,8 @@ class VisionStudioContractTests:
         finally:
             if old_allow is not None:
                 os.environ["ARMORED_STUDIO_ALLOW_COPY"] = old_allow
-        if old_force is not None:
-            os.environ["ARMORED_STUDIO_FORCE_COPY"] = old_force
+            if old_force is not None:
+                os.environ["ARMORED_STUDIO_FORCE_COPY"] = old_force
 
 
 if __name__ == "__main__":
