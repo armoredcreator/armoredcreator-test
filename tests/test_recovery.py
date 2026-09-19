@@ -96,7 +96,7 @@ class RecoveryTests(unittest.TestCase):
         self.db.conn.commit()
         with self.assertRaises(RuntimeError):
             Pipeline(self.db, self.storage, Vision(), CrashStudio(self.storage), self.pub).run(self.item, "owner")
-        self.assertEqual(self.db.get(self.item).state, State.RECEIVED)
+        self.assertEqual(self.db.get(self.item).state, State.FAILED)
 
     def test_recovery_cannot_run_while_worker_claimed(self):
         worker = "pipeline-worker"
