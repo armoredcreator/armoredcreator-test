@@ -197,7 +197,47 @@ class TelegramSource:
             target = self.root / "storage" / "sync" / f"{message_id}.mp4"
             target.parent.mkdir(parents=True, exist_ok=True)
             if not target.exists() or target.stat().st_size <= 0:
-                await message.download_media(file=str(target))
+                partial = target.with_suffix(target.suffix + ".part")
+                try:
+                    if partial.exists():
+                        partial.unlink()
+                    downloaded_bytes = 0
+                    with partial.open("wb") as output:
+                        async for chunk in self.reader.client.iter_download(
+                            message,
+                            request_size=1024 * 1024,
+                        ):
+                            if not chunk:
+                                continue
+                            output.write(chunk)
+                            downloaded_bytes += len(chunk)
+
+                    actual_size = partial.stat().st_size if partial.exists() else 0
+                    telegram_size = getattr(
+                        getattr(message, "document", None),
+                        "size",
+                        None,
+                    )
+                    if actual_size <= 0:
+                        raise RuntimeError("download retornou arquivo vazio")
+                    if telegram_size is not None and actual_size != int(telegram_size):
+                        raise RuntimeError(
+                            f"download incompleto: {actual_size} bytes de {int(telegram_size)}"
+                        )
+                    if target.exists():
+                        target.unlink()
+                    partial.replace(target)
+                except Exception as exc:
+                    try:
+                        if partial.exists():
+                            partial.unlink()
+                    except OSError:
+                        pass
+                    raise RuntimeError(
+                        f"Falha ao baixar vídeo {message_id}: "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
+
             if not target.exists() or target.stat().st_size <= 0:
                 raise RuntimeError(f"Telegram não baixou o vídeo {message_id}")
 
