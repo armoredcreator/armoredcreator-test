@@ -22,7 +22,7 @@ class FakeAPI:
         }
 
 
-class VisionStudioContractTests(unittest.TestCase):
+class VisionStudioContractTests:
     def _item(self, root):
         storage = Storage(root)
         original = storage.original(1)
@@ -58,8 +58,10 @@ class VisionStudioContractTests(unittest.TestCase):
             )
 
     def test_studio_uses_affiliate_url_tail_for_canonical_result_name(self):
-        old = os.environ.get("ARMORED_STUDIO_ALLOW_COPY")
+        old_allow = os.environ.get("ARMORED_STUDIO_ALLOW_COPY")
+        old_force = os.environ.get("ARMORED_STUDIO_FORCE_COPY")
         os.environ["ARMORED_STUDIO_ALLOW_COPY"] = "1"
+        os.environ["ARMORED_STUDIO_FORCE_COPY"] = "1"
         try:
             with tempfile.TemporaryDirectory() as td:
                 root = Path(td)
@@ -85,10 +87,14 @@ class VisionStudioContractTests(unittest.TestCase):
                 self.assertFalse((root / "storage" / "pipeline").exists())
                 self.assertEqual(storage.original(1).read_bytes(), b"ORIGINAL")
         finally:
-            if old is None:
-                os.environ.pop("ARMORED_STUDIO_ALLOW_COPY", None)
-            else:
-                os.environ["ARMORED_STUDIO_ALLOW_COPY"] = old
+            for name, old in (
+                ("ARMORED_STUDIO_ALLOW_COPY", old_allow),
+                ("ARMORED_STUDIO_FORCE_COPY", old_force),
+            ):
+                if old is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = old
 
     def test_studio_does_not_silently_copy_when_ffmpeg_missing(self):
         old_allow = os.environ.pop("ARMORED_STUDIO_ALLOW_COPY", None)
@@ -109,8 +115,8 @@ class VisionStudioContractTests(unittest.TestCase):
         finally:
             if old_allow is not None:
                 os.environ["ARMORED_STUDIO_ALLOW_COPY"] = old_allow
-            if old_force is not None:
-                os.environ["ARMORED_STUDIO_FORCE_COPY"] = old_force
+        if old_force is not None:
+            os.environ["ARMORED_STUDIO_FORCE_COPY"] = old_force
 
 
 if __name__ == "__main__":
