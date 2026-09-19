@@ -38,12 +38,20 @@ class LegacySourceAdapter:
             return value
         source_path = getattr(value, "source_path", None)
         message_id = getattr(value, "telegram_message_id", None)
+        source_id = getattr(value, "source_id", "telegram")
+        topic_id = getattr(value, "topic_id", None)
+        topic_name = getattr(value, "topic_name", None)
+        original_url = getattr(value, "original_url", None)
         if isinstance(value, dict):
             source_path = value.get("source_path", source_path)
             message_id = value.get("telegram_message_id", value.get("message_id", message_id))
+            source_id = value.get("source_id", source_id)
+            topic_id = value.get("topic_id", topic_id)
+            topic_name = value.get("topic_name", topic_name)
+            original_url = value.get("original_url", value.get("shopee_link", original_url))
         if source_path is None or message_id is None:
             raise RuntimeError("Sync source must expose source_path and telegram_message_id")
-        return SourceMessage(Path(str(source_path)), str(message_id))
+        return SourceMessage(Path(str(source_path)), str(message_id), str(source_id), topic_id, topic_name, original_url)
 
 
 class LegacyVisionAdapter:
