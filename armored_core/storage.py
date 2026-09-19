@@ -1,10 +1,13 @@
 from __future__ import annotations
+
 import os
 from pathlib import Path
+
 
 def project_root() -> Path:
     configured = os.getenv("ARMORED_ROOT")
     return Path(configured).expanduser().resolve() if configured else Path(__file__).resolve().parents[1]
+
 
 class Storage:
     def __init__(self, root: Path | None = None) -> None:
@@ -18,6 +21,8 @@ class Storage:
             path.mkdir(parents=True, exist_ok=True)
 
     def workspace(self, item_id: int) -> Path:
+        if item_id <= 0:
+            raise ValueError("item_id must be positive")
         path = self.videos / str(item_id)
         path.mkdir(parents=True, exist_ok=True)
         return path
