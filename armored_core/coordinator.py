@@ -13,7 +13,6 @@ from .recovery import Recovery
 from .services import SyncService
 from .storage import Storage
 
-load_dotenv()
 
 
 class Coordinator:
@@ -30,6 +29,14 @@ class Coordinator:
     @classmethod
     def build(cls, root: Path | None=None, bindings: Any | None=None):
         storage=Storage(root)
+        for credential_file in (
+            storage.root / "credentials" / "telegram" / "user.env",
+            storage.root / "credentials" / "telegram" / "bot.env",
+            storage.root / "credentials" / "shopee" / "affiliate.env",
+            storage.root / ".env",
+        ):
+            if credential_file.exists():
+                load_dotenv(credential_file, override=False)
         db=Database(storage.database/"armoredcreator.db")
         if bindings is None:
             from ArmoredHub.service import ArmoredHub
