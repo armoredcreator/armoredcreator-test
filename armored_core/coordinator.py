@@ -1,80 +1,87 @@
 from __future__ import annotations
+
+import os
 from pathlib import Path
 from typing import Any
+
 from .database import Database
 from .models import State
 from .pipeline import Pipeline
 from .recovery import Recovery
-from .services import Publisher, StudioService, SyncService, VisionService
+from .services import SyncService
 from .storage import Storage
 
+
 class Coordinator:
-    """Production composition root.
+    """Single composition root for the isolated ArmoredCreator pipeline."""
 
-    Dependency injection remains available for deterministic tests, while
-    production can be assembled once through build().
-    """
-
-    def __init__(
-        self,
-        db: Database,
-        storage: Storage,
-        vision: VisionService,
-        studio: StudioService,
-        publisher: Publisher,
-        source: Any | None = None,
-    ) -> None:
-        self.db = db
-        self.storage = storage
-        self.sync = SyncService(db, storage)
-        self.pipeline = Pipeline(db, storage, vision, studio, publisher)
-        self.recovery = Recovery(db, storage, vision, studio, publisher)
-        self.source = source
+    def __init__(self, db, storage, vision, studio, publisher, source=None):
+        self.db=db
+        self.storage=storage
+        self.sync=SyncService(db,storage)
+        self.pipeline=Pipeline(db,storage,vision,studio,publisher)
+        self.recovery=Recovery(db,storage,vision,studio,publisher)
+        self.source=source
 
     @classmethod
-    def build(cls, root: Path | None = None, bindings: Any | None = None) -> "Coordinator":
-        from .runtime import build_production_bindings
-        storage = Storage(root)
-        db = Database(storage.database / "armoredcreator.db")
-        b = bindings or build_production_bindings(db=db, storage=storage)
-        return cls(db, storage, b.vision, b.studio, b.publisher, b.source)
+    def build(cls, root: Path | None=None, bindings: Any | None=None):
+        storage=Storage(root)
+        db=Database(storage.database/"armoredcreator.db")
+        if bindings is None:
+            from ArmoredHub.service import ArmoredHub
+            from ArmoredStudio.service import ArmoredStudio
+            from ArmoredVision.service import ArmoredVision
+            from ArmoredSync.service import ArmoredSync, LocalSource
+            vision=ArmoredVision()
+            studio=ArmoredStudio(storage.root)
+            publisher=ArmoredHub(storage.root)
+            source=LocalSource(storage.root/"input")
+            return cls(db,storage,vision,studio,publisher,source)
+        return cls(db,storage,bindings.vision,bindings.studio,bindings.publisher,bindings.source)
 
-    def ingest_once(self) -> int | None:
+    def ingest_once(self):
         if self.source is None:
-            raise RuntimeError("source adapter is not configured")
-        message = self.source.fetch_next()
-        if hasattr(message, "__await__"):
-            import asyncio
-            message = asyncio.run(message)
+            raise RuntimeError("Sync source não configurado")
+        message=self.source.fetch_next()
         if message is None:
             return None
-        source_path = Path(message.source_path)
-        message_id = str(message.telegram_message_id)
-        return self.sync.ingest(source_path, message_id, getattr(message, "source_id", "telegram"), getattr(message, "topic_id", None), getattr(message, "topic_name", None), getattr(message, "original_url", None))
+        return self.sync.ingest(
+            Path(message.source_path),
+            str(message.telegram_message_id),
+            getattr(message,"source_id","telegram"),
+            getattr(message,"topic_id",None),
+            getattr(message,"topic_name",None),
+            getattr(message,"original_url",None),
+        )
 
-    def run(self, item_id: int) -> None:
+    def run(self,item_id:int)->None:
         self.pipeline.run(item_id)
 
-    def recover(self, item_id: int) -> None:
+    def recover(self,item_id:int)->None:
         self.recovery.reconcile(item_id)
 
-    def close(self) -> None:
+    def close(self)->None:
         self.db.close()
 
-    def process_next(self) -> int | None:
-        item_id = self.ingest_once()
-        if item_id is None:
-            return None
+    def process_next(self):
+        item_id=self.ingest_once()
+        if item_id is None: return None
         self.run(item_id)
         return item_id
 
-    def recover_pending(self) -> list[int]:
-        rows = self.db.conn.execute(
-            "SELECT id FROM items WHERE state IN (?, ?)",
-            (State.FAILED.value, State.RECOVERY.value),
+    def recover_pending(self):
+        states=(
+            State.RECEIVED.value,State.VISION.value,State.STUDIO.value,
+            State.PUBLISHING.value,State.RECOVERY.value,State.FAILED.value,
+        )
+        placeholders=",".join("?" for _ in states)
+        rows=self.db.conn.execute(
+            f"SELECT id FROM items WHERE state IN ({placeholders}) ORDER BY id",
+            states,
         ).fetchall()
-        recovered: list[int] = []
+        recovered=[]
         for row in rows:
-            self.recover(int(row["id"]))
-            recovered.append(int(row["id"]))
+            item_id=int(row["id"])
+            self.recover(item_id)
+            recovered.append(item_id)
         return recovered
