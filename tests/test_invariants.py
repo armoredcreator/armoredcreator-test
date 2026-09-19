@@ -86,7 +86,7 @@ class InvariantTests(unittest.TestCase):
             self.assertTrue(item.original_path.is_file())
             self.assertEqual(item.original_path.read_bytes(), b"TELEGRAM-BYTES")
             self.assertFalse((root / "storage" / "sync").exists())
-            self.assertEqual([p.name for p in item.workspace.iterdir()], [f"{i}_linkoriginal.mp4"])
+            self.assertEqual([p.name for p in item.workspace.iterdir()], [f"{i}_finallinkoriginal.mp4"])
             db.close()
 
     def test_missing_original_blocks_processing(self):
