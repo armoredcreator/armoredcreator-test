@@ -28,8 +28,8 @@ class P:
         self.published = set()
         self.calls = 0
 
-    def is_published(self, item):
-        return item.item_id in self.published
+    def check_publication(self, item):
+        return PublicationCheck.CONFIRMED if item.item_id in self.published else PublicationCheck.ABSENT
 
     def publish(self, item):
         self.calls += 1
