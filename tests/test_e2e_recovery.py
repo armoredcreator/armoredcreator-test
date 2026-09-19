@@ -29,6 +29,14 @@ class Vision:
         return VisionResult("e2e-product", "https://example.invalid/affiliate")
 
 
+class CrashStudio:
+    def __init__(self, real):
+        self.real = real
+
+    def process(self, item):
+        raise RuntimeError("simulated studio crash")
+
+
 class PersistentPublisher:
     def __init__(self, published=None, crash_after_publish=False):
         self.published = published if published is not None else set()
@@ -68,18 +76,25 @@ class EndToEndRecoveryTests(unittest.TestCase):
             db = Database(storage.database / "armoredcreator.db")
             publisher = PersistentPublisher()
 
-            bindings = Bindings(
-                Source(source),
-                Vision(),
-                ArmoredStudio(root),
-                publisher,
+            coordinator = Coordinator.build(
+                root,
+                Bindings(Source(source), Vision(), CrashStudio(ArmoredStudio(root)), publisher),
             )
-            coordinator = Coordinator.build(root, bindings)
             item_id = coordinator.ingest_once()
 
             self.assertEqual(item_id, 1)
             with self.assertRaises(RuntimeError):
-                coordinator.pipeline.run(item_id)
+                coordinator.run(item_id)
+            self.assertEqual(db.get(item_id).state, State.FAILED)
+            coordinator.close()
+
+            db = Database(storage.database / "armoredcreator.db")
+            coordinator = Coordinator.build(
+                root,
+                Bindings(Source(source), Vision(), ArmoredStudio(root), publisher),
+            )
+            os.environ["ARMORED_STUDIO_ALLOW_COPY"] = "1"
+            coordinator.recover(item_id)
             self.assertEqual(db.get(item_id).state, State.PUBLISHED)
             self.assertEqual(db.get(item_id).original_path.read_bytes(), original)
             self.assertEqual(publisher.count, 1)
@@ -95,6 +110,7 @@ class EndToEndRecoveryTests(unittest.TestCase):
             self.assertIn(State.FAILED.value, events)
 
             coordinator.close()
+            os.environ.pop("ARMORED_STUDIO_ALLOW_COPY", None)
 
     def test_recovery_after_external_publication_does_not_duplicate(self):
         with tempfile.TemporaryDirectory() as td:
@@ -129,6 +145,7 @@ class EndToEndRecoveryTests(unittest.TestCase):
             )
             coordinator.recover(item_id)
 
+            db = Database(storage.database / "armoredcreator.db")
             row = db.get(item_id)
             self.assertEqual(row.state, State.PUBLISHED)
             self.assertEqual(recovered.count, 0)
