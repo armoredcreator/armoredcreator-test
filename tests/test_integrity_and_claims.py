@@ -51,6 +51,18 @@ class IntegrityAndConcurrencyTests(unittest.TestCase):
             self.assertTrue(db.claim(item, "worker-b"))
             db.close()
 
+    def test_stale_claim_can_be_recovered(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            item = db.create_item("telegram-stale", storage.original(1))
+            self.assertTrue(db.claim(item, "dead-worker"))
+            db.conn.execute("UPDATE items SET claimed_at=datetime('now','-3600 seconds') WHERE id=?", (item,))
+            db.conn.commit()
+            self.assertTrue(db.claim(item, "recovery-worker", lease_seconds=300))
+            self.assertEqual(db.conn.execute("SELECT claimed_by FROM items WHERE id=?", (item,)).fetchone()[0], "recovery-worker")
+            db.close()
 
 if __name__ == "__main__":
     unittest.main()
