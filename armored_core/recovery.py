@@ -73,4 +73,4 @@ class Recovery:
         else:
             self.db.transition(item_id, State.VISION, "rebuild-vision-from-original")
 
-        self.pipeline.run(item_id)
+        self.pipeline.run(item_id, worker_id)
