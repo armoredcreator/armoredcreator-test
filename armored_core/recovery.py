@@ -27,7 +27,7 @@ class Recovery:
         item = self.db.get(item_id)
 
         pub = self.db.publication(item_id)
-        if previous_state == State.PUBLISHING and pub:
+        if pub:
             if pub["confirmed"]:
                 self.db.transition(item_id, State.PUBLISHED, "db-publication-already-confirmed")
                 self.pipeline.cleanup(item_id)
