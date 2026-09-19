@@ -86,6 +86,7 @@ class Database:
             Path(row["working_path"]) if row["working_path"] else None,
             Path(row["result_path"]) if row["result_path"] else None,
             row["affiliate_name"], row["affiliate_url"],
+            row["source_id"], row["original_url"], row["topic_id"], row["topic_name"],
         )
 
     def transition(self, item_id: int, new_state: State, reason: str = "") -> None:
