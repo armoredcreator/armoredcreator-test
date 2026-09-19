@@ -86,7 +86,7 @@ class TelegramSource:
     caminho local ou checkout antigo.
     """
 
-    URL_RE = re.compile(r"https?://[^\\s]+", re.IGNORECASE)
+    URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
     SHOPEE_DOMAINS = ("shopee.com.br", "shopee.co", "shopee.ee")
 
     def __init__(self, root: Path, reader: Any):
