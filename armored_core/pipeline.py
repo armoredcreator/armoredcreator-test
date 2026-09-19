@@ -77,7 +77,8 @@ class Pipeline:
                 self.cleanup(item_id)
 
         except Exception as exc:
-            self.db.fail(item_id, f"{type(exc).__name__}: {exc}")
+            if self.db.get(item_id).state != State.PUBLISHED:
+                self.db.fail(item_id, f"{type(exc).__name__}: {exc}")
             raise
 
     def cleanup(self, item_id: int) -> None:
