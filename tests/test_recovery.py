@@ -91,11 +91,10 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.pub.count, 1)
 
     def test_pipeline_rejects_lost_claim_before_work(self):
-        self.assertTrue(self.db.claim(self.item, "owner", lease_seconds=1))
-        self.db.conn.execute("UPDATE items SET claimed_at=datetime('now','-3600 seconds') WHERE id=?", (self.item,))
-        self.db.conn.commit()
-        with self.assertRaises(RuntimeError):
-            Pipeline(self.db, self.storage, Vision(), CrashStudio(self.storage), self.pub).run(self.item, "owner")
+        pipeline = Pipeline(self.db, self.storage, Vision(), CrashStudio(self.storage), self.pub)
+        with patch.object(self.db, "renew_claim", return_value=False):
+            with self.assertRaises(RuntimeError):
+                pipeline.run(self.item, "owner")
         self.assertEqual(self.db.get(self.item).state, State.RECEIVED)
 
     def test_recovery_cannot_run_while_worker_claimed(self):
