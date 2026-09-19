@@ -1,28 +1,42 @@
 from __future__ import annotations
+
 from .database import Database
 from .models import PublicationCheck, State
 from .pipeline import Pipeline
 from .services import Publisher, StudioService, VisionService
 from .storage import Storage
 
+
 class Recovery:
     def __init__(self, db: Database, storage: Storage, vision: VisionService, studio: StudioService, publisher: Publisher):
         self.db, self.storage = db, storage
         self.pipeline = Pipeline(db, storage, vision, studio, publisher)
 
-    def reconcile(self, item_id: int) -> None:
+    def reconcile(self, item_id: int, worker_id: str = "recovery") -> None:
+        if self.db.get(item_id).state == State.PUBLISHED:
+            self.pipeline.cleanup(item_id)
+            return
+        if not self.db.claim(item_id, worker_id, self.pipeline.lease_seconds):
+            raise RuntimeError("item-already-claimed")
+        try:
+            self._reconcile_claimed(item_id, worker_id)
+        finally:
+            self.db.release(item_id, worker_id)
+
+    def _reconcile_claimed(self, item_id: int, worker_id: str) -> None:
         item = self.db.get(item_id)
+        if not self.db.renew_claim(item_id, worker_id):
+            raise RuntimeError("claim-lost")
 
         if item.state == State.PUBLISHED:
             self.pipeline.cleanup(item_id)
             return
 
-        if not item.original_path.is_file():
-            raise FileNotFoundError(
-                f"cannot-recover-without-immutable-original: {item.original_path}"
-            )
+        if not self.db.original_intact(item_id):
+            if item.original_path is None or not item.original_path.exists():
+                raise FileNotFoundError("cannot-recover-without-immutable-original")
+            raise IOError("cannot-recover-without-immutable-original-integrity")
 
-        previous_state = item.state
         self.db.transition(item_id, State.RECOVERY, "startup-recovery")
         item = self.db.get(item_id)
 
@@ -45,8 +59,6 @@ class Recovery:
                 self.pipeline.cleanup(item_id)
                 return
 
-        # Canonical workspace filenames are durable facts even if DB path fields
-        # were not committed before a crash.
         working = item.working_path or self.storage.working(item_id)
         result = item.result_path
         if not result and item.affiliate_name:
@@ -65,4 +77,4 @@ class Recovery:
         else:
             self.db.transition(item_id, State.VISION, "rebuild-vision-from-original")
 
-        self.pipeline.run(item_id)
+        self.pipeline.run_claimed(item_id, worker_id)

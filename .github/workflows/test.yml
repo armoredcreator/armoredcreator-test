@@ -14,5 +14,15 @@ jobs:
           python-version: "3.12"
       - name: Run tests
         run: python -m unittest discover -s tests -v
-      - name: Run demo
-        run: python -m armored_core.demo
+      - name: Architecture doctor
+        run: python tools/doctor.py
+      - name: Package laboratory source
+        shell: bash
+        run: |
+          zip -r ArmoredCreator-test-e2e.zip . -x ".git/*" -x "__pycache__/*" -x "*/__pycache__/*" -x "*.pyc" -x "storage/*" -x "credentials/*"
+      - name: Upload laboratory package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArmoredCreator-test-e2e
+          path: ArmoredCreator-test-e2e.zip
+          if-no-files-found: error
