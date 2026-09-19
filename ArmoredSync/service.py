@@ -64,7 +64,7 @@ class TelegramReader:
         if self.client.is_connected():
             await self.client.disconnect()
 
-    async def get_messages(self, source, limit=None):
+    def get_messages(self, source, limit=None):
         return self.client.iter_messages(source, limit=limit)
 
 
