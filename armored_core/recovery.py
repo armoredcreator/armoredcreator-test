@@ -31,7 +31,7 @@ class Recovery:
             return
 
         if not self.db.original_intact(item_id):
-            if not item.original_path.exists():
+            if item.original_path is None or not item.original_path.exists():
                 raise FileNotFoundError("cannot-recover-without-immutable-original")
             raise IOError("cannot-recover-without-immutable-original-integrity")
 
@@ -75,4 +75,4 @@ class Recovery:
         else:
             self.db.transition(item_id, State.VISION, "rebuild-vision-from-original")
 
-        self.pipeline._run_claimed(item_id)
+        self.pipeline.run_claimed(item_id)
