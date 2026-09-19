@@ -54,7 +54,8 @@ class LegacyVisionAdapter:
         result = self.vision.process_record(_item_to_legacy_record(item))
         status = result.get("status")
         if status == "ready_for_hub":
-            return result
+            from ..services import VisionResult
+            return VisionResult(str(result.get("identifier") or "affiliate"), str(result["affiliate_link"]))
         if status == "already_processed":
             raise RuntimeError(f"Vision item already processed: {item.id}")
         if status == "duplicate":
@@ -76,12 +77,8 @@ class LegacyStudioAdapter:
         output = Path(processed.output_file)
         if not output.exists() or output.stat().st_size <= 0:
             raise RuntimeError("Studio produced no valid output")
-        affiliate = item.affiliate_name or "affiliate"
-        return type("StudioResult", (), {
-            "working_path": str(source),
-            "result_path": str(output),
-            "affiliate_name": affiliate,
-        })()
+        from ..services import StudioResult
+        return StudioResult(Path(source), Path(output))
 
 
 class LegacyHubAdapter:
@@ -110,8 +107,8 @@ def _item_to_legacy_record(item) -> dict[str, Any]:
     return {
         "source_id": item.source_id,
         "message_id": item.telegram_message_id,
-        "topic_id": item.metadata.get("topic_id") if isinstance(item.metadata, dict) else None,
-        "topic_name": item.metadata.get("topic_name") if isinstance(item.metadata, dict) else None,
-        "video_file": item.original_path,
+        "topic_id": item.topic_id,
+        "topic_name": item.topic_name,
+        "video_file": str(item.original_path),
         "shopee_link": item.original_url,
     }
