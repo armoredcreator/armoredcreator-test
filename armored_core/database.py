@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from pathlib import Path
 
@@ -10,7 +11,7 @@ class Database:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path)
+        self.conn = sqlite3.connect(self.path, timeout=5.0)
         self.conn.row_factory = sqlite3.Row
         self._init()
 
@@ -22,7 +23,7 @@ class Database:
             id INTEGER PRIMARY KEY,
             telegram_message_id TEXT NOT NULL UNIQUE,
             state TEXT NOT NULL,
-            original_path TEXT NOT NULL,
+            original_path TEXT,
             original_size INTEGER,
             original_sha256 TEXT,
             working_path TEXT,
@@ -67,15 +68,15 @@ class Database:
             if name not in cols:
                 self.conn.execute(f"ALTER TABLE items ADD COLUMN {name} {definition}")
 
-    def create_item(self, telegram_message_id: str, original_path: Path) -> int:
+    def create_item(self, telegram_message_id: str) -> int:
         cur = self.conn.execute(
-            "INSERT INTO items (telegram_message_id,state,original_path) VALUES (?,?,?)",
-            (telegram_message_id, State.RECEIVED.value, str(original_path)),
+            "INSERT INTO items (telegram_message_id,state,original_path) VALUES (?,?,NULL)",
+            (telegram_message_id, State.RECEIVED.value),
         )
         item_id = int(cur.lastrowid)
         self.conn.execute(
             "INSERT INTO state_events (item_id,new_state,reason) VALUES (?,?,?)",
-            (item_id, State.RECEIVED.value, "ingest-reserved"),
+            (item_id, State.RECEIVED.value, "ingest-created"),
         )
         self.conn.commit()
         return item_id
@@ -84,13 +85,22 @@ class Database:
         row = self.conn.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if row is None:
             raise KeyError(item_id)
+        original = Path(row["original_path"]) if row["original_path"] else None
+        workspace = original.parent if original else self.path.parent.parent / "videos" / str(item_id)
         return Item(
             row["id"], row["telegram_message_id"], State(row["state"]),
-            Path(row["original_path"]).parent, Path(row["original_path"]),
+            workspace, original,
             Path(row["working_path"]) if row["working_path"] else None,
             Path(row["result_path"]) if row["result_path"] else None,
             row["affiliate_name"], row["affiliate_url"],
         )
+
+    def set_original(self, item_id: int, path: Path, size: int, sha256: str) -> None:
+        self.conn.execute(
+            "UPDATE items SET original_path=?, original_size=?, original_sha256=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (str(path), size, sha256, item_id),
+        )
+        self.conn.commit()
 
     def transition(self, item_id: int, new_state: State, reason: str = "") -> None:
         old = self.get(item_id).state
@@ -105,10 +115,12 @@ class Database:
         }
         if new_state not in allowed[old]:
             raise ValueError(f"invalid-state-transition:{old}->{new_state}")
-        self.conn.execute(
-            "UPDATE items SET state=?, last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (new_state.value, item_id),
+        cur = self.conn.execute(
+            "UPDATE items SET state=?, last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=? AND state=?",
+            (new_state.value, item_id, old.value),
         )
+        if cur.rowcount != 1:
+            raise RuntimeError("concurrent-state-transition")
         self.conn.execute(
             "INSERT INTO state_events (item_id,old_state,new_state,reason) VALUES (?,?,?,?)",
             (item_id, old.value, new_state.value, reason),
@@ -116,10 +128,7 @@ class Database:
         self.conn.commit()
 
     def set_vision(self, item_id: int, affiliate_name: str, affiliate_url: str) -> None:
-        self.conn.execute(
-            "UPDATE items SET affiliate_name=?, affiliate_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (affiliate_name, affiliate_url, item_id),
-        )
+        self.conn.execute("UPDATE items SET affiliate_name=?, affiliate_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (affiliate_name, affiliate_url, item_id))
         self.conn.commit()
 
     def set_working(self, item_id: int, path: Path) -> None:
@@ -134,22 +143,14 @@ class Database:
         old = self.get(item_id).state
         if old not in {State.RECEIVED, State.VISION, State.STUDIO, State.PUBLISHING, State.RECOVERY}:
             raise ValueError(f"invalid-failure-transition:{old}->FAILED")
-        self.conn.execute(
-            "UPDATE items SET state=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (State.FAILED.value, error, item_id),
-        )
-        self.conn.execute(
-            "INSERT INTO state_events (item_id,old_state,new_state,reason) VALUES (?,?,?,?)",
-            (item_id, old.value, State.FAILED.value, error),
-        )
+        cur = self.conn.execute("UPDATE items SET state=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND state=?", (State.FAILED.value, error, item_id, old.value))
+        if cur.rowcount != 1:
+            raise RuntimeError("concurrent-failure-transition")
+        self.conn.execute("INSERT INTO state_events (item_id,old_state,new_state,reason) VALUES (?,?,?,?)", (item_id, old.value, State.FAILED.value, error))
         self.conn.commit()
 
     def original_intact(self, item_id: int) -> bool:
-        import hashlib
-        row = self.conn.execute(
-            "SELECT original_path, original_size, original_sha256 FROM items WHERE id=?",
-            (item_id,),
-        ).fetchone()
+        row = self.conn.execute("SELECT original_path, original_size, original_sha256 FROM items WHERE id=?", (item_id,)).fetchone()
         if row is None or not row["original_path"] or row["original_size"] is None or not row["original_sha256"]:
             return False
         path = Path(row["original_path"])
@@ -162,10 +163,7 @@ class Database:
         return digest.hexdigest() == row["original_sha256"]
 
     def publication_started(self, item_id: int) -> None:
-        self.conn.execute(
-            "INSERT INTO publications(item_id,idempotency_key) VALUES(?,?) ON CONFLICT(item_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP",
-            (item_id, f"armoredcreator:item:{item_id}"),
-        )
+        self.conn.execute("INSERT INTO publications(item_id,idempotency_key) VALUES(?,?) ON CONFLICT(item_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP", (item_id, f"armoredcreator:item:{item_id}"))
         self.conn.commit()
 
     def publication_confirmed(self, item_id: int, message_id: str) -> None:
@@ -180,19 +178,14 @@ class Database:
             raise ValueError("lease_seconds must be positive")
         cur = self.conn.execute(
             "UPDATE items SET claimed_by=?, claimed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
-            "WHERE id=? AND state != ? AND (claimed_by IS NULL OR claimed_by=? "
-            "OR claimed_at IS NULL OR claimed_at < datetime('now', ?))",
-            (worker_id, item_id, State.PUBLISHED.value, worker_id, "-"+str(lease_seconds)+" seconds"),
+            "WHERE id=? AND state != ? AND (claimed_by IS NULL OR claimed_by=? OR claimed_at IS NULL OR claimed_at < datetime('now', ?))",
+            (worker_id, item_id, State.PUBLISHED.value, worker_id, "-" + str(lease_seconds) + " seconds"),
         )
         self.conn.commit()
         return cur.rowcount == 1
 
     def renew_claim(self, item_id: int, worker_id: str) -> bool:
-        cur = self.conn.execute(
-            "UPDATE items SET claimed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
-            "WHERE id=? AND claimed_by=? AND state != ?",
-            (item_id, worker_id, State.PUBLISHED.value),
-        )
+        cur = self.conn.execute("UPDATE items SET claimed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=? AND claimed_by=? AND state != ?", (item_id, worker_id, State.PUBLISHED.value))
         self.conn.commit()
         return cur.rowcount == 1
 
