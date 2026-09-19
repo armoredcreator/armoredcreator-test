@@ -13,6 +13,11 @@ class VisionResult:
     affiliate_url: str
 
 @dataclass(frozen=True)
+class StudioResult:
+    working_path: Path
+    result_path: Path
+
+@dataclass(frozen=True)
 class PublicationResult:
     confirmed: bool
     message_id: str | None
@@ -21,7 +26,7 @@ class VisionService(Protocol):
     def identify(self, item: Item) -> VisionResult: ...
 
 class StudioService(Protocol):
-    def process(self, item: Item) -> Path: ...
+    def process(self, item: Item) -> StudioResult: ...
 
 class Publisher(Protocol):
     def is_published(self, item: Item) -> bool: ...
@@ -33,13 +38,34 @@ class SyncService:
 
     def ingest(self, source: Path, telegram_message_id: str) -> int:
         source = source.resolve()
-        if not source.is_file(): raise FileNotFoundError(source)
-        row = self.db.conn.execute("SELECT id FROM items WHERE telegram_message_id=?", (telegram_message_id,)).fetchone()
-        if row: return int(row["id"])
-        # Reserve the DB ID first; the original is copied exactly once into its item workspace.
-        item_id = self.db.create_item(telegram_message_id, self.storage.videos / "pending" / "placeholder")
-        original = self.storage.original(item_id, source.suffix)
-        shutil.copy2(source, original)
-        self.db.conn.execute("UPDATE items SET original_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                             (str(original), item_id)); self.db.conn.commit()
+        if not source.is_file():
+            raise FileNotFoundError(source)
+
+        row = self.db.conn.execute(
+            "SELECT id FROM items WHERE telegram_message_id=?",
+            (telegram_message_id,),
+        ).fetchone()
+        if row:
+            return int(row["id"])
+
+        suffix = source.suffix or ".mp4"
+        item_id = self.db.create_item(
+            telegram_message_id,
+            self.storage.original(item_id=0, suffix=suffix),
+        )
+        original = self.storage.original(item_id, suffix)
+
+        try:
+            shutil.copy2(source, original)
+            if not original.is_file() or original.stat().st_size != source.stat().st_size:
+                raise IOError("original-copy-verification-failed")
+            self.db.conn.execute(
+                "UPDATE items SET original_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (str(original), item_id),
+            )
+            self.db.conn.commit()
+        except Exception:
+            # The DB record remains RECEIVED with its expected original path.
+            # Recovery must refuse to process an item whose immutable original is absent.
+            raise
         return item_id
