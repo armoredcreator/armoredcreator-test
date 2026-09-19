@@ -80,6 +80,13 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
         self.assertEqual(self.pub.count, 1)
 
+    def test_recovery_cannot_run_while_worker_claimed(self):
+        worker = "pipeline-worker"
+        self.assertTrue(self.db.claim(self.item, worker))
+        with self.assertRaises(RuntimeError):
+            Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item, "recovery-worker")
+        self.db.release(self.item, worker)
+
     def test_cleanup_is_idempotent(self):
         Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub).run(self.item)
         Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item)
