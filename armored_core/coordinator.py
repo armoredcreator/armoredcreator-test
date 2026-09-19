@@ -4,12 +4,16 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 from .database import Database
 from .models import State
 from .pipeline import Pipeline
 from .recovery import Recovery
 from .services import SyncService
 from .storage import Storage
+
+load_dotenv()
 
 
 class Coordinator:
