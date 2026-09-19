@@ -69,6 +69,9 @@ class ArmoredHub:
         if existing and existing["confirmed"]:
             return PublicationResult(True, existing["published_message_id"])
 
+        if existing is None:
+            self.db.publication_started(item.item_id)
+
         output = Path(item.result_path or "")
         if not output.is_file() or output.stat().st_size <= 0:
             raise RuntimeError("Hub recebeu resultado inexistente/vazio")
