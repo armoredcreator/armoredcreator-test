@@ -45,7 +45,53 @@ class Publisher:
         self.ids.add(item.item_id)
         return PublicationResult(True, f"telegram-result-{self.count}")
 
+
+
+class AsyncSource:
+    def __init__(self):
+        self.used = False
+        self.marked = False
+
+    async def fetch_next_async(self):
+        if self.used:
+            return None
+        self.used = True
+
+        async def materialize(target):
+            target.write_bytes(b"ASYNC-TELEGRAM")
+
+        from armored_core.services import IngestMessage
+        return IngestMessage(
+            telegram_message_id="telegram-async-1",
+            source_id="telegram",
+            original_url="https://shopee.com.br/example/finaldomeulinknovo",
+            materialize=materialize,
+        )
+
+    def mark_ingested(self, message_id):
+        self.marked = message_id
+
+
 class CoordinatorTests(unittest.TestCase):
+    def test_async_source_materializes_inside_same_event_loop(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            source = AsyncSource()
+            coordinator = Coordinator(db, storage, Vision(), Studio(storage), Publisher(), source)
+
+            item_id = coordinator.ingest_once()
+
+            self.assertEqual(item_id, 1)
+            item = db.get(item_id)
+            self.assertEqual(item.original_path.name, "1_finallinkoriginal.mp4")
+            self.assertEqual(item.original_path.read_bytes(), b"ASYNC-TELEGRAM")
+            self.assertFalse((root / "storage" / "sync").exists())
+            self.assertEqual(source.marked, "telegram-async-1")
+            coordinator.close()
+
+
     def test_complete_chain_is_composed_and_sequential(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
