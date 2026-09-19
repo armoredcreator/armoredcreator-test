@@ -100,7 +100,8 @@ class Pipeline:
                 self.cleanup(item_id)
 
         except Exception as exc:
-            if self.db.get(item_id).state != State.PUBLISHED:
+            can_fail = worker_id is None or self.db.is_claimed_by(item_id, worker_id)
+            if can_fail and self.db.get(item_id).state != State.PUBLISHED:
                 self.db.fail(item_id, f"{type(exc).__name__}: {exc}")
             raise
 
