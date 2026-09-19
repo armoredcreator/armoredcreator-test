@@ -12,6 +12,11 @@ class State(StrEnum):
     RECOVERY = "RECOVERY"
     FAILED = "FAILED"
 
+class PublicationCheck(StrEnum):
+    CONFIRMED = "CONFIRMED"
+    ABSENT = "ABSENT"
+    UNKNOWN = "UNKNOWN"
+
 @dataclass(frozen=True)
 class Item:
     item_id: int
