@@ -131,9 +131,35 @@ class Database:
         self.conn.commit()
 
     def fail(self, item_id: int, error: str) -> None:
-        self.conn.execute("UPDATE items SET state=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (State.FAILED.value, error, item_id))
-        self.conn.execute("INSERT INTO state_events (item_id,new_state,reason) VALUES (?,?,?)", (item_id, State.FAILED.value, error))
+        old = self.get(item_id).state
+        if old not in {State.RECEIVED, State.VISION, State.STUDIO, State.PUBLISHING, State.RECOVERY}:
+            raise ValueError(f"invalid-failure-transition:{old}->FAILED")
+        self.conn.execute(
+            "UPDATE items SET state=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (State.FAILED.value, error, item_id),
+        )
+        self.conn.execute(
+            "INSERT INTO state_events (item_id,old_state,new_state,reason) VALUES (?,?,?,?)",
+            (item_id, old.value, State.FAILED.value, error),
+        )
         self.conn.commit()
+
+    def original_intact(self, item_id: int) -> bool:
+        import hashlib
+        row = self.conn.execute(
+            "SELECT original_path, original_size, original_sha256 FROM items WHERE id=?",
+            (item_id,),
+        ).fetchone()
+        if row is None or not row["original_path"] or row["original_size"] is None or not row["original_sha256"]:
+            return False
+        path = Path(row["original_path"])
+        if not path.is_file() or path.stat().st_size != row["original_size"]:
+            return False
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest() == row["original_sha256"]
 
     def publication_started(self, item_id: int) -> None:
         self.conn.execute(
