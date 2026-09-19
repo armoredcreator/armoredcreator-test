@@ -7,17 +7,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from armored_core.services import SyncService
+from armored_core.services import IngestMessage, SyncService
 
 
 @dataclass(frozen=True)
 class SyncMessage:
-    source_path: Path
     telegram_message_id: str
     source_id: str = "telegram"
     topic_id: int | None = None
     topic_name: str | None = None
     original_url: str | None = None
+    source_path: Path | None = None
+    materialize: Any | None = None
 
 
 class LocalSource:
@@ -37,10 +38,10 @@ class LocalSource:
                 continue
             self._seen.add(message_id)
             return SyncMessage(
-                path,
-                message_id,
-                "local",
+                telegram_message_id=message_id,
+                source_id="local",
                 original_url=os.getenv("ARMORED_TEST_ORIGINAL_URL"),
+                source_path=path,
             )
         return None
 
@@ -69,21 +70,11 @@ class TelegramReader:
 
 
 class TelegramSource:
-    """Fonte real do ArmoredSync, preservando a coleta validada do backup.
+    """Fonte real do ArmoredSync.
 
-    A fonte oficial é um supergrupo Telegram com fórum. O Sync descobre os
-    tópicos dinamicamente e lê cada tópico via GetRepliesRequest, em vez de
-    varrer o grupo inteiro como uma lista plana.
-
-    Regras preservadas:
-    - vídeo + link Shopee na própria mensagem; ou
-    - vídeo + mensagem imediatamente seguinte contendo o link Shopee;
-    - o message_id canônico é o da mensagem do vídeo;
-    - um candidato é baixado por vez;
-    - SQLite/SyncService continua sendo a fronteira canônica de ingestão.
-
-    A identidade da fonte continua configurável por ambiente e não depende de
-    caminho local ou checkout antigo.
+    Importante: o Sync não baixa para uma pasta própria. Ele somente descobre
+    o candidato e entrega ao Core um materializer que grava diretamente no
+    workspace canônico storage/videos/{item_id}.
     """
 
     URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
@@ -102,8 +93,7 @@ class TelegramSource:
         text = str(getattr(message, "message", "") or "")
         for url in TelegramSource.URL_RE.findall(text):
             cleaned = url.rstrip(".,!?;:" + chr(34) + "'()[]{}<>")
-            lowered = cleaned.lower()
-            if any(domain in lowered for domain in TelegramSource.SHOPEE_DOMAINS):
+            if any(domain in cleaned.lower() for domain in TelegramSource.SHOPEE_DOMAINS):
                 return cleaned
         for entity in (getattr(message, "entities", None) or []):
             url = getattr(entity, "url", None)
@@ -121,7 +111,6 @@ class TelegramSource:
 
     async def _discover_topics(self, source: str) -> list[tuple[int, str]]:
         from telethon import functions
-
         result = await self.reader.client(
             functions.messages.GetForumTopicsRequest(
                 peer=source,
@@ -132,19 +121,15 @@ class TelegramSource:
                 limit=100,
             )
         )
-
         topics: list[tuple[int, str]] = []
         for topic in getattr(result, "topics", []) or []:
             topic_id = getattr(topic, "id", None)
-            if topic_id is None:
-                continue
-            title = str(getattr(topic, "title", None) or topic_id).strip()
-            topics.append((int(topic_id), title))
+            if topic_id is not None:
+                topics.append((int(topic_id), str(getattr(topic, "title", None) or topic_id).strip()))
         return topics
 
     async def _topic_messages(self, source: str, topic_id: int):
         from telethon import functions
-
         offset_id = 0
         while True:
             result = await self.reader.client(
@@ -174,12 +159,27 @@ class TelegramSource:
                 return
             offset_id = oldest
 
+    async def _download_to(self, message: Any, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            target.unlink()
+        with target.open("wb") as output:
+            async for chunk in self.reader.client.iter_download(
+                message,
+                request_size=1024 * 1024,
+            ):
+                if chunk:
+                    output.write(chunk)
+        actual_size = target.stat().st_size if target.exists() else 0
+        telegram_size = getattr(getattr(message, "document", None), "size", None)
+        if actual_size <= 0:
+            raise RuntimeError("download retornou arquivo vazio")
+        if telegram_size is not None and actual_size != int(telegram_size):
+            raise RuntimeError(f"download incompleto: {actual_size} bytes de {int(telegram_size)}")
+
     async def fetch_next_async(self) -> SyncMessage | None:
         source = os.getenv("ARMORED_SYNC_SOURCE", "-1003788989075")
         source_id = os.getenv("ARMORED_SYNC_SOURCE_ID", source)
-        # Telethon treats a numeric source passed as a string as an entity
-        # username and fails to resolve it. Preserve usernames, but normalize
-        # Telegram numeric IDs to int before issuing API requests.
         source_ref = int(source) if str(source).lstrip("-").isdigit() else source
 
         if self._topic_iterator is None:
@@ -193,62 +193,13 @@ class TelegramSource:
             message_id, topic_id, topic_name, message, original_url = candidate
             if message_id in self._seen:
                 continue
-
-            target = self.root / "storage" / "sync" / f"{message_id}.mp4"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if not target.exists() or target.stat().st_size <= 0:
-                partial = target.with_suffix(target.suffix + ".part")
-                try:
-                    if partial.exists():
-                        partial.unlink()
-                    downloaded_bytes = 0
-                    with partial.open("wb") as output:
-                        async for chunk in self.reader.client.iter_download(
-                            message,
-                            request_size=1024 * 1024,
-                        ):
-                            if not chunk:
-                                continue
-                            output.write(chunk)
-                            downloaded_bytes += len(chunk)
-
-                    actual_size = partial.stat().st_size if partial.exists() else 0
-                    telegram_size = getattr(
-                        getattr(message, "document", None),
-                        "size",
-                        None,
-                    )
-                    if actual_size <= 0:
-                        raise RuntimeError("download retornou arquivo vazio")
-                    if telegram_size is not None and actual_size != int(telegram_size):
-                        raise RuntimeError(
-                            f"download incompleto: {actual_size} bytes de {int(telegram_size)}"
-                        )
-                    if target.exists():
-                        target.unlink()
-                    partial.replace(target)
-                except Exception as exc:
-                    try:
-                        if partial.exists():
-                            partial.unlink()
-                    except OSError:
-                        pass
-                    raise RuntimeError(
-                        f"Falha ao baixar vídeo {message_id}: "
-                        f"{type(exc).__name__}: {exc}"
-                    ) from exc
-
-            if not target.exists() or target.stat().st_size <= 0:
-                raise RuntimeError(f"Telegram não baixou o vídeo {message_id}")
-
-            self._seen.add(message_id)
             return SyncMessage(
-                target,
-                str(message_id),
-                source_id,
-                topic_id,
-                topic_name,
-                original_url,
+                telegram_message_id=str(message_id),
+                source_id=source_id,
+                topic_id=topic_id,
+                topic_name=topic_name,
+                original_url=original_url,
+                materialize=lambda target, m=message: asyncio.run(self._download_to(m, target)),
             )
         return None
 
@@ -258,24 +209,14 @@ class TelegramSource:
             for index, message in enumerate(messages):
                 if not getattr(message, "video", None):
                     continue
-
                 original_url = self._shopee_url(message)
-
                 if original_url is None and index + 1 < len(messages):
                     next_message = messages[index + 1]
                     if not getattr(next_message, "video", None):
                         original_url = self._shopee_url(next_message)
-
                 if original_url is None:
                     continue
-
-                yield (
-                    int(getattr(message, "id", 0) or 0),
-                    int(topic_id),
-                    topic_name,
-                    message,
-                    original_url,
-                )
+                yield (int(getattr(message, "id", 0) or 0), int(topic_id), topic_name, message, original_url)
 
     def fetch_next(self) -> SyncMessage | None:
         return asyncio.run(self.fetch_next_async())
@@ -295,11 +236,14 @@ class ArmoredSync:
         return value
 
     def ingest(self, message: SyncMessage) -> int:
-        return self.sync.ingest(
-            message.source_path,
-            message.telegram_message_id,
-            message.source_id,
-            message.topic_id,
-            message.topic_name,
-            message.original_url,
+        return self.sync.ingest_message(
+            IngestMessage(
+                telegram_message_id=message.telegram_message_id,
+                source_id=message.source_id,
+                topic_id=message.topic_id,
+                topic_name=message.topic_name,
+                original_url=message.original_url,
+                source_path=message.source_path,
+                materialize=message.materialize,
+            )
         )
