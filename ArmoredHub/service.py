@@ -46,7 +46,40 @@ class ArmoredHub:
         status = record.get("status")
         if status == "published":
             return PublicationCheck.CONFIRMED
+        if status == "unknown" and os.getenv("ARMORED_HUB_VERIFY_TELEGRAM", "0") == "1":
+            if self._verify_telegram_message(record):
+                record["status"] = "published"
+                data = self._load()
+                data[self._key(item)] = record
+                self._save(data)
+                return PublicationCheck.CONFIRMED
         return PublicationCheck.UNKNOWN
+
+    def _verify_telegram_message(self, record: dict) -> bool:
+        message_id = record.get("message_id")
+        api_id = os.getenv("TELEGRAM_API_ID")
+        api_hash = os.getenv("TELEGRAM_API_HASH")
+        chat_id = os.getenv("ARMORED_CREATOR_GROUP_ID")
+        if not message_id or not api_id or not api_hash or not chat_id:
+            return False
+
+        async def verify():
+            try:
+                from telethon import TelegramClient
+            except ImportError:
+                return False
+            session = self.root / "credentials" / "telegram" / "session" / "armoredhub-verify"
+            session.parent.mkdir(parents=True, exist_ok=True)
+            client = TelegramClient(str(session), int(api_id), api_hash)
+            try:
+                await client.start()
+                message = await client.get_messages(int(chat_id), ids=int(message_id))
+                return message is not None and bool(getattr(message, "id", None))
+            finally:
+                if client.is_connected():
+                    await client.disconnect()
+
+        return __import__("asyncio").run(verify())
 
     def publish(self, item: Item) -> PublicationResult:
         state = self._load()
