@@ -64,5 +64,30 @@ class IntegrityAndConcurrencyTests(unittest.TestCase):
             self.assertEqual(db.conn.execute("SELECT claimed_by FROM items WHERE id=?", (item,)).fetchone()[0], "recovery-worker")
             db.close()
 
+    def test_tampered_original_is_detected(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            source = root / "source.mp4"
+            source.write_bytes(b"original")
+            item = SyncService(db, storage).ingest(source, "telegram-tamper")
+            original = db.get(item).original_path
+            original.write_bytes(b"tampered")
+            self.assertFalse(db.original_intact(item))
+            db.close()
+
+    def test_failed_state_cannot_be_failed_again(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            item = db.create_item("telegram-fail", storage.original(1))
+            db.fail(item, "first")
+            with self.assertRaises(ValueError):
+                db.fail(item, "second")
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
