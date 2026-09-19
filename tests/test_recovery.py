@@ -9,9 +9,11 @@ from armored_core.recovery import Recovery
 from armored_core.services import PublicationResult, StudioResult, SyncService, VisionResult
 from armored_core.storage import Storage
 
+
 class Vision:
     def identify(self, item):
         return VisionResult("recover-final", "https://example.invalid/a")
+
 
 class Studio:
     def __init__(self, storage):
@@ -24,9 +26,11 @@ class Studio:
         r.write_bytes(w.read_bytes())
         return StudioResult(w, r)
 
+
 class CrashStudio(Studio):
     def process(self, item):
         raise RuntimeError("simulated studio crash")
+
 
 class Publisher:
     def __init__(self):
@@ -40,6 +44,7 @@ class Publisher:
         self.count += 1
         self.ids.add(item.item_id)
         return PublicationResult(True, str(self.count))
+
 
 class RecoveryTests(unittest.TestCase):
     def setUp(self):
@@ -69,8 +74,7 @@ class RecoveryTests(unittest.TestCase):
     def test_recovery_rebuilds_working_when_result_missing(self):
         Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub).run(self.item)
         row = self.db.get(self.item)
-        # Simulate a crash before publication with the durable result removed.
-        row.result_path.unlink()
+        row.result_path.unlink(missing_ok=True)
         self.db.transition(self.item, State.STUDIO, "test-result-missing")
         Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item)
         self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
