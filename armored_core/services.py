@@ -72,7 +72,7 @@ class SyncService:
         digest = self._sha256(source)
         item_id = None
         try:
-            item_id = self.db.create_item(telegram_message_id, Path(""))
+            item_id = self.db.create_item(telegram_message_id, self.storage.database)
             original = self.storage.original(item_id, suffix)
             partial = original.with_suffix(original.suffix + ".part")
             shutil.copy2(source, partial)
