@@ -199,7 +199,7 @@ class TelegramSource:
                 topic_id=topic_id,
                 topic_name=topic_name,
                 original_url=original_url,
-                materialize=lambda target, m=message: asyncio.run(self._download_to(m, target)),
+                materialize=lambda target, m=message: self._download_to(m, target),
             )
         return None
 
