@@ -18,11 +18,11 @@ class Pipeline:
         if not self.db.claim(item_id, worker_id):
             raise RuntimeError("item-already-claimed")
         try:
-            self._run_claimed(item_id)
+            self.run_claimed(item_id)
         finally:
             self.db.release(item_id, worker_id)
 
-    def _run_claimed(self, item_id: int) -> None:
+    def run_claimed(self, item_id: int) -> None:
         item = self.db.get(item_id)
         if item.state == State.PUBLISHED:
             self.cleanup(item_id)
@@ -31,7 +31,7 @@ class Pipeline:
         try:
             if not self.db.original_intact(item_id):
                 original = item.original_path
-                if not original.exists():
+                if original is None or not original.exists():
                     raise FileNotFoundError("immutable-original-missing")
                 raise IOError("immutable-original-integrity-failed")
 
