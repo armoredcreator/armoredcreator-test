@@ -124,6 +124,7 @@ class EndToEndRecoveryTests(unittest.TestCase):
             db = Database(storage.database / "armoredcreator.db")
             published = set()
             crashing = PersistentPublisher(published, crash_after_publish=True)
+            os.environ["ARMORED_STUDIO_ALLOW_COPY"] = "1"
             coordinator = Coordinator.build(
                 root,
                 Bindings(Source(source), Vision(), ArmoredStudio(root), crashing),
@@ -156,6 +157,7 @@ class EndToEndRecoveryTests(unittest.TestCase):
             coordinator.run(item_id)
             self.assertEqual(recovered.count, 0)
             coordinator.close()
+            os.environ.pop("ARMORED_STUDIO_ALLOW_COPY", None)
 
 
 if __name__ == "__main__":
