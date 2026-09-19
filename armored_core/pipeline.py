@@ -21,7 +21,7 @@ class Pipeline:
         if not self.db.claim(item_id, worker_id, self.lease_seconds):
             raise RuntimeError("item-already-claimed")
         try:
-            self.run_claimed(item_id)
+            self.run_claimed(item_id, worker_id)
         finally:
             self.db.release(item_id, worker_id)
 
