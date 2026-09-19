@@ -46,7 +46,7 @@ class Coordinator:
 
             vision = ArmoredVision()
             studio = ArmoredStudio(storage.root)
-            publisher = ArmoredHub(storage.root)
+            publisher = ArmoredHub(storage.root, db)
             if os.getenv("ARMORED_REAL_TELEGRAM", "0") == "1":
                 api_id = os.getenv("TELEGRAM_API_ID")
                 api_hash = os.getenv("TELEGRAM_API_HASH")
@@ -62,27 +62,19 @@ class Coordinator:
     async def ingest_once_async(self):
         if self.source is None:
             raise RuntimeError("Sync source não configurado")
-
         fetch_async = getattr(self.source, "fetch_next_async", None)
-        if fetch_async is None:
-            message = self.source.fetch_next()
-        else:
-            message = await fetch_async()
-
+        message = await fetch_async() if fetch_async is not None else self.source.fetch_next()
         if message is None:
             return None
-
-        item_id = await self.sync.ingest_message_async(
-            IngestMessage(
-                telegram_message_id=str(message.telegram_message_id),
-                source_id=getattr(message, "source_id", "telegram"),
-                topic_id=getattr(message, "topic_id", None),
-                topic_name=getattr(message, "topic_name", None),
-                original_url=getattr(message, "original_url", None),
-                source_path=getattr(message, "source_path", None),
-                materialize=getattr(message, "materialize", None),
-            )
-        )
+        item_id = await self.sync.ingest_message_async(IngestMessage(
+            telegram_message_id=str(message.telegram_message_id),
+            source_id=getattr(message, "source_id", "telegram"),
+            topic_id=getattr(message, "topic_id", None),
+            topic_name=getattr(message, "topic_name", None),
+            original_url=getattr(message, "original_url", None),
+            source_path=getattr(message, "source_path", None),
+            materialize=getattr(message, "materialize", None),
+        ))
         marker = getattr(self.source, "mark_ingested", None)
         if marker is not None:
             marker(str(message.telegram_message_id))
@@ -94,22 +86,18 @@ class Coordinator:
         if getattr(self.source, "fetch_next_async", None) is not None:
             import asyncio
             return asyncio.run(self.ingest_once_async())
-
         message = self.source.fetch_next()
         if message is None:
             return None
-
-        item_id = self.sync.ingest_message(
-            IngestMessage(
-                telegram_message_id=str(message.telegram_message_id),
-                source_id=getattr(message, "source_id", "telegram"),
-                topic_id=getattr(message, "topic_id", None),
-                topic_name=getattr(message, "topic_name", None),
-                original_url=getattr(message, "original_url", None),
-                source_path=getattr(message, "source_path", None),
-                materialize=getattr(message, "materialize", None),
-            )
-        )
+        item_id = self.sync.ingest_message(IngestMessage(
+            telegram_message_id=str(message.telegram_message_id),
+            source_id=getattr(message, "source_id", "telegram"),
+            topic_id=getattr(message, "topic_id", None),
+            topic_name=getattr(message, "topic_name", None),
+            original_url=getattr(message, "original_url", None),
+            source_path=getattr(message, "source_path", None),
+            materialize=getattr(message, "materialize", None),
+        ))
         marker = getattr(self.source, "mark_ingested", None)
         if marker is not None:
             marker(str(message.telegram_message_id))
@@ -133,17 +121,12 @@ class Coordinator:
 
     def recover_pending(self):
         states = (
-            State.RECEIVED.value,
-            State.VISION.value,
-            State.STUDIO.value,
-            State.PUBLISHING.value,
-            State.RECOVERY.value,
-            State.FAILED.value,
+            State.RECEIVED.value, State.VISION.value, State.STUDIO.value,
+            State.PUBLISHING.value, State.RECOVERY.value, State.FAILED.value,
         )
         placeholders = ",".join("?" for _ in states)
         rows = self.db.conn.execute(
-            f"SELECT id FROM items WHERE state IN ({placeholders}) ORDER BY id",
-            states,
+            f"SELECT id FROM items WHERE state IN ({placeholders}) ORDER BY id", states
         ).fetchall()
         recovered = []
         for row in rows:
