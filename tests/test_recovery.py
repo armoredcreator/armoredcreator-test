@@ -66,12 +66,13 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue(row.original_path.exists())
         self.assertEqual([p.name for p in row.workspace.iterdir()], [row.original_path.name])
 
-    def test_recovery_rebuilds_working_when_result_missing(self):
-        Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub).run(self.item)
-        row = self.db.get(self.item)
-        # Simulate a crash before publication with the durable result removed.
-        row.result_path.unlink()
-        self.db.transition(self.item, State.STUDIO, "test-result-missing")
+    def test_recovery_rebuilds_result_when_result_missing(self):
+        vision = Vision().identify(self.db.get(self.item))
+        self.db.set_vision(self.item, vision.affiliate_name, vision.affiliate_url)
+        working = self.storage.working(self.item)
+        working.write_bytes(self.db.get(self.item).original_path.read_bytes())
+        self.db.set_working(self.item, working)
+        self.db.transition(self.item, State.STUDIO, "simulate-result-missing")
         Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item)
         self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
         self.assertEqual(self.pub.count, 1)
