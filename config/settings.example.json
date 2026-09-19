@@ -1,0 +1,8 @@
+{
+  "storage": "storage",
+  "database": "storage/database",
+  "logs": "storage/logs",
+  "backups": "storage/backups",
+  "max_attempts": 3,
+  "telegram_bot_token_env": "TELEGRAM_BOT_TOKEN"
+}
