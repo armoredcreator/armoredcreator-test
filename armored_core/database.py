@@ -188,6 +188,12 @@ class Database:
         self.conn.commit()
         return cur.rowcount == 1
 
+    def is_claimed_by(self, item_id: int, worker_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT claimed_by, state FROM items WHERE id=?", (item_id,)
+        ).fetchone()
+        return bool(row and row["claimed_by"] == worker_id and row["state"] != State.PUBLISHED.value)
+
     def renew_claim(self, item_id: int, worker_id: str) -> bool:
         cur = self.conn.execute("UPDATE items SET claimed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=? AND claimed_by=? AND state != ?", (item_id, worker_id, State.PUBLISHED.value))
         self.conn.commit()
