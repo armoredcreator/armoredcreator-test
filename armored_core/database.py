@@ -187,6 +187,24 @@ class Database:
         self.conn.commit()
         return cur.rowcount == 1
 
+    def renew_claim(self, item_id: int, worker_id: str) -> bool:
+        cur = self.conn.execute(
+            "UPDATE items SET claimed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
+            "WHERE id=? AND claimed_by=? AND state != ?",
+            (item_id, worker_id, State.PUBLISHED.value),
+        )
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def backup_to(self, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        target = sqlite3.connect(destination)
+        try:
+            self.conn.backup(target)
+            target.commit()
+        finally:
+            target.close()
+
     def release(self, item_id: int, worker_id: str) -> None:
         self.conn.execute("UPDATE items SET claimed_by=NULL, claimed_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=? AND claimed_by=?", (item_id, worker_id))
         self.conn.commit()
