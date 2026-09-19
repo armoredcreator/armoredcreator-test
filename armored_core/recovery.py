@@ -13,6 +13,9 @@ class Recovery:
         self.pipeline = Pipeline(db, storage, vision, studio, publisher)
 
     def reconcile(self, item_id: int, worker_id: str = "recovery") -> None:
+        if self.db.get(item_id).state == State.PUBLISHED:
+            self.pipeline.cleanup(item_id)
+            return
         if not self.db.claim(item_id, worker_id):
             raise RuntimeError("item-already-claimed")
         try:
