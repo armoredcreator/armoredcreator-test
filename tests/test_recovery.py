@@ -121,5 +121,20 @@ class RecoveryTests(unittest.TestCase):
             Pipeline(self.db, self.storage, Vision(), Studio(self.storage), UnknownPublisher()).run(self.item)
         self.assertEqual(self.db.get(self.item).state, State.FAILED)
 
+    def test_recovery_handles_external_publish_before_db_confirmation(self):
+        class CrashAfterExternalPublish(Publisher):
+            def publish(self, item):
+                self.count += 1
+                self.ids.add(item.item_id)
+                raise RuntimeError("crash-after-external-publish")
+
+        crashing = CrashAfterExternalPublish()
+        with self.assertRaises(RuntimeError):
+            Pipeline(self.db, self.storage, Vision(), Studio(self.storage), crashing).run(self.item)
+        self.assertEqual(self.db.get(self.item).state, State.FAILED)
+        Recovery(self.db, self.storage, Vision(), Studio(self.storage), crashing).reconcile(self.item)
+        self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
+        self.assertEqual(crashing.count, 1)
+
 if __name__ == "__main__":
     unittest.main()
