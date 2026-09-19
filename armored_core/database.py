@@ -68,6 +68,10 @@ class Database:
             if name not in cols:
                 self.conn.execute(f"ALTER TABLE items ADD COLUMN {name} {definition}")
 
+    @staticmethod
+    def publication_key(item_id: int) -> str:
+        return f"armoredcreator:item:{item_id}"
+
     def create_item(self, telegram_message_id: str) -> int:
         cur = self.conn.execute(
             "INSERT INTO items (telegram_message_id,state,original_path) VALUES (?,?,NULL)",
@@ -163,7 +167,7 @@ class Database:
         return digest.hexdigest() == row["original_sha256"]
 
     def publication_started(self, item_id: int) -> None:
-        self.conn.execute("INSERT INTO publications(item_id,idempotency_key) VALUES(?,?) ON CONFLICT(item_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP", (item_id, f"armoredcreator:item:{item_id}"))
+        self.conn.execute("INSERT INTO publications(item_id,idempotency_key) VALUES(?,?) ON CONFLICT(item_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP", (item_id, self.publication_key(item_id)))
         self.conn.commit()
 
     def publication_confirmed(self, item_id: int, message_id: str) -> None:
