@@ -8,11 +8,7 @@ from .services import PublicationResult
 
 
 class TelegramPublisher:
-    """Real Telegram publisher.
-
-    Uses Telethon lazily so the test suite does not require a Telegram session.
-    Publication is idempotent through a deterministic item marker.
-    """
+    """Telethon-backed Telegram Publisher with deterministic idempotency."""
 
     def __init__(
         self,
@@ -28,7 +24,6 @@ class TelegramPublisher:
         self.api_hash = api_hash or os.getenv("TELEGRAM_API_HASH")
         self.session_path = Path(session_path or os.getenv("TELEGRAM_SESSION_PATH", "storage/telegram/session"))
         self.bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
-
         missing = []
         if self.target is None:
             missing.append("TELEGRAM_PUBLISH_TARGET")
@@ -36,8 +31,6 @@ class TelegramPublisher:
             missing.append("TELEGRAM_API_ID")
         if not self.api_hash:
             missing.append("TELEGRAM_API_HASH")
-        if not self.bot_token:
-            missing.append("TELEGRAM_BOT_TOKEN")
         if missing:
             raise RuntimeError("missing-telegram-config:" + ",".join(missing))
 
@@ -63,6 +56,16 @@ class TelegramPublisher:
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         return TelegramClient(str(self.session_path), self.api_id, self.api_hash)
 
+    async def _connected_client(self):
+        client = self._client()
+        await client.connect()
+        if not await client.is_user_authorized():
+            if not self.bot_token:
+                await client.disconnect()
+                raise RuntimeError("telegram-session-not-authorized")
+            await client.start(bot_token=self.bot_token)
+        return client
+
     async def _find(self, client, item: Item):
         async for message in client.iter_messages(self.target, search=self.marker(item), limit=20):
             if self.marker(item) in (message.message or ""):
@@ -73,9 +76,12 @@ class TelegramPublisher:
         import asyncio
 
         async def check():
-            async with self._client() as client:
+            client = await self._connected_client()
+            try:
                 message = await self._find(client, item)
                 return PublicationCheck.CONFIRMED if message else PublicationCheck.ABSENT
+            finally:
+                await client.disconnect()
 
         try:
             return asyncio.run(check())
@@ -89,7 +95,8 @@ class TelegramPublisher:
             raise FileNotFoundError("publication-result-missing")
 
         async def send():
-            async with self._client() as client:
+            client = await self._connected_client()
+            try:
                 existing = await self._find(client, item)
                 if existing:
                     return PublicationResult(True, str(existing.id))
@@ -100,6 +107,8 @@ class TelegramPublisher:
                     supports_streaming=True,
                 )
                 return PublicationResult(True, str(message.id))
+            finally:
+                await client.disconnect()
 
         try:
             return asyncio.run(send())
