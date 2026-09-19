@@ -2,6 +2,38 @@
 
 Laboratório isolado da nova arquitetura sequencial do ArmoredCreator.
 
+
+## Objetivo da reconstrução
+
+Este repositório **não é um desenvolvimento da pipeline funcional do zero**.
+
+A pipeline original do ArmoredCreator foi previamente executada e validada de ponta a ponta no projeto de referência. O backup preserva esse comportamento funcional validado:
+
+**Telegram fonte → ArmoredSync → ArmoredVision → ArmoredStudio → ArmoredHub → Telegram**
+
+A finalidade deste laboratório é **reconstruir e unificar essa implementação**, preservando o comportamento que já funciona e fortalecendo a arquitetura.
+
+Objetivos principais:
+
+- unificar as implementações e responsabilidades;
+- remover módulos duplicados, órfãos e código legado;
+- eliminar dependências de caminhos ou checkouts externos;
+- manter o comportamento funcional já validado como referência;
+- estabelecer o SQLite como estado canônico da pipeline;
+- impedir processamento e publicação duplicados;
+- tornar a publicação idempotente;
+- garantir que o original permaneça imutável;
+- implementar recuperação determinística após falhas e reinícios;
+- garantir cleanup seguro somente após confirmação da publicação.
+
+O **ArmoredCreator_BACKUP é a referência comportamental**, não uma dependência de execução. A reconstrução deve ser capaz de reproduzir o fluxo validado do backup sem importar código, estado ou runtime do projeto antigo.
+
+Portanto, a validação desta reconstrução deve responder principalmente a:
+
+> **O novo núcleo preserva o comportamento já validado enquanto elimina duplicações e adiciona proteção, idempotência e recovery determinístico?**
+
+Não se trata de reinventar ou redesenhar a pipeline funcional que já foi comprovada.
+
 ## Arquitetura canônica
 
 ```
