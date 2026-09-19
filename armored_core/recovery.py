@@ -10,7 +10,15 @@ class Recovery:
         self.db, self.storage = db, storage
         self.pipeline = Pipeline(db, storage, vision, studio, publisher)
 
-    def reconcile(self, item_id: int) -> None:
+    def reconcile(self, item_id: int, worker_id: str = "recovery") -> None:
+        if not self.db.claim(item_id, worker_id):
+            raise RuntimeError("item-already-claimed")
+        try:
+            self._reconcile_claimed(item_id)
+        finally:
+            self.db.release(item_id, worker_id)
+
+    def _reconcile_claimed(self, item_id: int) -> None:
         item = self.db.get(item_id)
 
         if item.state == State.PUBLISHED:
