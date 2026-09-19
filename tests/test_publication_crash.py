@@ -4,7 +4,7 @@ from armored_core.database import Database
 from armored_core.models import State
 from armored_core.pipeline import Pipeline
 from armored_core.recovery import Recovery
-from armored_core.services import PublicationResult, SyncService, VisionResult
+from armored_core.services import PublicationResult, StudioResult, SyncService, VisionResult
 from armored_core.storage import Storage
 
 class V:
@@ -13,7 +13,7 @@ class S:
     def __init__(self,s): self.s=s
     def process(self,item):
         w=self.s.working(item.item_id); w.write_bytes(item.original_path.read_bytes())
-        r=self.s.result(item.item_id,item.affiliate_name); r.write_bytes(w.read_bytes()); return r
+        r=self.s.result(item.item_id,item.affiliate_name); r.write_bytes(w.read_bytes()); return StudioResult(w, r)
 
 class PublishThenCrash:
     def __init__(self): self.published=set(); self.calls=0
