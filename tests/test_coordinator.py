@@ -80,6 +80,7 @@ class CoordinatorTests(unittest.TestCase):
             db = Database(storage.database / "db.sqlite")
             source = AsyncSource()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), Publisher(), source)
+            self.addCleanup(coordinator.close)
 
             item_id = coordinator.ingest_once()
 
@@ -89,7 +90,7 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(item.original_path.read_bytes(), b"ASYNC-TELEGRAM")
             self.assertFalse((root / "storage" / "sync").exists())
             self.assertEqual(source.marked, "telegram-async-1")
-            coordinator.close()
+
 
 
     def test_complete_chain_is_composed_and_sequential(self):
@@ -101,6 +102,7 @@ class CoordinatorTests(unittest.TestCase):
             src.write_bytes(b"ORIGINAL")
             pub = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), pub, Source(src))
+            self.addCleanup(coordinator.close)
             item_id = coordinator.process_next()
             self.assertEqual(item_id, "telegram-async-1")
             row = db.get(item_id)
@@ -109,7 +111,7 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(pub.count, 1)
             self.assertIsNone(coordinator.process_next())
             self.assertEqual(pub.count, 1)
-            coordinator.close()
+
 
 if __name__ == "__main__":
     unittest.main()
