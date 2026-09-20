@@ -224,4 +224,12 @@ class Database:
         ).fetchone()
 
     def close(self) -> None:
-        self.conn.close()
+        if self.conn is None:
+            return
+        try:
+            self.conn.commit()
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.conn.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            self.conn.close()
+            self.conn = None
