@@ -80,17 +80,16 @@ class UnifiedStudio:
         if not original.is_file():
             raise FileNotFoundError(original)
 
-        working = self.storage.working(item.content_id)
         output = self.storage.result(item.content_id, item.affiliate_url, item.affiliate_name)
         if output.exists():
             output.unlink()
 
-        source = Path(item.working_path or original)
+        # The immutable ORIGINAL is the canonical Studio input. Do not create
+        # a byte-identical WORKING copy merely to satisfy the old contract.
+        # A WORKING artifact is used only when a durable intermediate exists.
+        source = Path(item.working_path) if item.working_path else original
         if not source.is_file():
             raise FileNotFoundError(source)
-        if source != working:
-            shutil.copy2(source, working)
-        source = working
 
         # Explicit deterministic test mode preserves the contract tests without
         # pretending that arbitrary bytes are a real video.
