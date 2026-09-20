@@ -28,7 +28,7 @@ class VisionStudioContractTests(unittest.TestCase):
         original = storage.original(1, telegram_message_id="tg-1", original_url="https://shopee.com.br/abc/123/456")
         original.write_bytes(b"ORIGINAL")
         return Item(
-            item_id=1,
+            content_id="tg-1",
             telegram_message_id="tg-1",
             state=State.VISION,
             workspace=storage.workspace("tg-1"),
@@ -73,13 +73,13 @@ class VisionStudioContractTests(unittest.TestCase):
                        "affiliate_url": "https://shopee.com.br/abc/finaldomeulinknovo"}
                 )
                 result = ArmoredStudio(root).process(item)
-                self.assertEqual(result.working_path, storage.working(1, item.telegram_message_id))
+                self.assertEqual(result.working_path, storage.working(item.content_id, item.telegram_message_id))
                 self.assertEqual(
                     result.result_path.name,
                     "tg-1_finaldomeulinknovo.mp4",
                 )
                 self.assertEqual(
-                    sorted(p.name for p in storage.workspace(1).iterdir()),
+                    sorted(p.name for p in storage.workspace(item.telegram_message_id).iterdir()),
                     ["tg-1_.mp4", "tg-1_456.mp4", "tg-1_finaldomeulinknovo.mp4"],
                 )
                 self.assertFalse((root / "storage" / "sync").exists())
