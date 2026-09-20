@@ -54,8 +54,14 @@ class RealTelegramE2ETests(unittest.TestCase):
             item_id = asyncio.run(coordinator.ingest_once_async())
             self.assertIsNotNone(item_id, "Telegram source returned no eligible video")
 
-            # Real Vision + real Studio + real Hub publication.
-            coordinator.run(str(item_id))
+            # A previous interrupted real-E2E run may have left the same
+            # canonical Telegram content in FAILED. Recovery is the required
+            # deterministic entry point; never bypass it with a blind rerun.
+            current = coordinator.db.get(str(item_id))
+            if current.state == State.FAILED:
+                coordinator.recover(str(item_id))
+            else:
+                coordinator.run(str(item_id))
             item = coordinator.db.get(str(item_id))
 
             self.assertEqual(item.state, State.PUBLISHED)
