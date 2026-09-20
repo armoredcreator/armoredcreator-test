@@ -7,15 +7,15 @@ def project_root() -> Path:
     configured = os.getenv("ARMORED_ROOT")
     return Path(configured).expanduser().resolve() if configured else Path(__file__).resolve().parents[1]
 
-def affiliate_tail(affiliate_url: str | None, fallback: str | None = None) -> str:
+def affiliate_tail(url: str | None, fallback: str | None = None) -> str:
     value = ""
-    if affiliate_url:
-        parsed = urlparse(str(affiliate_url).strip())
+    if url:
+        parsed = urlparse(str(url).strip())
         value = unquote(parsed.path.rstrip("/").split("/")[-1])
     if not value and fallback:
         value = str(fallback).strip()
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in value).strip("_")
-    return safe or "final"
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in value).strip("._-")
+    return safe or "unknown"
 
 class Storage:
     def __init__(self, root: Path | None = None) -> None:
@@ -33,12 +33,16 @@ class Storage:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def original(self, item_id: int, suffix: str = ".mp4") -> Path:
-        return self.workspace(item_id) / f"{item_id}_finallinkoriginal{suffix}"
+    def original(self, item_id: int, suffix: str = ".mp4", telegram_message_id: str | None = None, original_url: str | None = None) -> Path:
+        message_id = str(telegram_message_id or item_id)
+        tail = affiliate_tail(original_url)
+        return self.workspace(item_id) / f"{message_id}_{tail}{suffix}"
 
-    def working(self, item_id: int) -> Path:
-        return self.workspace(item_id) / f"{item_id}_.mp4"
+    def working(self, item_id: int, telegram_message_id: str | None = None) -> Path:
+        message_id = str(telegram_message_id or item_id)
+        return self.workspace(item_id) / f"{message_id}_working.mp4"
 
-    def result(self, item_id: int, affiliate_url: str | None = None, affiliate_name: str | None = None) -> Path:
+    def result(self, item_id: int, affiliate_url: str | None = None, affiliate_name: str | None = None, telegram_message_id: str | None = None) -> Path:
+        message_id = str(telegram_message_id or item_id)
         tail = affiliate_tail(affiliate_url, affiliate_name)
-        return self.workspace(item_id) / f"{item_id}_{tail}.mp4"
+        return self.workspace(item_id) / f"{message_id}_{tail}.mp4"
