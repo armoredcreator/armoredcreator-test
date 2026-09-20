@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+import logging
+import os
+import signal
+from pathlib import Path
+
+from armored_core.coordinator import Coordinator
+
+
+def main() -> int:
+    root = Path(os.getenv("ARMORED_ROOT") or Path(__file__).resolve().parent).resolve()
+    os.environ.setdefault("ARMORED_ROOT", str(root))
+
+    logging.basicConfig(
+        level=os.getenv("ARMORED_LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s | %(levelname)s | %(message)s",
+    )
+
+    coordinator = Coordinator.build(root=root)
+    try:
+        logging.info("ArmoredCreator Coordinator iniciado")
+        logging.info("Root: %s", root)
+        logging.info("Modo SQLite: %s", coordinator.db.sync_mode())
+        coordinator.run_forever(
+            poll_seconds=float(os.getenv("ARMORED_POLL_SECONDS", "2")),
+        )
+        return 0
+    except KeyboardInterrupt:
+        logging.info("Shutdown solicitado pelo operador")
+        return 0
+    except SystemExit:
+        return 0
+    except Exception:
+        logging.exception("Coordinator encerrou com erro")
+        return 1
+    finally:
+        coordinator.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
