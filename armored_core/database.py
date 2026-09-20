@@ -95,7 +95,7 @@ class Database:
         )
         return item_id
 
-    def finalize_original_path(self, item_id: int, path: Path, sha256: str) -> None:
+    def finalize_original_path(self, item_id: str, path: Path, sha256: str) -> None:
         self.conn.execute(
             "UPDATE items SET original_path=?, original_sha256=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
             (str(path), sha256, item_id),
@@ -109,19 +109,19 @@ class Database:
         self, telegram_message_id: str, original_path: Path,
         source_id: str = "telegram", topic_id: int | None = None,
         topic_name: str | None = None, original_url: str | None = None,
-    ) -> int:
-        cur = self.conn.execute(
-            "INSERT INTO items (telegram_message_id,source_id,topic_id,topic_name,original_url,state,original_path) VALUES (?,?,?,?,?,?,?)",
-            (telegram_message_id, source_id, topic_id, topic_name, original_url,
+    ) -> str:
+        content_id = str(telegram_message_id)
+        self.conn.execute(
+            "INSERT INTO items (content_id,telegram_message_id,source_id,topic_id,topic_name,original_url,state,original_path) VALUES (?,?,?,?,?,?,?,?)",
+            (content_id, telegram_message_id, source_id, topic_id, topic_name, original_url,
              State.RECEIVED.value, str(original_path)),
         )
-        item_id = int(cur.lastrowid)
         self.conn.execute(
             "INSERT INTO state_events (content_id,new_state,reason) VALUES (?,?,?)",
-            (item_id, State.RECEIVED.value, "ingest-reserved"),
+            (content_id, State.RECEIVED.value, "ingest-reserved"),
         )
         self.conn.commit()
-        return item_id
+        return content_id
 
     def get(self, item_id: str) -> Item:
         content_id = str(item_id)
@@ -138,21 +138,21 @@ class Database:
             row["original_sha256"], row["attempts"], row["recovery_count"], bool(row["cleanup_completed"]),
         )
 
-    def record_attempt(self, item_id: int) -> None:
+    def record_attempt(self, item_id: str) -> None:
         self.conn.execute(
             "UPDATE items SET attempts=attempts+1, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
             (item_id,),
         )
         self.conn.commit()
 
-    def record_recovery(self, item_id: int) -> None:
+    def record_recovery(self, item_id: str) -> None:
         self.conn.execute(
             "UPDATE items SET recovery_count=recovery_count+1, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
             (item_id,),
         )
         self.conn.commit()
 
-    def transition(self, item_id: int, new_state: State, reason: str = "") -> None:
+    def transition(self, item_id: str, new_state: State, reason: str = "") -> None:
         old = self.get(item_id).state
         self.conn.execute(
             "UPDATE items SET state=?, last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
@@ -164,28 +164,28 @@ class Database:
         )
         self.conn.commit()
 
-    def set_vision(self, item_id: int, affiliate_name: str, affiliate_url: str) -> None:
+    def set_vision(self, item_id: str, affiliate_name: str, affiliate_url: str) -> None:
         self.conn.execute(
             "UPDATE items SET affiliate_name=?, affiliate_url=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
             (affiliate_name, affiliate_url, item_id),
         )
         self.conn.commit()
 
-    def set_working(self, item_id: int, path: Path) -> None:
+    def set_working(self, item_id: str, path: Path) -> None:
         self.conn.execute(
             "UPDATE items SET working_path=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
             (str(path), item_id),
         )
         self.conn.commit()
 
-    def set_result(self, item_id: int, path: Path) -> None:
+    def set_result(self, item_id: str, path: Path) -> None:
         self.conn.execute(
             "UPDATE items SET result_path=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
             (str(path), item_id),
         )
         self.conn.commit()
 
-    def fail(self, item_id: int, error: str) -> None:
+    def fail(self, item_id: str, error: str) -> None:
         self.conn.execute(
             "UPDATE items SET state=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
             (State.FAILED.value, error, item_id),
@@ -196,14 +196,14 @@ class Database:
         )
         self.conn.commit()
 
-    def mark_cleanup_completed(self, item_id: int) -> None:
+    def mark_cleanup_completed(self, item_id: str) -> None:
         self.conn.execute(
             "UPDATE items SET cleanup_completed=1, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
             (item_id,),
         )
         self.conn.commit()
 
-    def publication_started(self, item_id: int) -> None:
+    def publication_started(self, item_id: str) -> None:
         self.conn.execute(
             "INSERT INTO publications(content_id,idempotency_key) VALUES(?,?) "
             "ON CONFLICT(content_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP",
@@ -211,7 +211,7 @@ class Database:
         )
         self.conn.commit()
 
-    def publication_confirmed(self, item_id: int, message_id: str) -> None:
+    def publication_confirmed(self, item_id: str, message_id: str) -> None:
         self.conn.execute(
             "UPDATE publications SET published_message_id=?, confirmed=1, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
             (message_id, item_id),
