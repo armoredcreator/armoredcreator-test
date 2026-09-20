@@ -658,20 +658,80 @@ test_history_and_live_share_same_identity
 
 Somente depois disso o fluxo Sync será considerado fechado.
 
-## 18. Próxima fase — Operação contínua real e integração do Bot
+## 18. O que ainda falta para fechar totalmente
 
-A base de operação contínua agora está validada em testes determinísticos: CATCH-UP → LIVE, processamento sequencial de múltiplos itens e restart com recuperação pelo SQLite após falha durante LIVE.
+A base lógica de operação contínua já está **APROVADA em testes determinísticos**. O que falta agora é validar a operação como processo real e fechar a integração operacional.
 
-O próximo passo **ainda não é considerado aprovado** até execução local correspondente:
+### Ainda falta
 
-1. executar o Coordinator como processo contínuo real, sem `max_cycles`;
-2. provocar/reproduzir restart do processo durante LIVE;
-3. confirmar que o processo retorna, recupera pendências e continua do checkpoint persistido;
-4. confirmar que novos itens entram no mesmo Pipeline, um por vez;
-5. confirmar novamente que queda após publicação não gera duplicata;
-6. somente depois integrar o fluxo final do Bot/`START_ALL` no laboratório.
+1. **Coordinator em execução contínua real**
+   - executar `run_forever()` sem limite de ciclos;
+   - deixar o processo monitorando LIVE de forma contínua;
+   - confirmar que permanece estável entre ciclos sem novos itens.
 
-Estado desta próxima fase: 🔲 **NÃO VALIDADO LOCALMENTE**.
+2. **Restart real durante LIVE**
+   - iniciar o Coordinator;
+   - permitir que entre em LIVE;
+   - interromper o processo;
+   - iniciar novamente;
+   - confirmar recovery + retomada pelo checkpoint persistido.
+
+3. **Novo item após restart**
+   - publicar/receber um novo conteúdo depois da retomada;
+   - confirmar que ele entra no mesmo Pipeline;
+   - confirmar processamento estritamente sequencial.
+
+4. **Falha real após publicação**
+   - reproduzir uma interrupção no ponto pós-publicação;
+   - reiniciar;
+   - confirmar publicação já existente;
+   - confirmar `PUBLISHED`/cleanup;
+   - confirmar **zero republicação**.
+
+5. **Integração final do Bot**
+   - incorporar o Coordinator contínuo ao processo operacional do Bot;
+   - reconstruir/validar o fluxo equivalente ao `START_ALL`;
+   - confirmar que Bot + Sync + Vision + Studio + Hub iniciam corretamente;
+   - confirmar que não existem processos duplicados ou arquiteturas paralelas antigas.
+
+6. **Teste final de ponta a ponta em operação contínua**
+   - CATCH-UP real;
+   - transição para LIVE;
+   - novo conteúdo;
+   - processamento;
+   - publicação;
+   - confirmação;
+   - cleanup;
+   - item seguinte;
+   - restart;
+   - retomada;
+   - novo item após retomada.
+
+### O que já está fechado
+
+- ✅ Storage único/canônico
+- ✅ SQLite como verdade
+- ✅ identidade pelo Telegram message ID
+- ✅ CATCH-UP → LIVE
+- ✅ checkpoints persistentes por tópico
+- ✅ deduplicação histórico/LIVE
+- ✅ Pipeline sequencial, 1 item ativo
+- ✅ Vision → Studio → Hub
+- ✅ publicação idempotente
+- ✅ recovery determinístico
+- ✅ proteção contra `UNKNOWN`
+- ✅ cleanup preservando original
+- ✅ auditoria de arquitetura/portabilidade
+- ✅ RVC integrado ao Studio
+- ✅ assets necessários versionados
+- ✅ suite: **37 passed**
+- ✅ E2E real Telegram: **1 passed**
+- 🔲 Coordinator contínuo real: **NÃO VALIDADO**
+- 🔲 restart real do processo em LIVE: **NÃO VALIDADO**
+- 🔲 Bot/`START_ALL` final: **NÃO VALIDADO**
+- 🔲 E2E operacional contínuo completo: **NÃO VALIDADO**
+
+Portanto, o projeto **não precisa ser reconstruído novamente**. A base do pipeline está validada; resta fechar a camada operacional contínua e a integração final do Bot.
 
 ## 19. Próxima otimização
 
