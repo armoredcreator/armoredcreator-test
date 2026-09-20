@@ -103,10 +103,10 @@ class Coordinator:
             marker(str(message.telegram_message_id))
         return item_id
 
-    def run(self, item_id: int) -> None:
+    def run(self, item_id: str) -> None:
         self.pipeline.run(item_id)
 
-    def recover(self, item_id: int) -> None:
+    def recover(self, item_id: str) -> None:
         self.recovery.reconcile(item_id)
 
     def close(self) -> None:
@@ -126,11 +126,11 @@ class Coordinator:
         )
         placeholders = ",".join("?" for _ in states)
         rows = self.db.conn.execute(
-            f"SELECT id FROM items WHERE state IN ({placeholders}) ORDER BY id", states
+            f"SELECT content_id FROM items WHERE state IN ({placeholders}) ORDER BY id", states
         ).fetchall()
         recovered = []
         for row in rows:
-            item_id = int(row["id"])
+            item_id = str(row["content_id"])
             self.recover(item_id)
             recovered.append(item_id)
         return recovered
