@@ -73,14 +73,14 @@ class VisionStudioContractTests(unittest.TestCase):
                        "affiliate_url": "https://shopee.com.br/abc/finaldomeulinknovo"}
                 )
                 result = ArmoredStudio(root).process(item)
-                self.assertEqual(result.working_path, storage.working(item.content_id))
+                self.assertIsNone(result.working_path)
                 self.assertEqual(
                     result.result_path.name,
                     "tg-1_finaldomeulinknovo.mp4",
                 )
                 self.assertEqual(
                     sorted(p.name for p in storage.workspace(item.content_id).iterdir()),
-                    ["tg-1_.mp4", "tg-1_456.mp4", "tg-1_finaldomeulinknovo.mp4"],
+                    ["tg-1_456.mp4", "tg-1_finaldomeulinknovo.mp4"],
                 )
                 self.assertFalse((root / "storage" / "sync").exists())
                 self.assertFalse((root / "storage" / "queue").exists())
