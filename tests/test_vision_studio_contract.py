@@ -80,7 +80,7 @@ class VisionStudioContractTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     sorted(p.name for p in storage.workspace(1).iterdir()),
-                    ["tg-1_working.mp4", "tg-1_finaldomeulinknovo.mp4", "tg-1_456.mp4"],
+                    ["tg-1_.mp4", "tg-1_finaldomeulinknovo.mp4", "tg-1_456.mp4"],
                 )
                 self.assertFalse((root / "storage" / "sync").exists())
                 self.assertFalse((root / "storage" / "queue").exists())
