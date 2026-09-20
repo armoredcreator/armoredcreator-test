@@ -491,43 +491,36 @@ Esta seção registra **somente validações realmente executadas**. O README é
 
 ### Última validação local confirmada
 
-**Resultado mais recente do usuário:** `37 passed in 22.79s` na suíte completa e `1 passed in 9.49s` no E2E real Telegram.
+**Resultado mais recente executado pelo usuário:** `45 passed, 1 skipped in 12.85s` na suíte completa.
 
-**Commits validados:** `8aac83d`, `81f0940`, `dc9c2f4`  
+**HEAD validado:** `fa6a5da` (`test: keep FAILED items out of startup recovery`)  
 **Branch:** `refactor/single-storage-pipeline`  
-**Ambiente local:** Windows 11 / Python 3.11.9 / pytest 9.1.1
+**Ambiente local informado:** Windows / Python 3.11.9 / pytest 9.1.1
 
 Suite completa:
 
 ```
 python -m pytest -q
 
-37 passed
+45 passed, 1 skipped in 12.85s
 ```
 
-O `1 skipped` é o teste E2E real quando a variável de execução real não está habilitada. A suíte completa, incluindo a auditoria arquitetural, terminou sem falhas.
+O `1 skipped` não é falha. A suíte local terminou sem qualquer teste falhando.
 
-E2E real do Telegram:
-
-```
-$env:ARMORED_REAL_TELEGRAM_E2E="1"
-python -m pytest tests\\e2e\\test_real_telegram.py -v -s
-
-1 passed in 9.49s
-```
+**Importante:** este resultado não deve ser confundido com E2E real de publicação Telegram. A suíte completa atual valida os contratos e os cenários controlados; a publicação real continua condicionada às credenciais/ambiente e deve ser registrada separadamente somente quando executada.
 
 ### Estado aprovado
 
 | Área | Estado |
 |---|---|
-| Suite automatizada | ✅ APROVADO — 37 passed |
+| Suite automatizada | ✅ APROVADO — 45 passed, 1 skipped |
 | Auditoria arquitetural | ✅ APROVADO |
 | Storage canônico | ✅ APROVADO |
 | Ausência de storage legado | ✅ APROVADO |
 | Studio sem modules/v1 e modules/v2 | ✅ APROVADO |
 | Portabilidade — sem caminhos de máquina no código de produção | ✅ APROVADO |
-| E2E real Telegram | ✅ APROVADO — 1 passed |
-| Fluxo Sync → Vision → Studio → Hub → Telegram | ✅ APROVADO no E2E real |
+| E2E real Telegram | 🔲 NÃO VALIDADO neste HEAD |
+| Fluxo Sync → Vision → Studio → Hub → Telegram | 🔲 E2E real completo ainda não reexecutado neste HEAD |
 | CATCH-UP → LIVE contínuo | ✅ APROVADO — teste de execução contínua |
 | Deduplicação histórico/LIVE | ✅ APROVADO nos testes |
 | Recovery determinístico | ✅ APROVADO nos testes |
@@ -573,7 +566,7 @@ O teste `tests/test_architecture_cleanup.py` bloqueia regressões em pontos crí
 
 A auditoria também exclui explicitamente `ArmoredStudio/runtime/` da varredura de código de produção, porque esse diretório contém o ambiente/vendor local do RVC e seus `site-packages`. O runtime é ignorado pelo Git e não representa código-fonte do projeto.
 
-**Validação:** ✅ APROVADA localmente com `37 passed`.
+**Validação:** ✅ APROVADA localmente dentro da suíte atual: `45 passed, 1 skipped`.
 
 ### Histórico de resultados
 
@@ -582,8 +575,8 @@ Resultados principais registrados no laboratório:
 - `22 passed` — etapa anterior, antes do fechamento do lifecycle CATCH-UP → LIVE.
 - `27 passed` — suite após o lifecycle e antes da auditoria arquitetural.
 - `34 passed, 1 skipped` — suite completa com a auditoria arquitetural.
-- `37 passed in 22.79s` — suite após os testes de operação contínua e restart durante LIVE.
-- `1 passed in 9.49s` — E2E real Telegram executado novamente após os testes de operação contínua.
+- `45 passed, 1 skipped in 12.85s` — suíte completa executada no HEAD `fa6a5da`.
+- `1 passed in 9.49s` — E2E real Telegram foi executado em uma etapa anterior, mas **não deve ser tratado como validação do HEAD atual** sem nova execução.
 
 **Regra:** quando uma alteração mudar o comportamento, esta seção deve ser atualizada somente após executar os testes correspondentes. Registrar separadamente `APROVADO`, `SKIP`, `FALHOU` e `NÃO VALIDADO`.
 
@@ -658,80 +651,95 @@ test_history_and_live_share_same_identity
 
 Somente depois disso o fluxo Sync será considerado fechado.
 
-## 18. O que ainda falta para fechar totalmente
+## 18. Estado atual de fechamento
 
-A base lógica de operação contínua já está **APROVADA em testes determinísticos**. O que falta agora é validar a operação como processo real e fechar a integração operacional.
+Esta seção é a referência operacional atual. Ela separa o que já está implementado/testado do que ainda precisa de validação real.
 
-### Ainda falta
+### Fechado e aprovado por testes
 
-1. **Coordinator em execução contínua real**
-   - executar `run_forever()` sem limite de ciclos;
-   - deixar o processo monitorando LIVE de forma contínua;
-   - confirmar que permanece estável entre ciclos sem novos itens.
+- ✅ Storage único/canônico em `storage/database`, `storage/videos`, `storage/logs`, `storage/backups`.
+- ✅ SQLite como fonte de verdade para identidade, estado, checkpoints, recovery e publicação.
+- ✅ Identidade canônica por `telegram_message_id`.
+- ✅ CATCH-UP → LIVE com checkpoints persistentes.
+- ✅ Deduplicação entre histórico e LIVE.
+- ✅ Pipeline sequencial com um único item ativo.
+- ✅ Vision → Studio → Hub no mesmo pipeline lógico.
+- ✅ ArmoredStudio unificado, sem `ArmoredStudio/modules/v1` ou `ArmoredStudio/modules/v2`.
+- ✅ RVC tratado como funcionalidade interna do Studio.
+- ✅ Recovery determinístico e proteção contra republicação.
+- ✅ `UNKNOWN` nunca autoriza republicação automática.
+- ✅ Publicação com persistência do `message_id` antes da verificação final.
+- ✅ Itens `FAILED` não são automaticamente retriados no startup.
+- ✅ Lock/runtime recovery e persistência após restart cobertos por testes.
+- ✅ Coordinator possui `run_forever()` para operação contínua.
+- ✅ `START_COORDINATOR.bat` e `run_coordinator.py` iniciam o Coordinator pela raiz portátil do projeto.
+- ✅ Auditoria arquitetural/portabilidade coberta por testes.
+- ✅ Suíte local atual: **45 passed, 1 skipped**.
+
+### Implementado, mas ainda não certificado como operação real contínua
+
+1. **Coordinator contínuo real**
+   - O método `run_forever()` já existe e usa lock persistente, recovery, CATCH-UP e polling LIVE.
+   - Ainda falta uma execução operacional prolongada com Telegram real para registrar estabilidade real do processo.
 
 2. **Restart real durante LIVE**
-   - iniciar o Coordinator;
-   - permitir que entre em LIVE;
-   - interromper o processo;
-   - iniciar novamente;
-   - confirmar recovery + retomada pelo checkpoint persistido.
+   - O contrato de restart e persistência está coberto pelos testes.
+   - Ainda falta executar o procedimento real: iniciar → entrar em LIVE → interromper → iniciar novamente → observar retomada por checkpoint.
 
-3. **Novo item após restart**
-   - publicar/receber um novo conteúdo depois da retomada;
-   - confirmar que ele entra no mesmo Pipeline;
-   - confirmar processamento estritamente sequencial.
+3. **Integração final com o Bot/START_ALL**
+   - O laboratório possui `START_COORDINATOR.bat` como entrada operacional do Coordinator.
+   - A integração com o Bot histórico/START_ALL não deve ser declarada concluída sem validar o processo real que será usado em produção.
 
-4. **Falha real após publicação**
-   - reproduzir uma interrupção no ponto pós-publicação;
-   - reiniciar;
-   - confirmar publicação já existente;
-   - confirmar `PUBLISHED`/cleanup;
-   - confirmar **zero republicação**.
+4. **E2E real completo**
+   - Existe `tests/e2e/test_real_telegram.py`.
+   - O resultado real Telegram anterior pertence a uma etapa anterior e não é automaticamente transferido para o HEAD `fa6a5da`.
+   - Portanto, no estado atual: **NÃO VALIDADO neste HEAD**.
 
-5. **Integração final do Bot**
-   - incorporar o Coordinator contínuo ao processo operacional do Bot;
-   - reconstruir/validar o fluxo equivalente ao `START_ALL`;
-   - confirmar que Bot + Sync + Vision + Studio + Hub iniciam corretamente;
-   - confirmar que não existem processos duplicados ou arquiteturas paralelas antigas.
+### Configuração de publicação real
 
-6. **Teste final de ponta a ponta em operação contínua**
-   - CATCH-UP real;
-   - transição para LIVE;
-   - novo conteúdo;
-   - processamento;
-   - publicação;
-   - confirmação;
-   - cleanup;
-   - item seguinte;
-   - restart;
-   - retomada;
-   - novo item após retomada.
+O código de publicação real exige explicitamente as credenciais e configuração do Telegram. Enquanto:
 
-### O que já está fechado
+```
+ARMORED_HUB_DRY_RUN=1
+``
 
-- ✅ Storage único/canônico
-- ✅ SQLite como verdade
-- ✅ identidade pelo Telegram message ID
-- ✅ CATCH-UP → LIVE
-- ✅ checkpoints persistentes por tópico
-- ✅ deduplicação histórico/LIVE
-- ✅ Pipeline sequencial, 1 item ativo
-- ✅ Vision → Studio → Hub
-- ✅ publicação idempotente
-- ✅ recovery determinístico
-- ✅ proteção contra `UNKNOWN`
-- ✅ cleanup preservando original
-- ✅ auditoria de arquitetura/portabilidade
-- ✅ RVC integrado ao Studio
-- ✅ assets necessários versionados
-- ✅ suite: **37 passed**
-- ✅ E2E real Telegram: **1 passed**
-- 🔲 Coordinator contínuo real: **NÃO VALIDADO**
-- 🔲 restart real do processo em LIVE: **NÃO VALIDADO**
-- 🔲 Bot/`START_ALL` final: **NÃO VALIDADO**
-- 🔲 E2E operacional contínuo completo: **NÃO VALIDADO**
+estiver ativo, a publicação real fica bloqueada por segurança e nenhum item pode ser considerado `PUBLISHED` por dry-run.
 
-Portanto, o projeto **não precisa ser reconstruído novamente**. A base do pipeline está validada; resta fechar a camada operacional contínua e a integração final do Bot.
+A mudança para publicação real só deve ocorrer durante um teste controlado, depois de confirmar o mecanismo de verificação MTProto. `UNKNOWN` continua sendo condição de parada, nunca ausência de publicação.
+
+### Critério de encerramento desta fase
+
+A reconstrução não precisa voltar para a arquitetura antiga. O fechamento final exige apenas a validação operacional dos pontos acima:
+
+```
+CATCH-UP real
+   ↓
+LIVE real contínuo
+   ↓
+novo item
+   ↓
+Vision
+   ↓
+Studio/RVC
+   ↓
+Hub
+   ↓
+Telegram real
+   ↓
+confirmação
+   ↓
+cleanup
+   ↓
+próximo item
+   ↓
+restart
+   ↓
+recovery
+   ↓
+novo item novamente
+```
+
+Até essa execução, o estado correto do projeto é: **base automatizada aprovada; operação real contínua ainda em validação.**
 
 ## 19. Próxima otimização
 
