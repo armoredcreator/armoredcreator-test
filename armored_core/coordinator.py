@@ -289,7 +289,7 @@ class Coordinator:
     def recover_pending(self):
         states = (
             State.RECEIVED.value, State.VISION.value, State.STUDIO.value,
-            State.PUBLISHING.value, State.RECOVERY.value, State.FAILED.value,
+            State.PUBLISHING.value, State.RECOVERY.value,
         )
         placeholders = ",".join("?" for _ in states)
         rows = self.db.conn.execute(
