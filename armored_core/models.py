@@ -19,7 +19,7 @@ class PublicationCheck(StrEnum):
 
 @dataclass(frozen=True)
 class Item:
-    item_id: int
+    content_id: str
     telegram_message_id: str
     state: State
     workspace: Path
@@ -36,3 +36,8 @@ class Item:
     attempts: int = 0
     recovery_count: int = 0
     cleanup_completed: bool = False
+
+    @property
+    def item_id(self) -> str:
+        """Backward-compatible alias; content_id is the canonical identity."""
+        return self.content_id
