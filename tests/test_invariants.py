@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+import hashlib
 
 from armored_core.database import Database
 from armored_core.models import PublicationCheck, State
@@ -10,16 +11,21 @@ from armored_core.storage import Storage
 
 class V:
     def identify(self, item):
-        return VisionResult("affiliate-name", "https://example.invalid")
+        return VisionResult("affiliate-name", "https://example.invalid/final")
 
 class S:
     def __init__(self, storage):
         self.storage = storage
 
     def process(self, item):
-        w = self.storage.working(item.item_id)
+        w = self.storage.working(item.item_id, item.telegram_message_id)
         w.write_bytes(b"WORK")
-        r = self.storage.result(item.item_id, item.affiliate_name)
+        r = self.storage.result(
+            item.item_id,
+            item.affiliate_url,
+            item.affiliate_name,
+            item.telegram_message_id,
+        )
         r.write_bytes(b"RESULT")
         return StudioResult(w, r)
 
@@ -44,11 +50,30 @@ class InvariantTests(unittest.TestCase):
             db = Database(st.database / "db.sqlite")
             src = root / "source.mp4"
             src.write_bytes(b"IMMUTABLE")
-            i = SyncService(db, st).ingest(src, "telegram-1")
+            i = SyncService(db, st).ingest(src, "telegram-1", original_url="https://shopee.com.br/example/original")
             original = db.get(i).original_path
             Pipeline(db, st, V(), S(st), P()).run(i)
             self.assertEqual(original.read_bytes(), b"IMMUTABLE")
             self.assertEqual(list(original.parent.iterdir()), [original])
+            db.close()
+
+    def test_database_keeps_original_hash_attempts_and_recovery_metadata(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            st = Storage(root)
+            db = Database(st.database / "db.sqlite")
+            src = root / "source.mp4"
+            payload = b"IMMUTABLE-HASH"
+            src.write_bytes(payload)
+            i = SyncService(db, st).ingest(src, "telegram-1")
+            item = db.get(i)
+            self.assertEqual(item.original_sha256, hashlib.sha256(payload).hexdigest())
+            self.assertEqual(item.attempts, 0)
+            self.assertEqual(item.recovery_count, 0)
+            Pipeline(db, st, V(), S(st), P()).run(i)
+            item = db.get(i)
+            self.assertEqual(item.attempts, 1)
+            self.assertEqual(item.original_sha256, hashlib.sha256(payload).hexdigest())
             db.close()
 
     def test_duplicate_ingest_returns_same_item(self):
@@ -82,9 +107,13 @@ class InvariantTests(unittest.TestCase):
                 materialize=materialize,
             ))
             item = db.get(i)
-            self.assertEqual(item.original_path, st.original(i, telegram_message_id="1383", original_url="https://shopee.com.br/example"))
+            self.assertEqual(
+                item.original_path,
+                st.original(i, telegram_message_id="1383", original_url="https://shopee.com.br/example"),
+            )
             self.assertTrue(item.original_path.is_file())
             self.assertEqual(item.original_path.read_bytes(), b"TELEGRAM-BYTES")
+            self.assertEqual(item.original_sha256, hashlib.sha256(b"TELEGRAM-BYTES").hexdigest())
             self.assertFalse((root / "storage" / "sync").exists())
             self.assertEqual([p.name for p in item.workspace.iterdir()], ["1383_example.mp4"])
             db.close()
