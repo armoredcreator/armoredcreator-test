@@ -491,7 +491,9 @@ Esta seção registra **somente validações realmente executadas**. O README é
 
 ### Última validação local confirmada
 
-**Commit:** `dc9c2f4`  
+**Resultado mais recente do usuário:** `37 passed in 22.79s` na suíte completa e `1 passed in 9.49s` no E2E real Telegram.
+
+**Commits validados:** `8aac83d`, `81f0940`, `dc9c2f4`  
 **Branch:** `refactor/single-storage-pipeline`  
 **Ambiente local:** Windows 11 / Python 3.11.9 / pytest 9.1.1
 
@@ -546,6 +548,8 @@ Foram executados e aprovados localmente:
 
 A suíte passou com `37 passed`.
 
+> **Observação:** os testes de operação contínua/restart foram executados localmente e aprovados em conjunto com a suíte de 37 testes. A validação real do Telegram também foi repetida após essa etapa.
+
 ### Como repetir a validação
 
 ```powershell
@@ -578,8 +582,8 @@ Resultados principais registrados no laboratório:
 - `22 passed` — etapa anterior, antes do fechamento do lifecycle CATCH-UP → LIVE.
 - `27 passed` — suite após o lifecycle e antes da auditoria arquitetural.
 - `34 passed, 1 skipped` — suite completa com a auditoria arquitetural.
-- `37 passed` — suite após os testes de operação contínua e restart durante LIVE.
-- `1 passed in 9.49s` — E2E real Telegram executado com `ARMORED_REAL_TELEGRAM_E2E=1`.
+- `37 passed in 22.79s` — suite após os testes de operação contínua e restart durante LIVE.
+- `1 passed in 9.49s` — E2E real Telegram executado novamente após os testes de operação contínua.
 
 **Regra:** quando uma alteração mudar o comportamento, esta seção deve ser atualizada somente após executar os testes correspondentes. Registrar separadamente `APROVADO`, `SKIP`, `FALHOU` e `NÃO VALIDADO`.
 
@@ -654,7 +658,22 @@ test_history_and_live_share_same_identity
 
 Somente depois disso o fluxo Sync será considerado fechado.
 
-## 18. Próxima otimização
+## 18. Próxima fase — Operação contínua real e integração do Bot
+
+A base de operação contínua agora está validada em testes determinísticos: CATCH-UP → LIVE, processamento sequencial de múltiplos itens e restart com recuperação pelo SQLite após falha durante LIVE.
+
+O próximo passo **ainda não é considerado aprovado** até execução local correspondente:
+
+1. executar o Coordinator como processo contínuo real, sem `max_cycles`;
+2. provocar/reproduzir restart do processo durante LIVE;
+3. confirmar que o processo retorna, recupera pendências e continua do checkpoint persistido;
+4. confirmar que novos itens entram no mesmo Pipeline, um por vez;
+5. confirmar novamente que queda após publicação não gera duplicata;
+6. somente depois integrar o fluxo final do Bot/`START_ALL` no laboratório.
+
+Estado desta próxima fase: 🔲 **NÃO VALIDADO LOCALMENTE**.
+
+## 19. Próxima otimização
 
 Agora a prioridade é **correção e fechamento do fluxo**, não performance.
 
