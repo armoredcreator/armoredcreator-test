@@ -30,7 +30,7 @@ class AnalysisResult:
 
 
 class AnalysisEngine:
-    """Mandatory V1 analysis stage. No video mutation happens here."""
+    """Mandatory analysis stage. No video mutation happens here."""
 
     def analyze(self, source: Path) -> AnalysisResult:
         video = obter_informacoes_video(source)
@@ -59,7 +59,7 @@ class AnalysisEngine:
 
 
 class UnifiedStudio:
-    """V1 analysis + V2 processing under one canonical Studio contract.
+    """analysis + processing under one canonical Studio contract.
 
     The database/workspace remains outside this class. This class never creates
     storage/input, storage/output, queue or temp trees.
@@ -102,12 +102,12 @@ class UnifiedStudio:
 
         # Real V2 resources are explicit/configurable; never use another
         # checkout or machine-specific path.
-        music = Path(os.getenv("ARMORED_STUDIO_MUSIC", str(self.root / "ArmoredStudio" / "modules" / "v2" / "assets" / "efeitosonoro.wav")))
-        banner = Path(os.getenv("ARMORED_STUDIO_BANNER", str(self.root / "ArmoredStudio" / "modules" / "v2" / "assets" / "banner.png")))
+        music = Path(os.getenv("ARMORED_STUDIO_MUSIC", str(self.root / "ArmoredStudio" / "assets" / "efeitosonoro.wav")))
+        banner = Path(os.getenv("ARMORED_STUDIO_BANNER", str(self.root / "ArmoredStudio" / "assets" / "banner.png")))
 
         if not music.is_file() or not banner.is_file():
             raise FileNotFoundError(
-                "Recursos V2 ausentes. Configure ARMORED_STUDIO_MUSIC e "
+                "Recursos do Studio ausentes. Configure ARMORED_STUDIO_MUSIC e "
                 "ARMORED_STUDIO_BANNER ou instale os assets no projeto."
             )
 
@@ -128,10 +128,10 @@ class UnifiedStudio:
         )
 
         voice = os.getenv("ARMORED_STUDIO_RVC_VOICE", "melody")
-        from .modules.v2.rvc_voice import converter_voz
+        from .processing.rvc import converter_voz
         converter_voz(audio_original, audio_rvc, voice)
 
-        from .modules.v2.editing.finalizer import finalizar
+        from .processing.finalizer import finalizar
         finalizar(source, audio_rvc, music, banner, output, position=os.getenv("ARMORED_STUDIO_INTRO_POSITION", "final"), intro=os.getenv("ARMORED_STUDIO_INTRO", "1") != "0")
 
         for artifact in (audio_original, audio_rvc):
