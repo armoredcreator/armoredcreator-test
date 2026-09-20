@@ -172,6 +172,12 @@ class Coordinator:
                 marker(str(message.telegram_message_id))
             processed.append(str(item_id))
 
+            # FAILED is a durable terminal/manual-retry state. If Sync
+            # rediscovers its Telegram message during CATCH-UP, dedupe returns
+            # the same item ID; never feed that FAILED item back into pipeline.
+            if self.db.get(str(item_id)).state == State.FAILED:
+                continue
+
             # Release Telegram before Hub opens the same Telethon session.
             # The source iterator is already materialized per topic and can
             # reconnect on the next fetch.
@@ -217,6 +223,11 @@ class Coordinator:
                 if marker is not None:
                     marker(str(message.telegram_message_id))
                 processed.append(str(item_id))
+
+                # FAILED is intentionally excluded from automatic retry.
+                # LIVE dedupe may rediscover the same Telegram message.
+                if self.db.get(str(item_id)).state == State.FAILED:
+                    continue
 
                 await self._release_source_connection()
                 self.run(str(item_id))
