@@ -144,6 +144,7 @@ class Coordinator:
         while True:
             message = await fetch_async()
             if message is None:
+                self.db.complete_historical_sync()
                 break
 
             item_id = await self.sync.ingest_message_async(IngestMessage(
@@ -270,7 +271,7 @@ class Coordinator:
         )
         placeholders = ",".join("?" for _ in states)
         rows = self.db.conn.execute(
-            f"SELECT content_id FROM items WHERE state IN ({placeholders}) ORDER BY created_at, content_id", states
+            f"SELECT content_id, state FROM items WHERE state IN ({placeholders}) ORDER BY created_at, content_id", states
         ).fetchall()
         recovered = []
         for row in rows:
