@@ -87,7 +87,7 @@ class SyncService:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def _finish_ingest(self, item_id: int, original: Path, partial: Path) -> int:
+    def _finish_ingest(self, item_id: str, original: Path, partial: Path) -> int:
         if not partial.is_file() or partial.stat().st_size <= 0:
             raise IOError("original-materialization-empty")
         partial.replace(original)
