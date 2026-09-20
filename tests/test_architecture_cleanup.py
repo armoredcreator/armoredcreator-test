@@ -25,6 +25,13 @@ PRODUCTION_DIRS = (
     ROOT / "armored_core",
 )
 
+# ArmoredStudio/runtime contains local/vendor runtime assets (RVC environment,
+# installed site-packages and models). It is intentionally ignored by Git and
+# is not production source code to audit for project portability.
+IGNORED_SOURCE_DIRS = {
+    (ROOT / "ArmoredStudio" / "runtime").resolve(),
+}
+
 
 def test_repository_has_only_canonical_storage_roots():
     storage = ROOT / "storage"
@@ -71,6 +78,13 @@ def test_production_code_has_no_machine_specific_windows_paths(production_root):
     )
 
     for source in production_root.rglob("*.py"):
+        if any(
+            source.resolve() == ignored
+            or ignored in source.resolve().parents
+            for ignored in IGNORED_SOURCE_DIRS
+        ):
+            continue
+
         text = source.read_text(encoding="utf-8")
         for fragment in forbidden_fragments:
             assert fragment not in text, f"{source}: {fragment}"
