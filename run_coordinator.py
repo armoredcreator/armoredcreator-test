@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import signal
 from pathlib import Path
 
 from armored_core.coordinator import Coordinator
