@@ -31,9 +31,18 @@ class ArmoredHub:
         # an unresolved external outcome. Never send again blindly.
         if os.getenv("ARMORED_HUB_VERIFY_TELEGRAM", "0") == "1":
             message_id = record["published_message_id"]
-            if message_id and self._verify_telegram_message(message_id):
-                self.db.publication_confirmed(item.content_id, str(message_id))
+            if message_id:
+                if self._verify_telegram_message(message_id):
+                    self.db.publication_confirmed(item.content_id, str(message_id))
+                    return PublicationCheck.CONFIRMED
+                return PublicationCheck.UNKNOWN
+
+            matches = self._find_telegram_publications(item)
+            if len(matches) == 1:
+                self.db.publication_confirmed(item.content_id, matches[0])
                 return PublicationCheck.CONFIRMED
+            if len(matches) == 0:
+                return PublicationCheck.ABSENT
         return PublicationCheck.UNKNOWN
 
     def _telegram_session_path(self) -> Path:
@@ -124,6 +133,63 @@ class ArmoredHub:
                     await client.disconnect()
 
         return __import__("asyncio").run(discover())
+
+    def _telegram_publication_matches(self, message, item: Item) -> bool:
+        """Match an existing Hub publication deterministically when message_id is unknown."""
+        expected_name = Path(item.result_path or "").name
+        if not expected_name:
+            return False
+
+        document = getattr(message, "document", None)
+        if document is None:
+            return False
+
+        filename = None
+        for attribute in getattr(document, "attributes", []) or []:
+            filename = getattr(attribute, "file_name", None)
+            if filename:
+                break
+
+        if filename != expected_name:
+            return False
+
+        caption = str(getattr(message, "message", "") or "").strip()
+        return caption == str(item.affiliate_url or "").strip()
+
+    def _find_telegram_publications(self, item: Item) -> list[str]:
+        """Find exact candidate publications in the configured forum topic."""
+        api_id = os.getenv("TELEGRAM_API_ID")
+        api_hash = os.getenv("TELEGRAM_API_HASH")
+        topic_id = (os.getenv("ARMORED_HUB_TOPIC_ID") or "228").strip()
+        chat_id = self._resolve_destination_chat_id(topic_id)
+        if not api_id or not api_hash or not chat_id or not topic_id:
+            return []
+
+        async def find():
+            try:
+                from telethon import TelegramClient
+            except ImportError:
+                return []
+
+            session = self._telegram_session_path()
+            session.parent.mkdir(parents=True, exist_ok=True)
+            client = TelegramClient(str(session), int(api_id), api_hash)
+            matches: list[str] = []
+            try:
+                await client.start()
+                async for message in client.iter_messages(
+                    int(chat_id),
+                    reply_to=int(topic_id),
+                    limit=1000,
+                ):
+                    if self._telegram_publication_matches(message, item):
+                        matches.append(str(getattr(message, "id", "")))
+            finally:
+                if client.is_connected():
+                    await client.disconnect()
+            return sorted({value for value in matches if value})
+
+        return __import__("asyncio").run(find())
 
     def _verify_telegram_message(self, message_id: str) -> bool:
         api_id = os.getenv("TELEGRAM_API_ID")
