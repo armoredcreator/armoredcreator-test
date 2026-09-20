@@ -491,7 +491,7 @@ Esta seção registra **somente validações realmente executadas**. O README é
 
 ### Última validação local confirmada
 
-**Commit:** `be130c1`  
+**Commit:** `dc9c2f4`  
 **Branch:** `refactor/single-storage-pipeline`  
 **Ambiente local:** Windows 11 / Python 3.11.9 / pytest 9.1.1
 
@@ -500,7 +500,7 @@ Suite completa:
 ```
 python -m pytest -q
 
-34 passed, 1 skipped
+37 passed
 ```
 
 O `1 skipped` é o teste E2E real quando a variável de execução real não está habilitada. A suíte completa, incluindo a auditoria arquitetural, terminou sem falhas.
@@ -511,14 +511,14 @@ E2E real do Telegram:
 $env:ARMORED_REAL_TELEGRAM_E2E="1"
 python -m pytest tests\\e2e\\test_real_telegram.py -v -s
 
-1 passed in 10.87s
+1 passed in 9.49s
 ```
 
 ### Estado aprovado
 
 | Área | Estado |
 |---|---|
-| Suite automatizada | ✅ APROVADO — 34 passed, 1 skipped |
+| Suite automatizada | ✅ APROVADO — 37 passed |
 | Auditoria arquitetural | ✅ APROVADO |
 | Storage canônico | ✅ APROVADO |
 | Ausência de storage legado | ✅ APROVADO |
@@ -526,12 +526,25 @@ python -m pytest tests\\e2e\\test_real_telegram.py -v -s
 | Portabilidade — sem caminhos de máquina no código de produção | ✅ APROVADO |
 | E2E real Telegram | ✅ APROVADO — 1 passed |
 | Fluxo Sync → Vision → Studio → Hub → Telegram | ✅ APROVADO no E2E real |
-| CATCH-UP → LIVE | ✅ APROVADO nos testes de lifecycle |
+| CATCH-UP → LIVE contínuo | ✅ APROVADO — teste de execução contínua |
 | Deduplicação histórico/LIVE | ✅ APROVADO nos testes |
 | Recovery determinístico | ✅ APROVADO nos testes |
 | Assets do Studio | ✅ VERSIONADOS — `banner.png` e `efeitosonoro.wav` |
 | Baseline oficial | 🔒 INTACTO |
 | Otimização de performance RVC/FFmpeg | 🔲 NÃO É OBJETIVO DESTA FASE |
+
+### Validação da operação contínua
+
+Foram executados e aprovados localmente:
+
+- CATCH-UP → LIVE dentro de uma execução contínua do Coordinator;
+- múltiplos itens LIVE processados sequencialmente;
+- falha durante LIVE após ingestão durável;
+- checkpoint persistido antes da falha de processamento;
+- restart com recuperação pelo SQLite, sem depender de uma nova mensagem Telegram;
+- nenhum segundo processamento/publicação do item recuperado.
+
+A suíte passou com `37 passed`.
 
 ### Como repetir a validação
 
@@ -556,7 +569,7 @@ O teste `tests/test_architecture_cleanup.py` bloqueia regressões em pontos crí
 
 A auditoria também exclui explicitamente `ArmoredStudio/runtime/` da varredura de código de produção, porque esse diretório contém o ambiente/vendor local do RVC e seus `site-packages`. O runtime é ignorado pelo Git e não representa código-fonte do projeto.
 
-**Validação:** ✅ APROVADA localmente com `34 passed, 1 skipped`.
+**Validação:** ✅ APROVADA localmente com `37 passed`.
 
 ### Histórico de resultados
 
@@ -565,7 +578,8 @@ Resultados principais registrados no laboratório:
 - `22 passed` — etapa anterior, antes do fechamento do lifecycle CATCH-UP → LIVE.
 - `27 passed` — suite após o lifecycle e antes da auditoria arquitetural.
 - `34 passed, 1 skipped` — suite completa com a auditoria arquitetural.
-- `1 passed in 10.87s` — E2E real Telegram executado com `ARMORED_REAL_TELEGRAM_E2E=1`.
+- `37 passed` — suite após os testes de operação contínua e restart durante LIVE.
+- `1 passed in 9.49s` — E2E real Telegram executado com `ARMORED_REAL_TELEGRAM_E2E=1`.
 
 **Regra:** quando uma alteração mudar o comportamento, esta seção deve ser atualizada somente após executar os testes correspondentes. Registrar separadamente `APROVADO`, `SKIP`, `FALHOU` e `NÃO VALIDADO`.
 
