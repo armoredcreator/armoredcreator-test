@@ -74,6 +74,41 @@ class Publisher:
         return PublicationResult(True, "published-" + item.item_id)
 
 
+class BatchTelegramSource:
+    def __init__(self):
+        self.connected = True
+        self.marked = []
+        self.disconnected = False
+
+    async def collect_historical_batch_async(self):
+        async def materialize(target):
+            if self.disconnected:
+                raise AssertionError("historical materialization occurred after Telegram disconnect")
+            target.write_bytes(b"BATCH-TELEGRAM")
+
+        return [
+            SimpleNamespace(
+                telegram_message_id="telegram-batch-1",
+                source_id="telegram",
+                topic_id=101,
+                topic_name="Batch",
+                original_url="https://shopee.com.br/example/batch",
+                source_path=None,
+                materialize=materialize,
+            )
+        ], {101: 900}
+
+    def mark_ingested(self, message_id):
+        self.marked.append(str(message_id))
+
+    async def disconnect(self):
+        self.disconnected = True
+
+    def commit_live_checkpoints(self, checkpoints):
+        self.checkpoints = dict(checkpoints)
+
+
+
 class IncrementalCoordinatorTests(unittest.TestCase):
     def test_catch_up_processes_each_item_incrementally(self):
         with tempfile.TemporaryDirectory() as td:
@@ -92,6 +127,29 @@ class IncrementalCoordinatorTests(unittest.TestCase):
             self.assertEqual(db.get("telegram-1").state, State.PUBLISHED)
             self.assertEqual(db.get("telegram-2").state, State.PUBLISHED)
             self.assertEqual(publisher.published, ["telegram-1", "telegram-2"])
+            coordinator.close()
+
+
+    def test_real_source_batch_materializes_before_disconnect_and_then_processes(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            source = BatchTelegramSource()
+            publisher = Publisher()
+            coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source)
+
+            processed = coordinator.run_catch_up()
+
+            self.assertEqual(processed, ["telegram-batch-1"])
+            self.assertEqual(source.marked, ["telegram-batch-1"])
+            self.assertTrue(source.disconnected)
+            self.assertEqual(source.checkpoints, {101: 900})
+            self.assertTrue(db.historical_complete())
+            item = db.get("telegram-batch-1")
+            self.assertEqual(item.state, State.PUBLISHED)
+            self.assertTrue(item.original_path.exists())
+            self.assertEqual(publisher.published, ["telegram-batch-1"])
             coordinator.close()
 
 
