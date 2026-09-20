@@ -27,8 +27,8 @@ class Studio:
     def __init__(self, storage):
         self.storage = storage
     def process(self, item):
-        w = self.storage.working(item.item_id)
-        r = self.storage.result(item.item_id, item.affiliate_name or "affiliate")
+        w = self.storage.working(item.content_id)
+        r = self.storage.result(item.content_id, affiliate_name=item.affiliate_name or "affiliate")
         payload = item.original_path.read_bytes()
         w.write_bytes(payload)
         r.write_bytes(payload + b"-processed")
@@ -83,7 +83,7 @@ class CoordinatorTests(unittest.TestCase):
 
             item_id = coordinator.ingest_once()
 
-            self.assertEqual(item_id, "telegram-async-1")
+            self.assertEqual(item_id, "telegram-100")
             item = db.get(item_id)
             self.assertEqual(item.original_path.name, "telegram-async-1_finaldomeulinknovo.mp4")
             self.assertEqual(item.original_path.read_bytes(), b"ASYNC-TELEGRAM")
