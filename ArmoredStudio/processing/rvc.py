@@ -1,4 +1,4 @@
-"""ArmoredStudio V2 - RVC voice processor."""
+"""ArmoredStudio - isolated RVC voice processor."""
 
 from __future__ import annotations
 
@@ -47,13 +47,16 @@ def localizar_modelo(voz):
     pasta = MODELS_DIR / voz
     if not pasta.exists():
         raise FileNotFoundError(f"Voz não encontrada:\n{pasta}")
+
     modelos = sorted(pasta.glob("*.pth"))
     indices = sorted(pasta.glob("*.index"))
+
     if not modelos:
         raise FileNotFoundError(f"Nenhum modelo .pth encontrado em:\n{pasta}")
-    if not indices:
-        raise FileNotFoundError(f"Nenhum índice .index encontrado em:\n{pasta}")
-    return modelos[0], indices[0]
+
+    # O índice é opcional: RVCInference aceita index_path="".
+    index = indices[0] if indices else None
+    return modelos[0], index
 
 
 def converter_interno(entrada, saida, modelo, index):
@@ -63,7 +66,7 @@ def converter_interno(entrada, saida, modelo, index):
     print("\nCarregando modelo RVC...")
     rvc = RVCInference(
         model_path=str(modelo),
-        index_path=str(index),
+        index_path=str(index) if index else "",
         version="v2",
         device="cpu:0",
     )
@@ -85,7 +88,7 @@ def executar_no_rvc(entrada, saida, voz):
     print("\n=== RVC VOICE ===")
     print(f"Voz: {voz}")
     print(f"Modelo: {modelo}")
-    print(f"Index: {index}")
+    print(f"Index: {index or '(opcional; não encontrado)'}")
 
     current_python = Path(sys.executable).resolve()
     if current_python == rvc_python.resolve():
@@ -120,7 +123,7 @@ def converter_voz(entrada, saida=None, voz=DEFAULT_VOICE):
 
 def main():
     if len(sys.argv) < 3:
-        print("Uso: python rvc_voice.py entrada.wav saida.wav [voz]")
+        print("Uso: python rvc.py entrada.wav saida.wav [voz]")
         sys.exit(1)
 
     entrada = Path(sys.argv[1])
