@@ -219,6 +219,7 @@ class TelegramSource:
                 original_url=original_url,
                 materialize=lambda target, m=message: self._download_to(m, target),
             )
+        self.mark_historical_complete()
         return None
 
     async def _candidate_iterator(self, source: str, topics: list[tuple[int, str]]):
