@@ -183,8 +183,16 @@ class ArmoredHub:
         api_id = os.getenv("TELEGRAM_API_ID")
         api_hash = os.getenv("TELEGRAM_API_HASH")
         topic_id = (os.getenv("ARMORED_HUB_TOPIC_ID") or "228").strip()
-        chat_id = self._resolve_destination_chat_id(topic_id)
-        if not api_id or not api_hash or not chat_id or not topic_id:
+        # Verification is allowed to be unavailable, but that is never proof
+        # that a publication is absent. Missing Telegram credentials/configuration
+        # therefore produces UNKNOWN and must not trigger a republish.
+        if not api_id or not api_hash or not topic_id:
+            return None
+        try:
+            chat_id = self._resolve_destination_chat_id(topic_id)
+        except Exception:
+            return None
+        if not chat_id:
             return None
 
         affiliate = str(item.affiliate_url or "").strip()
@@ -239,8 +247,13 @@ class ArmoredHub:
         api_id = os.getenv("TELEGRAM_API_ID")
         api_hash = os.getenv("TELEGRAM_API_HASH")
         topic_id = (os.getenv("ARMORED_HUB_TOPIC_ID") or "228").strip()
-        chat_id = self._resolve_destination_chat_id(topic_id)
-        if not message_id or not api_id or not api_hash or not chat_id:
+        if not message_id or not api_id or not api_hash or not topic_id:
+            return None
+        try:
+            chat_id = self._resolve_destination_chat_id(topic_id)
+        except Exception:
+            return None
+        if not chat_id:
             return None
 
         async def verify():
