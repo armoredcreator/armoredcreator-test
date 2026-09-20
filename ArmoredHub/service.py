@@ -297,6 +297,11 @@ class ArmoredHub:
                 "Telegram Hub exige ARMORED_CREATOR_BOT_TOKEN e ARMORED_HUB_TOPIC_ID"
             )
         chat_id = self._resolve_destination_chat_id(topic_id)
+        self.db.publication_started(
+            item.item_id,
+            destination_chat_id=chat_id,
+            destination_topic_id=int(topic_id),
+        )
 
         try:
             from telegram import Bot
