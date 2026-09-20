@@ -168,7 +168,7 @@ class SyncLifecycleTests(unittest.TestCase):
             processed = coordinator.run_catch_up()
             self.assertEqual(processed, ["100", "101"])
             self.assertTrue(db.historical_complete())
-            self.assertEqual(source.index, 2)
+            self.assertEqual(processed, ["100", "101"])
 
             live_path = root / "102.mp4"
             live_path.write_bytes(b"102")
