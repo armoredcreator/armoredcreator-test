@@ -16,7 +16,7 @@ class VisionResult:
 
 @dataclass(frozen=True)
 class StudioResult:
-    working_path: Path
+    working_path: Path | None
     result_path: Path
 
 @dataclass(frozen=True)
