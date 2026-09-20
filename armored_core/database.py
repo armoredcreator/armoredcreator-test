@@ -399,8 +399,13 @@ class Database:
             return
         try:
             self.conn.commit()
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            self.conn.execute("PRAGMA journal_mode=DELETE")
+            try:
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.OperationalError:
+                # Another SQLite connection may still be open during shutdown.
+                # Closing this connection is safe; the remaining connection can
+                # perform the checkpoint later.
+                pass
         finally:
             self.conn.close()
             self.conn = None
