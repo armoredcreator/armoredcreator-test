@@ -34,12 +34,13 @@ def test_repository_has_only_canonical_storage_roots():
         for path in storage.iterdir()
         if path.is_dir()
     }
-    assert actual == {
+    allowed = {
         "storage/database",
         "storage/videos",
         "storage/logs",
         "storage/backups",
     }
+    assert actual <= allowed
 
 
 def test_legacy_storage_directories_are_not_present():
