@@ -11,7 +11,7 @@ class Pipeline:
         self.db, self.storage = db, storage
         self.vision, self.studio, self.publisher = vision, studio, publisher
 
-    def run(self, item_id: int) -> None:
+    def run(self, item_id: str) -> None:
         item = self.db.get(item_id)
         if item.state == State.PUBLISHED:
             if not item.cleanup_completed:
