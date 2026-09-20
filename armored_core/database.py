@@ -48,6 +48,10 @@ class Database:
             idempotency_key TEXT NOT NULL UNIQUE,
             published_message_id TEXT,
             confirmed INTEGER NOT NULL DEFAULT 0,
+            verification_status TEXT NOT NULL DEFAULT 'PENDING',
+            destination_chat_id TEXT,
+            destination_topic_id INTEGER,
+            verified_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
@@ -272,18 +276,40 @@ class Database:
         )
         self.conn.commit()
 
-    def publication_started(self, item_id: str) -> None:
+    def publication_started(
+        self,
+        item_id: str,
+        destination_chat_id: str | None = None,
+        destination_topic_id: int | None = None,
+    ) -> None:
         self.conn.execute(
-            "INSERT INTO publications(content_id,idempotency_key) VALUES(?,?) "
-            "ON CONFLICT(content_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP",
-            (str(item_id), f"armoredcreator:content:{str(item_id)}"),
+            "INSERT INTO publications(content_id,idempotency_key,destination_chat_id,destination_topic_id) "
+            "VALUES(?,?,?,?) "
+            "ON CONFLICT(content_id) DO UPDATE SET "
+            "destination_chat_id=COALESCE(excluded.destination_chat_id, publications.destination_chat_id), "
+            "destination_topic_id=COALESCE(excluded.destination_topic_id, publications.destination_topic_id), "
+            "updated_at=CURRENT_TIMESTAMP",
+            (str(item_id), f"armoredcreator:content:{str(item_id)}",
+             destination_chat_id, destination_topic_id),
+        )
+        self.conn.commit()
+
+    def publication_message_sent(self, item_id: str, message_id: str) -> None:
+        """Persist the Telegram message ID before any post-send failure window."""
+        self.conn.execute(
+            "UPDATE publications SET published_message_id=?, confirmed=0, "
+            "verification_status='SENT_UNVERIFIED', updated_at=CURRENT_TIMESTAMP "
+            "WHERE content_id=?",
+            (str(message_id), str(item_id)),
         )
         self.conn.commit()
 
     def publication_confirmed(self, item_id: str, message_id: str) -> None:
         self.conn.execute(
-            "UPDATE publications SET published_message_id=?, confirmed=1, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
-            (message_id, item_id),
+            "UPDATE publications SET published_message_id=?, confirmed=1, "
+            "verification_status='CONFIRMED', verified_at=CURRENT_TIMESTAMP, "
+            "updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+            (str(message_id), str(item_id)),
         )
         self.conn.commit()
 
