@@ -52,7 +52,7 @@ class ArmoredHub:
         if configured:
             return configured
 
-        topic_value = str(topic_id or os.getenv("ARMORED_HUB_TOPIC_ID", "228")).strip()
+        topic_value = str(topic_id or (os.getenv("ARMORED_HUB_TOPIC_ID") or "228")).strip()
         if not topic_value or not topic_value.lstrip("-").isdigit():
             raise RuntimeError("ARMORED_HUB_TOPIC_ID inválido para descoberta automática")
 
@@ -175,7 +175,7 @@ class ArmoredHub:
 
     def _publish_telegram(self, item: Item, output: Path) -> PublicationResult:
         token = os.getenv("ARMORED_CREATOR_BOT_TOKEN")
-        topic_id = os.getenv("ARMORED_HUB_TOPIC_ID", "228")
+        topic_id = (os.getenv("ARMORED_HUB_TOPIC_ID") or "228").strip()
         if not token or not topic_id:
             raise RuntimeError(
                 "Telegram Hub exige ARMORED_CREATOR_BOT_TOKEN e ARMORED_HUB_TOPIC_ID"
