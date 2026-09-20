@@ -194,6 +194,8 @@ class TelegramSource:
             raise RuntimeError(f"download incompleto: {actual_size} bytes de {int(telegram_size)}")
 
     async def fetch_next_async(self) -> SyncMessage | None:
+        if self.is_historical_complete():
+            return None
         source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
         source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
         source_ref = int(source) if str(source).lstrip("-").isdigit() else source
