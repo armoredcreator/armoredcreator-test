@@ -88,6 +88,35 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(source.marked, "telegram-async-1")
             coordinator.close()
 
+    def test_interrupted_materialization_leaves_durable_received_item(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            service = __import__("armored_core.services", fromlist=["SyncService"]).SyncService(db, storage)
+
+            async def materialize(target):
+                target.write_bytes(b"PARTIAL")
+                raise RuntimeError("simulated-download-crash")
+
+            from armored_core.services import IngestMessage
+            message = IngestMessage(
+                telegram_message_id="telegram-crash",
+                original_url="https://shopee.com.br/example/crash",
+                materialize=materialize,
+            )
+
+            with self.assertRaises(RuntimeError):
+                import asyncio
+                asyncio.run(service.ingest_message_async(message))
+
+            row = db.get("telegram-crash")
+            self.assertEqual(row.state, State.RECEIVED)
+            self.assertTrue(row.original_path.parent.exists())
+            self.assertFalse(row.original_path.exists())
+            self.assertFalse(row.original_path.with_suffix(row.original_path.suffix + ".part").exists())
+            db.close()
+
     def test_complete_chain_is_composed_and_sequential(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
