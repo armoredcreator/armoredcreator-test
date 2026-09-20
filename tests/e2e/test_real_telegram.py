@@ -33,12 +33,18 @@ class RealTelegramE2ETests(unittest.TestCase):
             "TELEGRAM_API_ID",
             "TELEGRAM_API_HASH",
             "ARMORED_CREATOR_BOT_TOKEN",
-            "ARMORED_HUB_TOPIC_ID",
         )
         missing = [name for name in required if not os.getenv(name)]
         if missing:
             coordinator.close()
             self.fail("Missing real-E2E environment variables: " + ", ".join(missing))
+
+        # Backup contract: publication target is Telegram forum topic 228.
+        # The parent group ID may be discovered automatically from the existing
+        # ArmoredSync user session; it is not required in configuration.
+        topic_id = os.getenv("ARMORED_HUB_TOPIC_ID", "228").strip()
+        self.assertEqual(topic_id, "228", "Backup contract requires Telegram topic 228")
+
         source = coordinator.source
         item_id = None
 
