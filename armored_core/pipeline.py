@@ -35,9 +35,12 @@ class Pipeline:
                 if not item.affiliate_name:
                     raise RuntimeError("studio-requires-affiliate-metadata")
                 studio = self.studio.process(item)
-                if not studio.working_path.is_file() or not studio.result_path.is_file():
-                    raise FileNotFoundError("studio-did-not-produce-required-files")
-                self.db.set_working(item_id, studio.working_path)
+                if studio.working_path is not None:
+                    if not studio.working_path.is_file():
+                        raise FileNotFoundError("studio-working-file-missing")
+                    self.db.set_working(item_id, studio.working_path)
+                if not studio.result_path.is_file():
+                    raise FileNotFoundError("studio-result-file-missing")
                 self.db.set_result(item_id, studio.result_path)
                 self.db.transition(item_id, State.PUBLISHING, "studio-complete")
             item = self.db.get(item_id)
