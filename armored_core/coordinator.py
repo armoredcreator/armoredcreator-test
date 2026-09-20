@@ -138,6 +138,9 @@ class Coordinator:
                 break
             self.run(item_id)
             processed.append(str(item_id))
+        complete = getattr(self.source, "mark_historical_complete", None)
+        if complete is not None:
+            complete()
         return processed
 
     def run_catch_up(self) -> list[str]:
