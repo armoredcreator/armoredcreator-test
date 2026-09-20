@@ -38,44 +38,60 @@ class FailedResultRecoveryTests(unittest.TestCase):
             storage = Storage(root)
             db = Database(storage.database / "armoredcreator.db")
 
-            original = storage.original("failed-557", original_url="https://example.invalid/source")
-            original.write_bytes(b"ORIGINAL")
-            item_id = db.create_item("failed-557", original)
+            try:
+                original = storage.original(
+                    "failed-557",
+                    original_url="https://example.invalid/source",
+                )
+                original.write_bytes(b"ORIGINAL")
+                item_id = db.create_item("failed-557", original)
 
-            result = storage.result(item_id, "recover-final")
-            result.write_bytes(b"FINAL")
-            db.set_vision(item_id, "recover-final", "https://example.invalid/affiliate")
-            db.set_result(item_id, result)
-            db.fail(item_id, "simulated pre-recovery failure")
+                result = storage.result(item_id, "recover-final")
+                result.write_bytes(b"FINAL")
+                db.set_vision(
+                    item_id,
+                    "recover-final",
+                    "https://example.invalid/affiliate",
+                )
+                db.set_result(item_id, result)
+                db.fail(item_id, "simulated pre-recovery failure")
 
-            publisher = Publisher()
-            Recovery(
-                db,
-                storage,
-                MustNotRunVision(),
-                MustNotRunStudio(),
-                publisher,
-            ).reconcile(item_id)
+                publisher = Publisher()
+                Recovery(
+                    db,
+                    storage,
+                    MustNotRunVision(),
+                    MustNotRunStudio(),
+                    publisher,
+                ).reconcile(item_id)
 
-            row = db.get(item_id)
-            self.assertEqual(row.state, State.PUBLISHED)
-            self.assertEqual(publisher.calls, 1)
-            self.assertTrue(result.exists())
-            self.assertTrue(original.exists())
-            self.assertEqual([p.name for p in row.workspace.iterdir()], [original.name])
+                row = db.get(item_id)
+                self.assertEqual(row.state, State.PUBLISHED)
+                self.assertEqual(publisher.calls, 1)
 
-            events = [
-                r["new_state"]
-                for r in db.conn.execute(
-                    "SELECT new_state FROM state_events WHERE content_id=? ORDER BY id",
-                    (item_id,),
-                ).fetchall()
-            ]
-            self.assertIn(State.RECOVERY.value, events)
-            self.assertIn(State.PUBLISHING.value, events)
-            self.assertIn(State.PUBLISHED.value, events)
+                # Recovery publishes the durable result and then performs the
+                # normal successful cleanup. The original remains permanent;
+                # derived/result artifacts are removed.
+                self.assertFalse(result.exists())
+                self.assertTrue(original.exists())
+                self.assertEqual(
+                    [p.name for p in row.workspace.iterdir()],
+                    [original.name],
+                )
 
-            db.close()
+                events = [
+                    r["new_state"]
+                    for r in db.conn.execute(
+                        "SELECT new_state FROM state_events "
+                        "WHERE content_id=? ORDER BY id",
+                        (item_id,),
+                    ).fetchall()
+                ]
+                self.assertIn(State.RECOVERY.value, events)
+                self.assertIn(State.PUBLISHING.value, events)
+                self.assertIn(State.PUBLISHED.value, events)
+            finally:
+                db.close()
 
 
 if __name__ == "__main__":
