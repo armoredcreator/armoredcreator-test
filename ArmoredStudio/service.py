@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import shutil
 
 from armored_core.models import Item
 from armored_core.services import StudioResult
@@ -18,6 +20,10 @@ class ArmoredStudio:
         self.engine = UnifiedStudio(self.root, self.storage)
 
     def process(self, item: Item) -> StudioResult:
+        ffmpeg = os.getenv("ARMORED_FFMPEG", "ffmpeg")
+        if not shutil.which(ffmpeg):
+            raise RuntimeError("FFmpeg não encontrado")
+
         result_path, _details = self.engine.process(item)
         return StudioResult(
             self.storage.working(item.item_id),
