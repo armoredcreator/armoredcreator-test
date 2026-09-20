@@ -9,7 +9,7 @@ import sys
 
 
 BASE_DIR = Path(__file__).resolve().parent
-STUDIO_ROOT = BASE_DIR.parents[1]
+STUDIO_ROOT = BASE_DIR.parent
 _configured_rvc_root = os.getenv("ARMORED_RVC_ROOT", "").strip()
 RVC_ROOT = (
     Path(_configured_rvc_root).expanduser()
