@@ -73,7 +73,6 @@ class SyncService:
         )
         original = self.storage.original(
             item_id, suffix,
-            telegram_message_id=message.telegram_message_id,
             original_url=message.original_url,
         )
         partial = original.with_suffix(original.suffix + ".part")
