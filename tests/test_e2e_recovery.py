@@ -95,7 +95,7 @@ class EndToEndRecoveryTests(unittest.TestCase):
                 )
                 item_id = coordinator.ingest_once()
 
-                self.assertEqual(item_id, "telegram-async-1")
+                self.assertEqual(item_id, "e2e-100")
                 with self.assertRaises(RuntimeError):
                     coordinator.run(item_id)
                 self.assertEqual(coordinator.db.get(item_id).state, State.FAILED)
@@ -118,7 +118,7 @@ class EndToEndRecoveryTests(unittest.TestCase):
                 events = [
                     r["new_state"]
                     for r in coordinator.db.conn.execute(
-                        "SELECT new_state FROM state_events WHERE item_id=? ORDER BY id",
+                        "SELECT new_state FROM state_events WHERE content_id=? ORDER BY id",
                         (item_id,),
                     ).fetchall()
                 ]
