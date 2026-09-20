@@ -35,3 +35,4 @@ class Item:
     original_sha256: str | None = None
     attempts: int = 0
     recovery_count: int = 0
+    cleanup_completed: bool = False
