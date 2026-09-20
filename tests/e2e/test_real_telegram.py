@@ -20,6 +20,15 @@ class RealTelegramE2ETests(unittest.TestCase):
         if os.getenv("ARMORED_REAL_TELEGRAM_E2E", "0") != "1":
             self.skipTest("ARMORED_REAL_TELEGRAM_E2E=1 required")
 
+        previous = {name: os.environ.get(name) for name in ("ARMORED_REAL_TELEGRAM", "ARMORED_HUB_DRY_RUN", "ARMORED_STUDIO_FORCE_COPY")}
+        os.environ["ARMORED_REAL_TELEGRAM"] = "1"
+        os.environ["ARMORED_HUB_DRY_RUN"] = "0"
+        root = Path.cwd()
+
+        # Coordinator.build() is the canonical credential loader. Validate
+        # after it loads credentials from .env / credentials/telegram / credentials/shopee.
+        coordinator = Coordinator.build(root)
+
         required = (
             "TELEGRAM_API_ID",
             "TELEGRAM_API_HASH",
@@ -29,13 +38,8 @@ class RealTelegramE2ETests(unittest.TestCase):
         )
         missing = [name for name in required if not os.getenv(name)]
         if missing:
+            coordinator.close()
             self.fail("Missing real-E2E environment variables: " + ", ".join(missing))
-
-        previous = {name: os.environ.get(name) for name in ("ARMORED_REAL_TELEGRAM", "ARMORED_HUB_DRY_RUN", "ARMORED_STUDIO_FORCE_COPY")}
-        os.environ["ARMORED_REAL_TELEGRAM"] = "1"
-        os.environ["ARMORED_HUB_DRY_RUN"] = "0"
-        root = Path.cwd()
-        coordinator = Coordinator.build(root)
         source = coordinator.source
         item_id = None
 
