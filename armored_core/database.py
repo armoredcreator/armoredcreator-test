@@ -106,6 +106,10 @@ class Database:
     def historical_complete(self) -> bool:
         return self.sync_mode() == "LIVE"
 
+    def has_sync_checkpoints(self) -> bool:
+        row = self.conn.execute("SELECT 1 FROM sync_topics LIMIT 1").fetchone()
+        return row is not None
+
     def complete_historical_sync(self) -> None:
         self.set_sync_mode("LIVE")
 
