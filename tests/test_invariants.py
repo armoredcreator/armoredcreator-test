@@ -18,13 +18,12 @@ class S:
         self.storage = storage
 
     def process(self, item):
-        w = self.storage.working(item.item_id, item.telegram_message_id)
+        w = self.storage.working(item.content_id)
         w.write_bytes(b"WORK")
         r = self.storage.result(
             item.item_id,
             item.affiliate_url,
             item.affiliate_name,
-            item.telegram_message_id,
         )
         r.write_bytes(b"RESULT")
         return StudioResult(w, r)
@@ -109,7 +108,7 @@ class InvariantTests(unittest.TestCase):
             item = db.get(i)
             self.assertEqual(
                 item.original_path,
-                st.original(i, telegram_message_id="1383", original_url="https://shopee.com.br/example"),
+                st.original(i, original_url="https://shopee.com.br/example"),
             )
             self.assertTrue(item.original_path.is_file())
             self.assertEqual(item.original_path.read_bytes(), b"TELEGRAM-BYTES")
