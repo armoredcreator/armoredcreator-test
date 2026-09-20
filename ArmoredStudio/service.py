@@ -26,8 +26,10 @@ class ArmoredStudio:
                 raise RuntimeError("FFmpeg não encontrado")
 
         result_path, _details = self.engine.process(item)
+        # Studio reads ORIGINAL directly unless a durable WORKING artifact
+        # already exists. It does not manufacture a byte-identical copy.
         return StudioResult(
-            self.storage.working(item.content_id),
+            Path(item.working_path) if item.working_path else None,
             Path(result_path),
         )
 
