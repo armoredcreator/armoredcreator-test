@@ -22,7 +22,7 @@ class Recovery:
                 f"cannot-recover-without-immutable-original: {item.original_path}"
             )
 
-        previous_state = item.state
+        self.db.record_recovery(item_id)
         self.db.transition(item_id, State.RECOVERY, "startup-recovery")
         item = self.db.get(item_id)
 
@@ -45,12 +45,17 @@ class Recovery:
                 self.pipeline.cleanup(item_id)
                 return
 
-        # Canonical workspace filenames are durable facts even if DB path fields
-        # were not committed before a crash.
-        working = item.working_path or self.storage.working(item_id)
+        working = item.working_path or self.storage.working(
+            item_id, item.telegram_message_id
+        )
         result = item.result_path
-        if not result and item.affiliate_name:
-            result = self.storage.result(item_id, item.affiliate_name)
+        if not result and item.affiliate_url:
+            result = self.storage.result(
+                item_id,
+                item.affiliate_url,
+                item.affiliate_name,
+                item.telegram_message_id,
+            )
 
         if result and result.is_file():
             if item.result_path is None:
