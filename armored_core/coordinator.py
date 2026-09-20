@@ -267,6 +267,14 @@ class Coordinator:
         recovered = []
         for row in rows:
             item_id = str(row["content_id"])
+            # RECEIVED without an immutable original is a durable Telegram
+            # reservation whose download was interrupted. The Sync source must
+            # rediscover/materialize it; Recovery cannot invent the missing
+            # bytes. Keep it in SQLite and let CATCH_UP/LIVE continue it.
+            if str(row["state"]) == State.RECEIVED.value:
+                item = self.db.get(item_id)
+                if not item.original_path.is_file():
+                    continue
             self.recover(item_id)
             recovered.append(item_id)
         return recovered
