@@ -211,15 +211,21 @@ class Coordinator:
         import asyncio
         return asyncio.run(self.run_live_once_async())
 
-    def run_forever(self, poll_seconds: float = 2.0) -> None:
-        """Recover, finish catch-up once, then monitor Telegram continuously."""
+    def run_forever(self, poll_seconds: float = 2.0, max_cycles: int | None = None) -> None:
+        """Recover, finish catch-up once, then monitor Telegram continuously.
+
+        ``max_cycles`` is an optional deterministic test/service-run bound. The
+        production default remains ``None`` (run until interrupted).
+        """
         import asyncio
         self.recover_pending()
         if not getattr(self.source, "is_historical_complete", lambda: False)():
             self.run_catch_up()
-        while True:
+        cycles = 0
+        while max_cycles is None or cycles < max_cycles:
             processed = self.run_live_once()
-            if not processed:
+            cycles += 1
+            if not processed and (max_cycles is None or cycles < max_cycles):
                 asyncio.run(asyncio.sleep(float(poll_seconds)))
 
     def run(self, item_id: str) -> None:
