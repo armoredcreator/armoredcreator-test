@@ -45,8 +45,6 @@ class Publisher:
         self.ids.add(item.item_id)
         return PublicationResult(True, f"telegram-result-{self.count}")
 
-
-
 class AsyncSource:
     def __init__(self):
         self.used = False
@@ -71,7 +69,6 @@ class AsyncSource:
     def mark_ingested(self, message_id):
         self.marked = message_id
 
-
 class CoordinatorTests(unittest.TestCase):
     def test_async_source_materializes_inside_same_event_loop(self):
         with tempfile.TemporaryDirectory() as td:
@@ -80,7 +77,6 @@ class CoordinatorTests(unittest.TestCase):
             db = Database(storage.database / "db.sqlite")
             source = AsyncSource()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), Publisher(), source)
-            self.addCleanup(coordinator.close)
 
             item_id = coordinator.ingest_once()
 
@@ -90,8 +86,7 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(item.original_path.read_bytes(), b"ASYNC-TELEGRAM")
             self.assertFalse((root / "storage" / "sync").exists())
             self.assertEqual(source.marked, "telegram-async-1")
-
-
+            coordinator.close()
 
     def test_complete_chain_is_composed_and_sequential(self):
         with tempfile.TemporaryDirectory() as td:
@@ -102,8 +97,9 @@ class CoordinatorTests(unittest.TestCase):
             src.write_bytes(b"ORIGINAL")
             pub = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), pub, Source(src))
-            self.addCleanup(coordinator.close)
+
             item_id = coordinator.process_next()
+
             self.assertEqual(item_id, "telegram-100")
             row = db.get(item_id)
             self.assertEqual(row.state, State.PUBLISHED)
@@ -111,7 +107,7 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(pub.count, 1)
             self.assertIsNone(coordinator.process_next())
             self.assertEqual(pub.count, 1)
-
+            coordinator.close()
 
 if __name__ == "__main__":
     unittest.main()
