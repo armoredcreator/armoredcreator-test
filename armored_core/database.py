@@ -352,13 +352,18 @@ class Database:
             "SELECT pid FROM runtime_locks WHERE name=?", (str(name),)
         ).fetchone()
         current_pid = os.getpid()
-        if row is not None and int(row["pid"]) != current_pid:
+        if row is not None:
             pid = int(row["pid"])
-            alive = True
-            try:
-                os.kill(pid, 0)
-            except OSError:
-                alive = False
+            # A live PID is always an active owner, including when a second
+            # Coordinator object is created inside the same process. This keeps
+            # the one-Coordinator invariant independent of process boundaries.
+            alive = pid == current_pid
+            if not alive:
+                try:
+                    os.kill(pid, 0)
+                    alive = True
+                except OSError:
+                    alive = False
             if alive:
                 raise RuntimeError(
                     f"runtime-lock-active: {name} is already owned by PID {pid}"
