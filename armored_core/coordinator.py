@@ -60,6 +60,17 @@ class Coordinator:
             return cls(db, storage, vision, studio, publisher, source)
         return cls(db, storage, bindings.vision, bindings.studio, bindings.publisher, bindings.source)
 
+    async def _ensure_source_connection(self) -> None:
+        """Reconnect a real Telegram source before materializing the next item."""
+        source = self.source
+        reader = getattr(source, "reader", None)
+        connect = getattr(reader, "connect", None)
+        if connect is not None:
+            is_connected = getattr(reader, "is_connected", None)
+            if callable(is_connected) and is_connected():
+                return
+            await connect()
+
     async def _release_source_connection(self) -> None:
         """Release a real Telegram Sync session before Hub opens the same session.
 
@@ -188,6 +199,11 @@ class Coordinator:
         processed: list[str] = []
         try:
             for message in messages:
+                # The previous item deliberately disconnected Telegram before
+                # entering Hub. Reconnect here before the next materialization;
+                # otherwise the second LIVE item would try to download through
+                # a closed Telethon client.
+                await self._ensure_source_connection()
                 item_id = await self.sync.ingest_message_async(IngestMessage(
                     telegram_message_id=str(message.telegram_message_id),
                     source_id=getattr(message, "source_id", "telegram"),
