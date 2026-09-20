@@ -84,6 +84,10 @@ class Coordinator:
         disconnect = getattr(reader, "disconnect", None)
         if disconnect is not None:
             await disconnect()
+            return
+        disconnect = getattr(source, "disconnect", None)
+        if disconnect is not None:
+            await disconnect()
 
     async def ingest_once_async(self):
         if self.source is None:
