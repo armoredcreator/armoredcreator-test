@@ -14,7 +14,8 @@ class Pipeline:
     def run(self, item_id: int) -> None:
         item = self.db.get(item_id)
         if item.state == State.PUBLISHED:
-            self.cleanup(item_id)
+            if not item.cleanup_completed:
+                self.cleanup(item_id)
             return
         try:
             self.db.record_attempt(item_id)
@@ -73,6 +74,7 @@ class Pipeline:
         if workspace != original.parent.resolve():
             raise RuntimeError("cleanup-workspace-mismatch")
         if not workspace.is_dir():
+            self.db.mark_cleanup_completed(item_id)
             return
         for path in workspace.iterdir():
             resolved = path.resolve()
@@ -82,3 +84,4 @@ class Pipeline:
                 shutil.rmtree(path)
             else:
                 path.unlink()
+        self.db.mark_cleanup_completed(item_id)
