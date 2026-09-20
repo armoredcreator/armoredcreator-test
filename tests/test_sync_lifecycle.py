@@ -252,7 +252,7 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertGreaterEqual(reader.disconnects, 2)
             coordinator.close()
 
-    def test_live_checkpoint_survives_processing_failure_and_restart_recovers_item(self):
+    def test_live_checkpoint_survives_processing_failure_without_startup_retry(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
@@ -289,9 +289,12 @@ class SyncLifecycleTests(unittest.TestCase):
             )
             recovered = second.recover_pending()
 
-            self.assertEqual(recovered, ["200"])
-            self.assertEqual(second.db.get("200").state.value, "PUBLISHED")
-            self.assertEqual(publisher.published, ["200"])
+            # FAILED is an explicit/manual-retry state. Startup recovery only
+            # resumes deterministic in-flight states; it must not blindly retry
+            # arbitrary failures after a process restart.
+            self.assertEqual(recovered, [])
+            self.assertEqual(second.db.get("200").state.value, "FAILED")
+            self.assertEqual(publisher.published, [])
             self.assertEqual(restarted_source.live, [])
             second.close()
 
