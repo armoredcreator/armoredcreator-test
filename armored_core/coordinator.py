@@ -222,7 +222,15 @@ class Coordinator:
             self.recover_pending()
             # SQLite is authoritative for CATCH-UP/LIVE state. This makes a
             # fresh process restart independent of in-memory Sync state.
-            if not self.db.historical_complete():
+            if (
+                not self.db.historical_complete()
+                or not self.db.has_sync_checkpoints()
+            ):
+                # A stale LIVE flag without checkpoints is not a valid LIVE
+                # state. Rebuild CATCH_UP deterministically; existing items
+                # are deduplicated by Telegram message ID.
+                if self.db.historical_complete() and not self.db.has_sync_checkpoints():
+                    self.db.set_sync_mode("CATCH_UP")
                 self.run_catch_up()
             cycles = 0
             while max_cycles is None or cycles < max_cycles:
