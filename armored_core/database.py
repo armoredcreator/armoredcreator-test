@@ -62,6 +62,12 @@ class Database:
             last_seen_message_id INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS runtime_locks (
+            name TEXT PRIMARY KEY,
+            pid INTEGER NOT NULL,
+            started_at TEXT NOT NULL,
+            heartbeat_at TEXT NOT NULL
+        );
         """)
         self.conn.commit()
         self._migrate_columns()
