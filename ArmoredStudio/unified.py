@@ -132,7 +132,7 @@ class UnifiedStudio:
         converter_voz(audio_original, audio_rvc, voice)
 
         from .processing.finalizer import finalizar
-        finalizar(source, audio_rvc, music, banner, output, position=os.getenv("ARMORED_STUDIO_INTRO_POSITION", "final"), intro=os.getenv("ARMORED_STUDIO_INTRO", "1") != "0")
+        finalizar(source, audio_rvc, music, banner, output, position=os.getenv("ARMORED_STUDIO_INTRO_POSITION", "final"), intro=os.getenv("ARMORED_STUDIO_INTRO", "1") != "0", plan=analysis.plan)
 
         for artifact in (audio_original, audio_rvc):
             artifact.unlink(missing_ok=True)
