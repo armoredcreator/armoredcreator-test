@@ -485,28 +485,68 @@ Comportamentos preservados:
 
 A reconstrução muda a organização física para centralizar estado e execução no Core/SQLite.
 
-## 16. Testes
+## 16. Testes e estado de validação
 
-Executar:
+Esta seção registra **somente validações realmente executadas**. O README é a referência rápida para saber o que estava aprovado em cada etapa; resultados não executados não são tratados como aprovados.
+
+### Última validação local confirmada
+
+**Commit:** `1f3f85f`  
+**Branch:** `refactor/single-storage-pipeline`  
+**Working tree após o commit:** limpa
+
+Suite completa:
+
+```
+python -m pytest -q
+
+27 passed
+```
+
+E2E real do Telegram:
+
+```
+$env:ARMORED_REAL_TELEGRAM_E2E="1"
+python -m pytest tests\e2e\test_real_telegram.py -v -s
+
+1 passed
+```
+
+### Estado aprovado
+
+| Área | Estado |
+|---|---|
+| Suite automatizada | ✅ APROVADO — 27 passed |
+| E2E real Telegram | ✅ APROVADO — 1 passed |
+| Fluxo Sync → Vision → Studio → Hub → Telegram | ✅ APROVADO no E2E real |
+| CATCH-UP → LIVE | ✅ APROVADO nos testes de lifecycle |
+| Deduplicação histórico/LIVE | ✅ APROVADO nos testes |
+| Recovery determinístico | ✅ APROVADO nos testes |
+| Assets do Studio | ✅ VERSIONADOS — `banner.png` e `efeitosonoro.wav` |
+| Baseline oficial | 🔒 INTACTO |
+| Otimização de performance RVC/FFmpeg | 🔲 NÃO É OBJETIVO DESTA FASE |
+
+### Como repetir a validação
 
 ```powershell
 cd C:\Users\Administrador\Downloads\ArmoredCreator
 git pull origin refactor/single-storage-pipeline
+
 python -m pytest -q
+
+$env:ARMORED_REAL_TELEGRAM_E2E="1"
+python -m pytest tests\e2e\test_real_telegram.py -v -s
 ```
 
-Estado confirmado antes desta etapa:
+### Histórico de resultados
 
-```
-22 passed
-```
+Resultados anteriores registrados no laboratório:
 
-E2E real confirmado:
+- `22 passed` — etapa anterior, antes do fechamento do lifecycle CATCH-UP → LIVE.
+- `27 passed` — suite atual após o lifecycle.
+- `1 passed` — E2E real Telegram executado com `ARMORED_REAL_TELEGRAM_E2E=1`.
 
-```
-Telegram → Sync → Vision → Studio → RVC → Hub → Telegram
-1 passed
-```
+**Regra:** quando uma alteração mudar o comportamento, esta seção deve ser atualizada somente após executar os testes correspondentes. Registrar separadamente `APROVADO`, `SKIP`, `FALHOU` e `NÃO VALIDADO`.
 
 Testes obrigatórios desta fase:
 
