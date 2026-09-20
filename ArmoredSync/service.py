@@ -242,6 +242,75 @@ class TelegramSource:
 
                 yield (int(getattr(message, "id", 0) or 0), int(topic_id), topic_name, message, original_url)
 
+    async def fetch_live_batch_async(self) -> tuple[list[SyncMessage], dict[int, int]]:
+        """Discover all new candidates since the persisted topic checkpoints."""
+        source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
+        source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
+        source_ref = int(source) if str(source).lstrip("-").isdigit() else source
+
+        await self.reader.connect()
+        try:
+            if self._topics is None:
+                self._topics = await self._discover_topics(source_ref)
+            if not self._topics:
+                raise RuntimeError(f"Nenhum tópico de fórum encontrado na fonte Telegram {source}.")
+
+            candidates: list[SyncMessage] = []
+            checkpoints: dict[int, int] = {}
+            for topic_id, topic_name in self._topics:
+                checkpoint = self.db.sync_topic_checkpoint(topic_id) if self.db is not None else 0
+                min_id = max(0, checkpoint - 1)
+                messages = []
+                async for message in self.reader.client.iter_messages(
+                    source_ref, reply_to=topic_id, min_id=min_id, reverse=True
+                ):
+                    messages.append(message)
+
+                ids = [int(getattr(message, "id", 0) or 0) for message in messages]
+                if ids:
+                    checkpoints[topic_id] = max(checkpoint, max(ids))
+
+                for index, message in enumerate(messages):
+                    message_id = int(getattr(message, "id", 0) or 0)
+                    if message_id <= 0 or message_id in self._seen:
+                        continue
+                    if not getattr(message, "video", None):
+                        continue
+
+                    original_url = self._shopee_url(message)
+                    if original_url is None and index + 1 < len(messages):
+                        next_message = messages[index + 1]
+                        if not getattr(next_message, "video", None):
+                            original_url = self._shopee_url(next_message)
+                    if original_url is None:
+                        continue
+
+                    candidates.append(SyncMessage(
+                        telegram_message_id=str(message_id),
+                        source_id=source_id,
+                        topic_id=topic_id,
+                        topic_name=topic_name,
+                        original_url=original_url,
+                        materialize=lambda target, m=message: self._download_to(m, target),
+                    ))
+            return candidates, checkpoints
+        except Exception:
+            await self.reader.disconnect()
+            raise
+
+    def commit_live_checkpoints(self, checkpoints: dict[int, int]) -> None:
+        if self.db is None:
+            return
+        for topic_id, message_id in checkpoints.items():
+            topic_name = next(
+                (name for tid, name in (self._topics or []) if tid == topic_id),
+                str(topic_id),
+            )
+            self.db.set_sync_topic_checkpoint(topic_id, topic_name, message_id)
+
+    def fetch_live_batch(self) -> tuple[list[SyncMessage], dict[int, int]]:
+        return asyncio.run(self.fetch_live_batch_async())
+
     def mark_ingested(self, telegram_message_id: str) -> None:
         self._seen.add(int(telegram_message_id))
 
