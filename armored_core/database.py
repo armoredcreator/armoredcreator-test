@@ -123,6 +123,15 @@ class Database:
         self.conn.commit()
         return content_id
 
+    @staticmethod
+    def _optional_path(value) -> Path | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text or text.lower() == "none":
+            return None
+        return Path(text)
+
     def get(self, item_id: str) -> Item:
         content_id = str(item_id)
         row = self.conn.execute("SELECT * FROM items WHERE content_id=?", (content_id,)).fetchone()
@@ -131,8 +140,8 @@ class Database:
         return Item(
             row["content_id"], row["telegram_message_id"], State(row["state"]),
             Path(row["original_path"]).parent, Path(row["original_path"]),
-            Path(row["working_path"]) if row["working_path"] else None,
-            Path(row["result_path"]) if row["result_path"] else None,
+            self._optional_path(row["working_path"]),
+            self._optional_path(row["result_path"]),
             row["affiliate_name"], row["affiliate_url"],
             row["source_id"], row["original_url"], row["topic_id"], row["topic_name"],
             row["original_sha256"], row["attempts"], row["recovery_count"], bool(row["cleanup_completed"]),
