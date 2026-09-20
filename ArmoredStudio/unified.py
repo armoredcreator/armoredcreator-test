@@ -7,14 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .modules.v1.video import obter_informacoes_video
-from .modules.v1.blackbar import analisar_bordas_video
-from .modules.v1.banner_analyzer import analisar_banner
-from .modules.v1.banner import analisar_banner as analisar_corte_banner
-from .modules.v1.veo_detector import detect_fast as detectar_veo
-from .modules.v1.gemini_detector import detect_fast as detectar_gemini
-from .modules.v1.export_planner import criar_plano_exportacao
-from .modules.v1.export_plan_validator import validar_plano_exportacao
+from .analysis.video import obter_informacoes_video
+from .analysis.blackbar import analisar_bordas_video
+from .analysis.banner_analyzer import analisar_banner
+from .analysis.banner import analisar_banner as analisar_corte_banner
+from .analysis.veo_detector import detect_fast as detectar_veo
+from .analysis.gemini_detector import detect_fast as detectar_gemini
+from .analysis.export_planner import criar_plano_exportacao
+from .analysis.export_plan_validator import validar_plano_exportacao
 
 
 @dataclass(frozen=True)
@@ -100,7 +100,7 @@ class UnifiedStudio:
 
         analysis = self.analysis.analyze(source)
 
-        # Real V2 resources are explicit/configurable; never use another
+        # Real Studio resources are explicit/configurable; never use another
         # checkout or machine-specific path.
         music = Path(os.getenv("ARMORED_STUDIO_MUSIC", str(self.root / "ArmoredStudio" / "assets" / "efeitosonoro.wav")))
         banner = Path(os.getenv("ARMORED_STUDIO_BANNER", str(self.root / "ArmoredStudio" / "assets" / "banner.png")))
@@ -115,7 +115,7 @@ class UnifiedStudio:
         if not shutil.which(ffmpeg):
             raise RuntimeError("FFmpeg não encontrado")
 
-        # V2 voice stage. RVC is deliberately explicit: if the configured
+        # RVC voice stage. RVC is deliberately explicit: if the configured
         # environment/model is unavailable, the item fails instead of silently
         # downgrading production processing.
         audio_original = source.with_name(f"{item.item_id}_audio_original.wav")
