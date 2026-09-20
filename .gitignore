@@ -1,1 +1,17 @@
-__pycache__/\n*.pyc\n.venv/\n.env\ncredentials/\n**/credentials/\nstorage/database/*.db\nstorage/database/*.db-*\nstorage/logs/*\n!storage/logs/.gitkeep\nstorage/videos/*\n!storage/videos/.gitkeep\nstorage/backups/*\n!storage/backups/.gitkeep\n
+__pycache__/
+*.pyc
+.venv/
+.env
+credentials/
+**/credentials/
+storage/database/*.db
+storage/database/*.db-*
+storage/logs/*
+!storage/logs/.gitkeep
+storage/videos/*
+!storage/videos/.gitkeep
+storage/backups/*
+!storage/backups/.gitkeep
+
+# ArmoredStudio runtime / RVC assets
+ArmoredStudio/runtime/
