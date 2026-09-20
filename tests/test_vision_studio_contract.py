@@ -31,7 +31,7 @@ class VisionStudioContractTests(unittest.TestCase):
             item_id=1,
             telegram_message_id="tg-1",
             state=State.VISION,
-            workspace=storage.workspace(1),
+            workspace=storage.workspace("tg-1"),
             original_path=original,
             working_path=None,
             result_path=None,
