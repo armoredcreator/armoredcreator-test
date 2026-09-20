@@ -53,7 +53,7 @@ class Coordinator:
                 if not api_id or not api_hash:
                     raise RuntimeError("TELEGRAM_API_ID e TELEGRAM_API_HASH são obrigatórios")
                 reader = TelegramReader(storage.root, int(api_id), api_hash)
-                source = TelegramSource(storage.root, reader)
+                source = TelegramSource(storage.root, reader, db)
             else:
                 source = LocalSource(storage.root / "input")
             return cls(db, storage, vision, studio, publisher, source)
@@ -122,6 +122,72 @@ class Coordinator:
             import asyncio
             asyncio.run(disconnect())
         return item_id
+
+    async def run_catch_up_async(self) -> list[str]:
+        """Drain Telegram history, processing each item sequentially.
+
+        Sync may discover the next historical item only after the previous
+        item has been ingested; the pipeline itself remains strictly one-item
+        active at a time.
+        """
+        processed: list[str] = []
+        while True:
+            item_id = await self.ingest_once_async()
+            if item_id is None:
+                break
+            self.run(item_id)
+            processed.append(str(item_id))
+        return processed
+
+    def run_catch_up(self) -> list[str]:
+        import asyncio
+        return asyncio.run(self.run_catch_up_async())
+
+    async def run_live_once_async(self) -> list[str]:
+        source = self.source
+        fetch_batch = getattr(source, "fetch_live_batch_async", None)
+        if fetch_batch is None:
+            return []
+        messages, checkpoints = await fetch_batch()
+        processed: list[str] = []
+        for message in messages:
+            item_id = await self.sync.ingest_message_async(IngestMessage(
+                telegram_message_id=str(message.telegram_message_id),
+                source_id=getattr(message, "source_id", "telegram"),
+                topic_id=getattr(message, "topic_id", None),
+                topic_name=getattr(message, "topic_name", None),
+                original_url=getattr(message, "original_url", None),
+                source_path=getattr(message, "source_path", None),
+                materialize=getattr(message, "materialize", None),
+            ))
+            marker = getattr(source, "mark_ingested", None)
+            if marker is not None:
+                marker(str(message.telegram_message_id))
+            processed.append(str(item_id))
+
+        commit = getattr(source, "commit_live_checkpoints", None)
+        if commit is not None:
+            commit(checkpoints)
+        await self._release_source_connection()
+
+        for item_id in processed:
+            self.run(item_id)
+        return processed
+
+    def run_live_once(self) -> list[str]:
+        import asyncio
+        return asyncio.run(self.run_live_once_async())
+
+    def run_forever(self, poll_seconds: float = 2.0) -> None:
+        """Recover, finish catch-up once, then monitor Telegram continuously."""
+        import asyncio
+        self.recover_pending()
+        if not getattr(self.source, "is_historical_complete", lambda: False)():
+            self.run_catch_up()
+        while True:
+            processed = self.run_live_once()
+            if not processed:
+                asyncio.run(asyncio.sleep(float(poll_seconds)))
 
     def run(self, item_id: str) -> None:
         self.pipeline.run(item_id)
