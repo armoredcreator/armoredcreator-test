@@ -80,8 +80,8 @@ class UnifiedStudio:
         if not original.is_file():
             raise FileNotFoundError(original)
 
-        working = self.storage.working(item.item_id, item.telegram_message_id)
-        output = self.storage.result(item.item_id, item.affiliate_url, item.affiliate_name, item.telegram_message_id)
+        working = self.storage.working(item.content_id)
+        output = self.storage.result(item.content_id, item.affiliate_url, item.affiliate_name)
         if output.exists():
             output.unlink()
 
