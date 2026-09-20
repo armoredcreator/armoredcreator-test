@@ -140,6 +140,48 @@ class Coordinator:
         """Process historical candidates incrementally, one item at a time."""
         processed: list[str] = []
         source = self.source
+
+        # The real Telegram source exposes a batch collector. It must keep the
+        # Sync Telethon session open while materializing every historical video,
+        # then release that session before Hub opens the same SQLite-backed
+        # Telethon session. This avoids both the Windows session-lock race and
+        # the invalid state of resuming an async topic iterator after disconnect.
+        collect_batch = getattr(source, "collect_historical_batch_async", None)
+        if collect_batch is not None:
+            messages, checkpoints = await collect_batch()
+            try:
+                for message in messages:
+                    item_id = await self.sync.ingest_message_async(IngestMessage(
+                        telegram_message_id=str(message.telegram_message_id),
+                        source_id=getattr(message, "source_id", "telegram"),
+                        topic_id=getattr(message, "topic_id", None),
+                        topic_name=getattr(message, "topic_name", None),
+                        original_url=getattr(message, "original_url", None),
+                        source_path=getattr(message, "source_path", None),
+                        materialize=getattr(message, "materialize", None),
+                    ))
+                    marker = getattr(source, "mark_ingested", None)
+                    if marker is not None:
+                        marker(str(message.telegram_message_id))
+                    processed.append(str(item_id))
+            finally:
+                await self._release_source_connection()
+
+            commit = getattr(source, "commit_live_checkpoints", None)
+            if commit is not None:
+                commit(checkpoints)
+
+            # All candidates are now durable in SQLite/filesystem. Processing
+            # remains strictly sequential and can safely use Hub's independent
+            # Telegram connection.
+            for item_id in processed:
+                if self.db.get(str(item_id)).state == State.FAILED:
+                    continue
+                self.run(str(item_id))
+
+            self.db.complete_historical_sync()
+            return processed
+
         fetch_async = getattr(source, "fetch_next_async", None)
 
         if fetch_async is None:
