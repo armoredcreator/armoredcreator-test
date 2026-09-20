@@ -9,9 +9,13 @@ import sys
 
 
 BASE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BASE_DIR.parents[1]
+STUDIO_ROOT = BASE_DIR.parents[1]
 _configured_rvc_root = os.getenv("ARMORED_RVC_ROOT", "").strip()
-RVC_ROOT = (Path(_configured_rvc_root).expanduser() if _configured_rvc_root else PROJECT_ROOT / "rvc").resolve()
+RVC_ROOT = (
+    Path(_configured_rvc_root).expanduser()
+    if _configured_rvc_root
+    else STUDIO_ROOT / "runtime" / "rvc"
+).resolve()
 MODELS_DIR = RVC_ROOT / "models"
 RVC_ENV_DIR = RVC_ROOT / "env"
 
@@ -107,7 +111,7 @@ def executar_no_rvc(entrada, saida, voz):
     print("\nExecutando ambiente RVC:")
     print(" ".join(map(str, comando)))
 
-    resultado = subprocess.run(comando, cwd=str(PROJECT_ROOT))
+    resultado = subprocess.run(comando, cwd=str(STUDIO_ROOT))
     if resultado.returncode != 0:
         raise RuntimeError("Falha na conversão RVC.")
     validar_arquivo(saida, "Áudio RVC")
