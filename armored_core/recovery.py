@@ -45,16 +45,13 @@ class Recovery:
                 self.pipeline.cleanup(item_id)
                 return
 
-        working = item.working_path or self.storage.working(
-            item_id, item.telegram_message_id
-        )
+        working = item.working_path or self.storage.working(item_id)
         result = item.result_path
         if not result and item.affiliate_url:
             result = self.storage.result(
                 item_id,
                 item.affiliate_url,
                 item.affiliate_name,
-                item.telegram_message_id,
             )
 
         if result and result.is_file():
