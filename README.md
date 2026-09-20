@@ -2,272 +2,599 @@
 
 Laboratório isolado da reconstrução do ArmoredCreator.
 
-> **Regra:** este repositório é o laboratório. O repositório oficial e a branch
-> `audit/baseline-2026-09-19` são preservados e não fazem parte deste ciclo.
+> **Regra:** este repositório é o laboratório. O repositório oficial e a branch `audit/baseline-2026-09-19` permanecem intocáveis.
 
 ## Objetivo
 
-Reconstruir a pipeline funcional já validada no backup, mas com uma arquitetura
-canônica, portátil, idempotente e recuperável:
+Reconstruir o comportamento funcional confirmado no backup com arquitetura canônica, portátil, idempotente, sequencial e recuperável.
+
+Regra central:
+
+**SQLite = verdade. Filesystem = projeção/runtime. Telegram = realidade externa.**
+
+Fluxo:
 
 ```
 Telegram fonte
     ↓
 ArmoredSync
+    ├── CATCH-UP histórico
+    └── LIVE monitoramento
     ↓
-SQLite (estado canônico)
+SQLite + storage/videos/{telegram_message_id}/
     ↓
-ArmoredVision
+Coordinator
     ↓
-ArmoredStudio
-    ├── ANALYSIS
-    │   ├── metadata
-    │   ├── black bars
-    │   ├── banner
-    │   ├── VEO
-    │   └── Gemini
+Pipeline sequencial — 1 item ativo
     ↓
-    ├── PLANNING
-    ├── PROCESSING
-    │   ├── áudio
-    │   ├── RVC
-    │   ├── banner/intro
-    │   ├── música
-    │   └── FFmpeg
+Vision
     ↓
-    └── VALIDATION
+Studio
     ↓
-ArmoredHub
+Hub
     ↓
-Telegram destino
-    ↓
-confirmação
+Telegram destino + confirmação
     ↓
 PUBLISHED
     ↓
 cleanup
+    ↓
+próximo item
 ```
 
-Há **um único ArmoredStudio**. V1 e V2 não são modos alternativos:
-os detectores V1 alimentam o planejamento e o processamento V2 executa o
-resultado.
+## 1. ArmoredSync: CATCH-UP → LIVE
 
-## Storage canônico
+O Sync somente descobre e ingere conteúdo da fonte. Ele não possui fila física própria e não executa Vision/Studio/Hub.
 
-Cada item possui exatamente um workspace:
+O mesmo Sync possui dois modos:
+
+```
+CATCH_UP
+  ↓
+histórico Telegram
+  ↓
+todos os tópicos
+  ↓
+descoberta de candidatos
+  ↓
+ingestão canônica
+  ↓
+fim do histórico
+  ↓
+LIVE
+  ↓
+novas mensagens
+  ↓
+mesma regra de candidato
+  ↓
+mesma ingestão
+```
+
+Histórico e LIVE usam a mesma identidade: **telegram_message_id**.
+
+### Regra de candidato
+
+Comportamento preservado do backup:
+
+1. vídeo + link Shopee na própria mensagem; ou
+2. vídeo + link Shopee na mensagem imediatamente seguinte, desde que essa mensagem seguinte não seja vídeo.
+
+Não procurar links arbitrariamente distantes.
+
+### CATCH-UP
+
+A coleta histórica percorre todos os tópicos da fonte.
+
+Cada candidato válido:
+
+```
+Telegram ID 1383
+    ↓
+SQLite
+    ↓
+storage/videos/1383/
+    ↓
+1383_{tail_da_url_original}.mp4
+```
+
+O download vai diretamente para o workspace canônico.
+
+Não criar cópias em:
+
+```
+storage/sync/
+storage/queue/
+storage/pipeline/
+storage/input/
+storage/output/
+```
+
+O fim do histórico é persistido no SQLite como:
+
+```
+CATCH_UP → LIVE
+```
+
+Não existe JSON separado para esse estado.
+
+### LIVE
+
+Depois do CATCH-UP, o mesmo Sync monitora a fonte.
+
+O SQLite mantém checkpoints por tópico:
+
+```
+sync_topics
+    topic_id
+    topic_name
+    last_seen_message_id
+```
+
+O monitoramento consulta mensagens novas a partir desses checkpoints. Uma pequena sobreposição no limite permite detectar corretamente o caso:
+
+```
+vídeo sem link
+    ↓
+mensagem seguinte com Shopee
+```
+
+A sobreposição é deduplicada pelo ID Telegram.
+
+Os checkpoints são persistentes para que uma parada/reinício não dependa da memória do processo.
+
+## 2. Coleta não significa processamento paralelo
+
+Mesmo que o Sync descubra:
+
+```
+1383
+1384
+1385
+1386
+1387
+```
+
+o Pipeline permanece:
+
+```
+1383 → Vision → Studio → Hub → cleanup
+                                      ↓
+1384 → Vision → Studio → Hub → cleanup
+                                      ↓
+1385 → ...
+```
+
+**Somente um item fica ativo no processamento.**
+
+O Sync pode descobrir vários itens, mas isso não cria vários Studios nem processamento concorrente.
+
+## 3. SQLite como fila lógica
+
+A fila não é uma pasta.
+
+Exemplo:
+
+```
+content_id | state
+-----------|--------
+1383       | STUDIO
+1384       | RECEIVED
+1385       | RECEIVED
+```
+
+O banco mantém identidade, estado, caminhos, URLs, tentativas, recovery, publicação e erros.
+
+Não criar filas físicas de vídeo.
+
+## 4. Coordinator
+
+O Coordinator é a composição central:
+
+1. recupera itens pendentes no startup;
+2. executa CATCH-UP se ainda não terminou;
+3. processa um item por vez;
+4. depois mantém o LIVE;
+5. entrega itens novos ao mesmo Pipeline;
+6. não cria pipeline separado para LIVE.
+
+A ordem operacional é sempre:
+
+```
+Sync → DB → Coordinator → Vision → Studio → Hub → confirmação → cleanup
+```
+
+## 5. Storage canônico
+
+Cada conteúdo possui exatamente um workspace:
 
 ```
 storage/
 ├── database/
 │   └── armoredcreator.db
 ├── videos/
-│   └── {item_id}/
-│       ├── {item_id}_finallinkoriginal.mp4   # IMUTÁVEL
-│       ├── {item_id}_.mp4                    # working
-│       └── {item_id}_{final_do_link}.mp4     # resultado
+│   └── {telegram_message_id}/
+│       ├── {telegram_message_id}_{tail_original}.mp4
+│       ├── {telegram_message_id}_.mp4
+│       └── {telegram_message_id}_{tail_afiliado}.mp4
 ├── logs/
 └── backups/
 ```
 
-Não são permitidas cópias de conteúdo em `storage/sync`, `storage/queue`,
-`storage/pipeline`, `storage/input` ou `storage/output`.
-
-Artefatos temporários de processamento, quando necessários, devem ficar dentro
-do workspace do item e ser removidos ao terminar.
-
-## Contrato de nomes
-
-Para:
+Exemplo real:
 
 ```
-https://.../abc/finaldomeulinknovo
+storage/videos/1383/1383_8KolJcZrfU.mp4
 ```
 
-e item `550`:
+**Importante:** `finallinkoriginal` era apenas um exemplo antigo, não um nome literal obrigatório.
+
+Regras:
+
+- original é imutável e permanente;
+- original nunca é sobrescrito;
+- working/result são artefatos de runtime;
+- temporários ficam dentro do workspace do item;
+- cleanup só ocorre depois de PUBLISHED;
+- cleanup preserva o original;
+- nomes físicos são projeção, não fonte de verdade.
+
+## 6. ArmoredVision
+
+Vision recebe um item já ingerido.
+
+Responsabilidades:
+
+- resolver a URL Shopee;
+- obter produto;
+- obter/generar affiliate URL;
+- registrar affiliate_name e affiliate_url no SQLite.
+
+Vision não cria fila física.
+
+## 7. ArmoredStudio
+
+Existe **um único ArmoredStudio**. V1 e V2 não são modos alternativos.
+
+### Analysis
 
 ```
-storage/videos/550/550_finallinkoriginal.mp4
-storage/videos/550/550_.mp4
-storage/videos/550/550_finaldomeulinknovo.mp4
+ArmoredStudio/analysis/
+├── video.py
+├── blackbar.py
+├── banner_analyzer.py
+├── banner.py
+├── veo_detector.py
+├── gemini_detector.py
+├── export_planner.py
+├── export_plan_validator.py
+├── export_executor.py
+└── logger.py
 ```
 
-O sufixo final vem do último segmento da URL afiliada. O DB continua sendo a
-fonte de verdade; nomes de arquivo são uma projeção determinística.
+### Processing
 
-## Studio unificado
+```
+ArmoredStudio/processing/
+├── rvc.py
+├── tool_paths.py
+└── finalizer.py
+```
 
-Existe **um único ArmoredStudio**, sem conceito arquitetural de V1/V2.
-Os módulos funcionais foram migrados para duas responsabilidades internas:
+### RVC
 
-### Análise
+RVC é **funcionalidade interna do ArmoredStudio**, não um projeto externo.
 
-    ArmoredStudio/analysis/
-    ├── video.py
-    ├── blackbar.py
-    ├── banner_analyzer.py
-    ├── banner.py
-    ├── veo_detector.py
-    ├── gemini_detector.py
-    ├── export_planner.py
-    ├── export_plan_validator.py
-    ├── export_executor.py
-    └── logger.py
+Código:
 
-A análise obrigatória executa metadata, barras pretas, banner, corte/banner
-temporal, VEO, Gemini, planejamento e validação antes de qualquer processamento.
+```
+ArmoredStudio/processing/rvc.py
+```
 
-### Processamento
+Runtime local:
 
-    ArmoredStudio/processing/
-    ├── rvc.py
-    ├── tool_paths.py
-    └── finalizer.py
-
-O processamento recebe o plano já validado e executa RVC, áudio, banner/intro,
-música, ajustes audiovisuais e a finalização FFmpeg.
-
-### Orquestração
-
-ArmoredStudio/unified.py é a fronteira única:
-
-1. recebe o item;
-2. preserva o original;
-3. normaliza o working;
-4. executa toda a análise;
-5. cria e valida o plano;
-6. executa o processamento;
-7. valida o resultado;
-8. devolve somente working_path e result_path ao Core.
-
-Não existem mais modules/v1 ou modules/v2 como arquitetura do Studio.
-Também não há modos alternativos de processamento.
-
-O serviço não conhece storage/input, storage/output, storage/temp, queue ou checkout antigo.
-
-## RVC e assets
-
-O RVC fica separado do código do Studio e dos dados de vídeo. A estrutura canônica é:
-
-```text
-rvc/
-├── env/                    # ambiente Python isolado do RVC
-├── models/                 # modelos de voz instalados localmente
+```
+ArmoredStudio/runtime/rvc/
+├── env/
+├── models/
+│   ├── becca/
+│   ├── elsa/
+│   ├── jessie/
+│   ├── leticia/
+│   ├── marilia/
 │   ├── melody/
-│   │   ├── melody.pth      # obrigatório
-│   │   └── melody.index    # opcional
-│   └── rebecca/
-│       └── rebecca.pth
-└── output/                 # saída técnica temporária do RVC
+│   └── sarah/
+└── output/
 ```
 
-O caminho padrão é relativo à raiz do projeto. Para manter o RVC fora do checkout, defina `ARMORED_RVC_ROOT`. O modelo `.pth` é obrigatório para cada voz; o `.index` é opcional.
+O runtime é ignorado pelo Git por ser pesado/local. Isso **não** torna o RVC externo ao Studio.
 
+O modelo .pth é obrigatório para a voz selecionada. O .index é opcional quando o runtime funciona sem ele.
 
-Os recursos V2 devem pertencer ao próprio projeto ou ser explicitamente
-configurados por ambiente:
+Ausência de RVC/assets no processamento real é erro explícito. Não existe fallback silencioso para cópia.
 
-```
-ARMORED_FFMPEG
-ARMORED_FFPROBE
-ARMORED_STUDIO_MUSIC
-ARMORED_STUDIO_BANNER
-ARMORED_STUDIO_RVC_VOICE
-ARMORED_STUDIO_INTRO
-ARMORED_STUDIO_INTRO_POSITION
-```
-
-Nenhum caminho absoluto de outra máquina ou outro checkout deve ser usado.
-
-A ausência de asset/RVC em processamento real é erro explícito; o sistema não
-deve degradar silenciosamente para uma cópia.
-
-O modo de cópia continua existindo **somente para testes determinísticos**:
+Cópia é somente para testes determinísticos:
 
 ```
 ARMORED_STUDIO_ALLOW_COPY=1
 ARMORED_STUDIO_FORCE_COPY=1
 ```
 
-Nesse modo, a análise real é deliberadamente pulada porque os testes de
-contrato podem usar bytes que não são um MP4. Isso não representa produção.
+## 8. Fronteira única do Studio
 
-## Recovery e publicação
+`ArmoredStudio/unified.py`:
 
-O SQLite permanece canônico.
+1. recebe item;
+2. usa original imutável como fonte canônica;
+3. reutiliza working somente se existir;
+4. executa análise;
+5. cria plano;
+6. valida plano;
+7. executa processamento;
+8. valida resultado;
+9. devolve working/result ao Core.
 
-Estados:
+Não existem mais `modules/v1` ou `modules/v2` como arquitetura do Studio.
+
+## 9. Pipeline sequencial
+
+Estados principais:
 
 ```
-RECEIVED → VISION → STUDIO → PUBLISHING → PUBLISHED → CLEANUP → DONE
+RECEIVED
+   ↓
+VISION
+   ↓
+STUDIO
+   ↓
+PUBLISHING
+   ↓
+PUBLISHED
+   ↓
+CLEANUP
+   ↓
+DONE
 ```
 
-Em reinício:
+Recovery também pode passar pelo estado RECOVERY e FAILED.
 
-- original nunca é apagado;
-- working/result existentes são reconciliados;
-- publicação confirmada não é repetida;
-- Telegram `UNKNOWN` não autoriza republicação;
-- cleanup só ocorre depois de `PUBLISHED`.
+O Pipeline nunca processa dois itens simultaneamente.
 
-## Auditoria do backup
+## 10. Hub e publicação
 
-O backup confirmou duas famílias de comportamento que precisam ser preservadas:
+Hub publica o resultado diretamente no Telegram destino.
 
-1. **V1:** detectar → planejar → validar → exportar.
-2. **V2:** extrair áudio → RVC → finalizer, com transformação audiovisual e
-   áudio no FFmpeg final.
+A publicação é idempotente.
 
-O antigo `batch_processor.py`, `core.output.output_manager`, `storage/input`,
-`storage/output` e `storage/temp` não são importados como arquitetura.
-Eles são apenas referência comportamental.
+Antes de publicar, o sistema verifica se já existe publicação confirmável.
 
-### Próxima otimização deliberada
+```
+CONFIRMED → PUBLISHED
+ABSENT     → pode publicar
+UNKNOWN    → para; não república automaticamente
+```
 
-A primeira integração prioriza **correção e preservação de comportamento**.
-Quando os testes reais estiverem verdes, o próximo passo é fundir o
-`crop_final`/cortes temporais do plano V1 diretamente no filter graph do
-`finalizer.py`, evitando uma segunda passada FFmpeg quando possível.
+A confirmação pode usar o ID publicado ou o casamento determinístico do artefato final + affiliate URL.
 
-## Testes
+## 11. Recovery
 
-Local:
+Recovery reconcilia:
+
+- SQLite;
+- filesystem;
+- Telegram.
+
+Casos:
+
+```
+STUDIO + working existente
+    → continua Studio
+
+STUDIO + working ausente + original existente
+    → reconstrói a partir do original
+
+PUBLISHING + resultado existente
+    → verifica Telegram
+
+PUBLISHING + publicação Telegram confirmada
+    → PUBLISHED
+
+PUBLISHED
+    → nunca republica
+    → cleanup
+
+UNKNOWN
+    → não republica automaticamente
+```
+
+Original sempre precisa existir para recuperação.
+
+## 12. Reinício
+
+Startup:
+
+```
+Coordinator
+    ↓
+Recovery
+    ↓
+pendências
+    ↓
+CATCH-UP se necessário
+    ↓
+LIVE quando histórico terminar
+```
+
+Se cair durante CATCH-UP, mensagens já vistas podem ser reencontradas. A restrição única do SQLite e o ID Telegram tornam a ingestão idempotente.
+
+Se cair durante LIVE, os checkpoints por tópico permitem recuperar mensagens surgidas durante a indisponibilidade.
+
+## 13. Portabilidade
+
+Nenhum código pode depender de:
+
+```
+C:\Users\...
+Desktop
+Documents
+Downloads
+outro checkout
+```
+
+Todos os caminhos devem ser relativos à raiz do projeto ou configurados por ambiente.
+
+Credenciais ficam fora do Git.
+
+## 14. O que não faz parte da arquitetura
+
+Não recriar como filas físicas:
+
+```
+storage/sync/
+storage/queue/
+storage/publish_queue/
+storage/pipeline/
+storage/hub/
+storage/products/
+storage/generated/
+storage/rejected/
+storage/archive/
+storage/input/
+storage/output/
+storage/temp/
+```
+
+Diferença em relação ao backup não significa automaticamente que um módulo está faltando.
+
+O backup é referência de **comportamento**, não de estrutura física.
+
+## 15. Auditoria do backup
+
+Comportamentos preservados:
+
+1. coleta histórica;
+2. monitoramento posterior;
+3. vídeo + Shopee na mesma mensagem;
+4. vídeo + Shopee na mensagem seguinte;
+5. original permanente;
+6. Vision antes do Studio;
+7. Studio com análise e processamento;
+8. RVC dentro do Studio;
+9. publicação Telegram;
+10. recuperação;
+11. execução sequencial.
+
+A reconstrução muda a organização física para centralizar estado e execução no Core/SQLite.
+
+## 16. Testes
+
+Executar:
 
 ```powershell
 cd C:\Users\Administrador\Downloads\ArmoredCreator
-git pull
+git pull origin refactor/single-storage-pipeline
 python -m pytest -q
 ```
 
-O último estado confirmado antes da migração tinha:
+Estado confirmado antes desta etapa:
 
 ```
-19 passed
+22 passed
 ```
 
-Após esta migração, a suíte deve ser executada novamente antes de qualquer E2E.
+E2E real confirmado:
 
-Cada alteração do laboratório deve manter essa suíte verde antes de avançar
-para o E2E Telegram real.
+```
+Telegram → Sync → Vision → Studio → RVC → Hub → Telegram
+1 passed
+```
 
-## Ordem de validação
+Testes obrigatórios desta fase:
 
-1. Storage/naming.
-2. Sync real → workspace canônico.
-3. Vision real → affiliate metadata.
-4. Studio analysis completo.
-5. Studio V2 real (FFmpeg + RVC + assets).
-6. Hub dry-run.
-7. Recovery pós-Studio.
-8. Recovery pós-envio Telegram.
-9. Telegram real ponta a ponta.
-10. Somente então considerar a reconstrução fechada.
+```
+test_sync_historical_collection
+test_sync_historical_dedup
+test_sync_historical_finishes
+test_sync_transitions_to_live
+test_sync_detects_new_message
+test_new_message_enters_pipeline
+test_multiple_new_messages_are_sequential
+test_restart_does_not_duplicate
+test_history_and_live_share_same_identity
+```
+
+## 17. Ordem oficial desta fase
+
+### Fase 1 — CATCH-UP
+
+1. coleta histórica real;
+2. todos os tópicos;
+3. candidatos válidos;
+4. download direto para workspace;
+5. deduplicação;
+6. SQLite;
+7. nenhuma cópia intermediária;
+8. detectar fim do histórico;
+9. persistir CATCH-UP → LIVE.
+
+### Fase 2 — LIVE
+
+10. monitoramento contínuo;
+11. novas mensagens;
+12. mesma regra de candidato;
+13. checkpoints por tópico;
+14. recuperação após parada;
+15. deduplicação histórico/LIVE;
+16. novos itens no mesmo SQLite.
+
+### Fase 3 — Core
+
+17. Sync → DB → Coordinator → Pipeline;
+18. um item ativo;
+19. Vision;
+20. Studio;
+21. Hub;
+22. confirmação Telegram;
+23. PUBLISHED;
+24. cleanup.
+
+### Fase 4 — Recovery
+
+25. queda durante CATCH-UP;
+26. queda durante LIVE;
+27. queda durante Vision;
+28. queda durante Studio;
+29. queda após publicação;
+30. nenhuma republicação indevida.
+
+### Fase 5 — E2E real
+
+31. histórico Telegram real;
+32. transição CATCH-UP → LIVE;
+33. novo vídeo real;
+34. pipeline completo;
+35. publicação real;
+36. confirmação;
+37. cleanup;
+38. item seguinte.
+
+Somente depois disso o fluxo Sync será considerado fechado.
+
+## 18. Próxima otimização
+
+Agora a prioridade é **correção e fechamento do fluxo**, não performance.
+
+Depois de CATCH-UP → LIVE + E2E, pode ser avaliada a fusão de `crop_final`/cortes temporais no filter graph do finalizer para evitar uma segunda passada FFmpeg quando possível.
 
 ## Regra de segurança
 
-Nunca alterar a branch:
+Nunca alterar:
 
 ```
 audit/baseline-2026-09-19
 ```
 
-Ela existe como fotografia imutável do estado anterior à reconstrução.
+Todo trabalho desta fase permanece em:
+
+```
+refactor/single-storage-pipeline
+```
