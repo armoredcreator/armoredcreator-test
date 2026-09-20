@@ -73,7 +73,7 @@ class VisionStudioContractTests(unittest.TestCase):
                        "affiliate_url": "https://shopee.com.br/abc/finaldomeulinknovo"}
                 )
                 result = ArmoredStudio(root).process(item)
-                self.assertEqual(result.working_path, storage.working(1))
+                self.assertEqual(result.working_path, storage.working(1, item.telegram_message_id))
                 self.assertEqual(
                     result.result_path.name,
                     "tg-1_finaldomeulinknovo.mp4",
