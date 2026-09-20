@@ -45,7 +45,15 @@ class Recovery:
                 self.pipeline.cleanup(item_id)
                 return
 
-        working = item.working_path or self.storage.working(item_id)
+        # A DB path is a durable claim, not proof that the artifact still exists.
+        # If the previous synthetic WORKING artifact was removed, clear the stale
+        # path so Studio deterministically falls back to the immutable ORIGINAL.
+        working = item.working_path
+        if working is not None and not working.is_file():
+            self.db.set_working(item_id, None)
+            working = None
+        working = working or self.storage.working(item_id)
+
         result = item.result_path
         if not result and item.affiliate_url:
             result = self.storage.result(
