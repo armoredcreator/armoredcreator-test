@@ -88,6 +88,10 @@ class LifecycleSource:
         self.completed = True
         return None
 
+    async def collect_historical_batch_async(self):
+        self.completed = True
+        return self.history, {10: 101}
+
     async def fetch_live_batch_async(self):
         self.live_called = True
         return self.live, {}
