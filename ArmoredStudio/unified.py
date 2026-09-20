@@ -87,7 +87,8 @@ class UnifiedStudio:
         # The immutable ORIGINAL is the canonical Studio input. Do not create
         # a byte-identical WORKING copy merely to satisfy the old contract.
         # A WORKING artifact is used only when a durable intermediate exists.
-        source = Path(item.working_path) if item.working_path else original
+        working = item.working_path
+        source = Path(working) if working and Path(working).is_file() else original
         if not source.is_file():
             raise FileNotFoundError(source)
 
