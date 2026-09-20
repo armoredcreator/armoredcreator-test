@@ -171,7 +171,7 @@ class Database:
         )
         self.conn.commit()
 
-    def set_working(self, item_id: str, path: Path) -> None:
+    def set_working(self, item_id: str, path: Path | None) -> None:
         self.conn.execute(
             "UPDATE items SET working_path=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
             (str(path), item_id),
