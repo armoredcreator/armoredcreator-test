@@ -171,7 +171,13 @@ class Coordinator:
 
     def run_catch_up(self) -> list[str]:
         import asyncio
-        return asyncio.run(self.run_catch_up_async())
+        processed = asyncio.run(self.run_catch_up_async())
+        # Adapters that expose the legacy synchronous/one-at-a-time source
+        # contract do not own a Telegram checkpoint table. Their exhaustion
+        # is itself the durable end-of-history signal.
+        if not self.db.historical_complete():
+            self.db.complete_historical_sync()
+        return processed
 
     async def run_live_once_async(self) -> list[str]:
         source = self.source
