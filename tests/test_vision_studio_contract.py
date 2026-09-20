@@ -85,7 +85,7 @@ class VisionStudioContractTests(unittest.TestCase):
                 self.assertFalse((root / "storage" / "sync").exists())
                 self.assertFalse((root / "storage" / "queue").exists())
                 self.assertFalse((root / "storage" / "pipeline").exists())
-                self.assertEqual(storage.original(1).read_bytes(), b"ORIGINAL")
+                self.assertEqual(item.original_path.read_bytes(), b"ORIGINAL")
         finally:
             for name, old in (
                 ("ARMORED_STUDIO_ALLOW_COPY", old_allow),
