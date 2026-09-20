@@ -30,6 +30,7 @@ class Database:
             affiliate_url TEXT,
             attempts INTEGER NOT NULL DEFAULT 0,
             recovery_count INTEGER NOT NULL DEFAULT 0,
+            cleanup_completed INTEGER NOT NULL DEFAULT 0,
             last_error TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -64,6 +65,7 @@ class Database:
             ("original_sha256", "ALTER TABLE items ADD COLUMN original_sha256 TEXT"),
             ("attempts", "ALTER TABLE items ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"),
             ("recovery_count", "ALTER TABLE items ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0"),
+            ("cleanup_completed", "ALTER TABLE items ADD COLUMN cleanup_completed INTEGER NOT NULL DEFAULT 0"),
         ]
         for name, sql in migrations:
             if name not in existing:
@@ -131,7 +133,7 @@ class Database:
             Path(row["result_path"]) if row["result_path"] else None,
             row["affiliate_name"], row["affiliate_url"],
             row["source_id"], row["original_url"], row["topic_id"], row["topic_name"],
-            row["original_sha256"], row["attempts"], row["recovery_count"],
+            row["original_sha256"], row["attempts"], row["recovery_count"], bool(row["cleanup_completed"]),
         )
 
     def record_attempt(self, item_id: int) -> None:
@@ -189,6 +191,13 @@ class Database:
         self.conn.execute(
             "INSERT INTO state_events (item_id,new_state,reason) VALUES (?,?,?)",
             (item_id, State.FAILED.value, error),
+        )
+        self.conn.commit()
+
+    def mark_cleanup_completed(self, item_id: int) -> None:
+        self.conn.execute(
+            "UPDATE items SET cleanup_completed=1, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (item_id,),
         )
         self.conn.commit()
 
