@@ -19,7 +19,7 @@ class HubContractTests(unittest.TestCase):
         original = storage.original(item_id)
         original.write_bytes(b"SOURCE")
         db.conn.execute(
-            "UPDATE items SET original_path=?, affiliate_name=?, affiliate_url=? WHERE id=?",
+            "UPDATE items SET original_path=?, affiliate_name=?, affiliate_url=? WHERE content_id=?",
             (str(original), "product", "https://shopee.example/abc/finaldomeulinknovo", item_id),
         )
         db.conn.commit()
