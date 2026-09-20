@@ -146,6 +146,23 @@ O serviço não conhece storage/input, storage/output, storage/temp, queue ou ch
 
 ## RVC e assets
 
+O RVC fica separado do código do Studio e dos dados de vídeo. A estrutura canônica é:
+
+```text
+rvc/
+├── env/                    # ambiente Python isolado do RVC
+├── models/                 # modelos de voz instalados localmente
+│   ├── melody/
+│   │   ├── melody.pth      # obrigatório
+│   │   └── melody.index    # opcional
+│   └── rebecca/
+│       └── rebecca.pth
+└── output/                 # saída técnica temporária do RVC
+```
+
+O caminho padrão é relativo à raiz do projeto. Para manter o RVC fora do checkout, defina `ARMORED_RVC_ROOT`. O modelo `.pth` é obrigatório para cada voz; o `.index` é opcional.
+
+
 Os recursos V2 devem pertencer ao próprio projeto ou ser explicitamente
 configurados por ambiente:
 
