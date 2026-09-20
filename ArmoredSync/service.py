@@ -89,6 +89,7 @@ class TelegramSource:
         self._topic_iterator = None
         self._topics: list[tuple[int, str]] | None = None
         self._historical_complete = False
+        self._historical_checkpoints: dict[int, int] = {}
 
     @property
     def mode(self) -> str:
@@ -98,6 +99,7 @@ class TelegramSource:
         if self.db is not None:
             self.db.complete_historical_sync()
         self._historical_complete = True
+        self._historical_checkpoints.clear()
 
     def is_historical_complete(self) -> bool:
         return self.mode == "LIVE"
@@ -200,8 +202,10 @@ class TelegramSource:
         source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
         source_ref = int(source) if str(source).lstrip("-").isdigit() else source
 
-        if self._topic_iterator is None:
+        if not self.reader.client.is_connected():
             await self.reader.connect()
+
+        if self._topic_iterator is None:
             topics = await self._discover_topics(source_ref)
             if not topics:
                 raise RuntimeError(f"Nenhum tópico de fórum encontrado na fonte Telegram {source}.")
@@ -219,12 +223,17 @@ class TelegramSource:
                 original_url=original_url,
                 materialize=lambda target, m=message: self._download_to(m, target),
             )
+        if self.db is not None and self._historical_checkpoints:
+            self.commit_live_checkpoints(self._historical_checkpoints)
         self.mark_historical_complete()
         return None
 
     async def _candidate_iterator(self, source: str, topics: list[tuple[int, str]]):
         for topic_id, topic_name in topics:
             messages = [message async for message in self._topic_messages(source, topic_id)]
+            ids = [int(getattr(message, "id", 0) or 0) for message in messages]
+            if ids:
+                self._historical_checkpoints[topic_id] = max(ids)
             for index, message in enumerate(messages):
                 if not getattr(message, "video", None):
                     continue
