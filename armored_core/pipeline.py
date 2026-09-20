@@ -1,4 +1,6 @@
 from __future__ import annotations
+from pathlib import Path
+import shutil
 from .database import Database
 from .models import PublicationCheck, State
 from .services import Publisher, StudioService, VisionService
@@ -15,6 +17,7 @@ class Pipeline:
             self.cleanup(item_id)
             return
         try:
+            self.db.record_attempt(item_id)
             if not item.original_path.is_file():
                 raise FileNotFoundError(f"immutable-original-missing: {item.original_path}")
             if item.state in (State.RECEIVED, State.RECOVERY):
@@ -65,6 +68,17 @@ class Pipeline:
         item = self.db.get(item_id)
         if item.state != State.PUBLISHED:
             raise RuntimeError("cleanup-is-allowed-only-after-PUBLISHED")
-        for path in (item.working_path, item.result_path):
-            if path and path.exists():
+        workspace = item.workspace.resolve()
+        original = item.original_path.resolve()
+        if workspace != original.parent.resolve():
+            raise RuntimeError("cleanup-workspace-mismatch")
+        if not workspace.is_dir():
+            return
+        for path in workspace.iterdir():
+            resolved = path.resolve()
+            if resolved == original:
+                continue
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
                 path.unlink()
