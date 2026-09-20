@@ -205,7 +205,7 @@ class Database:
         self.conn.execute(
             "INSERT INTO publications(item_id,idempotency_key) VALUES(?,?) "
             "ON CONFLICT(item_id) DO UPDATE SET updated_at=CURRENT_TIMESTAMP",
-            (item_id, f"armoredcreator:item:{item_id}"),
+            (item_id, f"armoredcreator:content:{self.get(item_id).telegram_message_id}"),
         )
         self.conn.commit()
 
