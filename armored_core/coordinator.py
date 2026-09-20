@@ -24,6 +24,7 @@ class Coordinator:
         self.pipeline = Pipeline(db, storage, vision, studio, publisher)
         self.recovery = Recovery(db, storage, vision, studio, publisher)
         self.source = source
+        self._runtime_lock_held = False
 
     @classmethod
     def build(cls, root: Path | None = None, bindings: Any | None = None):
@@ -218,15 +219,25 @@ class Coordinator:
         production default remains ``None`` (run until interrupted).
         """
         import asyncio
-        self.recover_pending()
-        if not getattr(self.source, "is_historical_complete", lambda: False)():
-            self.run_catch_up()
-        cycles = 0
-        while max_cycles is None or cycles < max_cycles:
-            processed = self.run_live_once()
-            cycles += 1
-            if not processed and (max_cycles is None or cycles < max_cycles):
-                asyncio.run(asyncio.sleep(float(poll_seconds)))
+        self.db.acquire_runtime_lock("coordinator")
+        self._runtime_lock_held = True
+        try:
+            self.recover_pending()
+            # SQLite is authoritative for CATCH-UP/LIVE state. This makes a
+            # fresh process restart independent of in-memory Sync state.
+            if not self.db.historical_complete():
+                self.run_catch_up()
+            cycles = 0
+            while max_cycles is None or cycles < max_cycles:
+                self.db.heartbeat_runtime_lock("coordinator")
+                processed = self.run_live_once()
+                cycles += 1
+                if not processed and (max_cycles is None or cycles < max_cycles):
+                    asyncio.run(asyncio.sleep(float(poll_seconds)))
+        finally:
+            if self._runtime_lock_held:
+                self.db.release_runtime_lock("coordinator")
+                self._runtime_lock_held = False
 
     def run(self, item_id: str) -> None:
         self.pipeline.run(item_id)
@@ -235,6 +246,9 @@ class Coordinator:
         self.recovery.reconcile(item_id)
 
     def close(self) -> None:
+        if self._runtime_lock_held:
+            self.db.release_runtime_lock("coordinator")
+            self._runtime_lock_held = False
         self.db.close()
 
     def process_next(self):
