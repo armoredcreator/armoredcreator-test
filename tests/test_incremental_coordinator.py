@@ -15,9 +15,11 @@ class IncrementalSource:
         self.messages = ["telegram-1", "telegram-2"]
         self.index = 0
         self.marked = []
+        self.historical_complete = False
 
     async def fetch_next_async(self):
         if self.index >= len(self.messages):
+            self.mark_historical_complete()
             return None
         message_id = self.messages[self.index]
         self.index += 1
@@ -34,6 +36,9 @@ class IncrementalSource:
             source_path=None,
             materialize=materialize,
         )
+
+    def mark_historical_complete(self):
+        self.historical_complete = True
 
     def mark_ingested(self, message_id):
         self.marked.append(str(message_id))
