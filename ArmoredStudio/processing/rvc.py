@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import subprocess
 import sys
 
 
 BASE_DIR = Path(__file__).resolve().parent
-VOICE_DIR = BASE_DIR / "voice"
-MODELS_DIR = VOICE_DIR / "models"
-RVC_ENV_DIR = VOICE_DIR / "rvc_env"
+PROJECT_ROOT = BASE_DIR.parents[1]
+_configured_rvc_root = os.getenv("ARMORED_RVC_ROOT", "").strip()
+RVC_ROOT = (Path(_configured_rvc_root).expanduser() if _configured_rvc_root else PROJECT_ROOT / "rvc").resolve()
+MODELS_DIR = RVC_ROOT / "models"
+RVC_ENV_DIR = RVC_ROOT / "env"
 
 DEFAULT_VOICE = "melody"
-DEFAULT_OUTPUT = VOICE_DIR / "output" / "audio_rvc.wav"
+DEFAULT_OUTPUT = RVC_ROOT / "output" / "audio_rvc.wav"
 
 
 def resolver_rvc_python() -> Path:
@@ -104,7 +107,7 @@ def executar_no_rvc(entrada, saida, voz):
     print("\nExecutando ambiente RVC:")
     print(" ".join(map(str, comando)))
 
-    resultado = subprocess.run(comando, cwd=str(BASE_DIR))
+    resultado = subprocess.run(comando, cwd=str(PROJECT_ROOT))
     if resultado.returncode != 0:
         raise RuntimeError("Falha na conversão RVC.")
     validar_arquivo(saida, "Áudio RVC")
