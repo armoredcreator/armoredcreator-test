@@ -126,12 +126,12 @@ class Coordinator:
         return item_id
 
     async def run_catch_up_async(self) -> list[str]:
-        """Collect historical Sync candidates first, then process them one by one."""
+        """Process historical candidates incrementally, one item at a time."""
+        processed: list[str] = []
         source = self.source
-        collect = getattr(source, "collect_historical_batch_async", None)
+        fetch_async = getattr(source, "fetch_next_async", None)
 
-        if collect is None:
-            processed: list[str] = []
+        if fetch_async is None:
             while True:
                 item_id = await self.ingest_once_async()
                 if item_id is None:
@@ -141,50 +141,11 @@ class Coordinator:
             self.db.complete_historical_sync()
             return processed
 
-        messages, checkpoints = await collect()
-        ingested: list[str] = []
-        try:
-            for message in messages:
-                item_id = await self.sync.ingest_message_async(IngestMessage(
-                    telegram_message_id=str(message.telegram_message_id),
-                    source_id=getattr(message, "source_id", "telegram"),
-                    topic_id=getattr(message, "topic_id", None),
-                    topic_name=getattr(message, "topic_name", None),
-                    original_url=getattr(message, "original_url", None),
-                    source_path=getattr(message, "source_path", None),
-                    materialize=getattr(message, "materialize", None),
-                ))
-                marker = getattr(source, "mark_ingested", None)
-                if marker is not None:
-                    marker(str(message.telegram_message_id))
-                ingested.append(str(item_id))
+        while True:
+            message = await fetch_async()
+            if message is None:
+                break
 
-            commit = getattr(source, "commit_live_checkpoints", None)
-            if commit is not None:
-                commit(checkpoints)
-            self.db.complete_historical_sync()
-            complete = getattr(source, "mark_historical_complete", None)
-            if complete is not None:
-                complete()
-        finally:
-            await self._release_source_connection()
-
-        for item_id in ingested:
-            self.run(item_id)
-        return ingested
-
-    def run_catch_up(self) -> list[str]:
-        import asyncio
-        return asyncio.run(self.run_catch_up_async())
-
-    async def run_live_once_async(self) -> list[str]:
-        source = self.source
-        fetch_batch = getattr(source, "fetch_live_batch_async", None)
-        if fetch_batch is None:
-            return []
-        messages, checkpoints = await fetch_batch()
-        processed: list[str] = []
-        for message in messages:
             item_id = await self.sync.ingest_message_async(IngestMessage(
                 telegram_message_id=str(message.telegram_message_id),
                 source_id=getattr(message, "source_id", "telegram"),
@@ -199,13 +160,49 @@ class Coordinator:
                 marker(str(message.telegram_message_id))
             processed.append(str(item_id))
 
-        commit = getattr(source, "commit_live_checkpoints", None)
-        if commit is not None:
-            commit(checkpoints)
-        await self._release_source_connection()
+            # Release Telegram before Hub opens the same Telethon session.
+            # The source iterator is already materialized per topic and can
+            # reconnect on the next fetch.
+            await self._release_source_connection()
+            self.run(str(item_id))
 
-        for item_id in processed:
-            self.run(item_id)
+        return processed
+
+    def run_catch_up(self) -> list[str]:
+        import asyncio
+        return asyncio.run(self.run_catch_up_async())
+
+    async def run_live_once_async(self) -> list[str]:
+        source = self.source
+        fetch_batch = getattr(source, "fetch_live_batch_async", None)
+        if fetch_batch is None:
+            return []
+        messages, checkpoints = await fetch_batch()
+        processed: list[str] = []
+        try:
+            for message in messages:
+                item_id = await self.sync.ingest_message_async(IngestMessage(
+                    telegram_message_id=str(message.telegram_message_id),
+                    source_id=getattr(message, "source_id", "telegram"),
+                    topic_id=getattr(message, "topic_id", None),
+                    topic_name=getattr(message, "topic_name", None),
+                    original_url=getattr(message, "original_url", None),
+                    source_path=getattr(message, "source_path", None),
+                    materialize=getattr(message, "materialize", None),
+                ))
+                marker = getattr(source, "mark_ingested", None)
+                if marker is not None:
+                    marker(str(message.telegram_message_id))
+                processed.append(str(item_id))
+
+                await self._release_source_connection()
+                self.run(str(item_id))
+        finally:
+            if not messages or len(processed) == len(messages):
+                commit = getattr(source, "commit_live_checkpoints", None)
+                if commit is not None:
+                    commit(checkpoints)
+            await self._release_source_connection()
         return processed
 
     def run_live_once(self) -> list[str]:
