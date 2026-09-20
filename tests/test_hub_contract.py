@@ -13,7 +13,7 @@ class HubContractTests(unittest.TestCase):
     def _item(self, db, storage):
         item_id = db.create_item(
             "hub-test-1",
-            storage.original("hub-test-1", telegram_message_id="hub-test-1"),
+            storage.original("hub-test-1"),
             original_url="https://shopee.example/p/1",
         )
         original = storage.original(item_id)
@@ -24,7 +24,7 @@ class HubContractTests(unittest.TestCase):
         )
         db.conn.commit()
         item = db.get(item_id)
-        result = storage.result(item.item_id, item.affiliate_url, item.affiliate_name)
+        result = storage.result(item.content_id, item.affiliate_url, item.affiliate_name)
         result.write_bytes(b"RESULT")
         db.set_result(item.item_id, result)
         return db.get(item.item_id)
@@ -42,7 +42,7 @@ class HubContractTests(unittest.TestCase):
                 hub = ArmoredHub(root, db)
                 self.assertEqual(hub.check_publication(item), PublicationCheck.UNKNOWN)
 
-                db.conn.execute("DELETE FROM publications WHERE item_id=?", (item.item_id,))
+                db.conn.execute("DELETE FROM publications WHERE content_id=?", (item.item_id,))
                 db.conn.commit()
                 item = db.get(item.item_id)
                 self.assertEqual(hub.check_publication(item), PublicationCheck.ABSENT)
