@@ -126,7 +126,7 @@ class Coordinator:
         )
         placeholders = ",".join("?" for _ in states)
         rows = self.db.conn.execute(
-            f"SELECT content_id FROM items WHERE state IN ({placeholders}) ORDER BY id", states
+            f"SELECT content_id FROM items WHERE state IN ({placeholders}) ORDER BY created_at, content_id", states
         ).fetchall()
         recovered = []
         for row in rows:
