@@ -59,6 +59,20 @@ class Coordinator:
             return cls(db, storage, vision, studio, publisher, source)
         return cls(db, storage, bindings.vision, bindings.studio, bindings.publisher, bindings.source)
 
+    async def _release_source_connection(self) -> None:
+        """Release a real Telegram Sync session before Hub opens the same session.
+
+        Telethon stores the user session in SQLite. Keeping ArmoredSync connected
+        while ArmoredHub opens that same session causes a Windows SQLite lock.
+        Ingestion/materialization is complete before this method is called, so
+        releasing the connection does not interrupt the canonical pipeline.
+        """
+        source = self.source
+        reader = getattr(source, "reader", None)
+        disconnect = getattr(reader, "disconnect", None)
+        if disconnect is not None:
+            await disconnect()
+
     async def ingest_once_async(self):
         if self.source is None:
             raise RuntimeError("Sync source não configurado")
@@ -78,6 +92,7 @@ class Coordinator:
         marker = getattr(self.source, "mark_ingested", None)
         if marker is not None:
             marker(str(message.telegram_message_id))
+        await self._release_source_connection()
         return item_id
 
     def ingest_once(self):
@@ -101,6 +116,11 @@ class Coordinator:
         marker = getattr(self.source, "mark_ingested", None)
         if marker is not None:
             marker(str(message.telegram_message_id))
+        reader = getattr(self.source, "reader", None)
+        disconnect = getattr(reader, "disconnect", None)
+        if disconnect is not None:
+            import asyncio
+            asyncio.run(disconnect())
         return item_id
 
     def run(self, item_id: str) -> None:
