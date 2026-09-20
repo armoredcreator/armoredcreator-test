@@ -13,7 +13,7 @@ class HubContractTests(unittest.TestCase):
     def _item(self, db, storage):
         item_id = db.create_item(
             "hub-test-1",
-            storage.original(1),
+            storage.original("hub-test-1", telegram_message_id="hub-test-1"),
             original_url="https://shopee.example/p/1",
         )
         original = storage.original(item_id)
