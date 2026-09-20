@@ -23,10 +23,13 @@ class Database:
             original_url TEXT,
             state TEXT NOT NULL,
             original_path TEXT NOT NULL,
+            original_sha256 TEXT,
             working_path TEXT,
             result_path TEXT,
             affiliate_name TEXT,
             affiliate_url TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            recovery_count INTEGER NOT NULL DEFAULT 0,
             last_error TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -52,13 +55,17 @@ class Database:
         self._migrate_columns()
 
     def _migrate_columns(self) -> None:
-        existing = {r[1] for r in self.conn.execute('PRAGMA table_info(items)').fetchall()}
-        for name, sql in [
-            ('source_id', "ALTER TABLE items ADD COLUMN source_id TEXT NOT NULL DEFAULT 'telegram'"),
-            ('topic_id', "ALTER TABLE items ADD COLUMN topic_id INTEGER"),
-            ('topic_name', "ALTER TABLE items ADD COLUMN topic_name TEXT"),
-            ('original_url', "ALTER TABLE items ADD COLUMN original_url TEXT"),
-        ]:
+        existing = {r[1] for r in self.conn.execute("PRAGMA table_info(items)").fetchall()}
+        migrations = [
+            ("source_id", "ALTER TABLE items ADD COLUMN source_id TEXT NOT NULL DEFAULT 'telegram'"),
+            ("topic_id", "ALTER TABLE items ADD COLUMN topic_id INTEGER"),
+            ("topic_name", "ALTER TABLE items ADD COLUMN topic_name TEXT"),
+            ("original_url", "ALTER TABLE items ADD COLUMN original_url TEXT"),
+            ("original_sha256", "ALTER TABLE items ADD COLUMN original_sha256 TEXT"),
+            ("attempts", "ALTER TABLE items ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"),
+            ("recovery_count", "ALTER TABLE items ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0"),
+        ]
+        for name, sql in migrations:
             if name not in existing:
                 self.conn.execute(sql)
         self.conn.commit()
@@ -66,26 +73,16 @@ class Database:
     def reserve_item(
         self,
         telegram_message_id: str,
-        source_id: str = 'telegram',
+        source_id: str = "telegram",
         topic_id: int | None = None,
         topic_name: str | None = None,
         original_url: str | None = None,
     ) -> int:
-        """Reserve the canonical item identity without creating any file.
-
-        The transaction remains open until the caller has materialized the
-        original directly into storage/videos/{item_id}/.
-        """
         cur = self.conn.execute(
             "INSERT INTO items (telegram_message_id,source_id,topic_id,topic_name,original_url,state,original_path) VALUES (?,?,?,?,?,?,?)",
             (
-                telegram_message_id,
-                source_id,
-                topic_id,
-                topic_name,
-                original_url,
-                State.RECEIVED.value,
-                "",
+                telegram_message_id, source_id, topic_id, topic_name, original_url,
+                State.RECEIVED.value, "",
             ),
         )
         item_id = int(cur.lastrowid)
@@ -95,20 +92,25 @@ class Database:
         )
         return item_id
 
-    def finalize_original_path(self, item_id: int, path: Path) -> None:
+    def finalize_original_path(self, item_id: int, path: Path, sha256: str) -> None:
         self.conn.execute(
-            "UPDATE items SET original_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (str(path), item_id),
+            "UPDATE items SET original_path=?, original_sha256=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (str(path), sha256, item_id),
         )
         self.conn.commit()
 
     def rollback_ingest(self) -> None:
         self.conn.rollback()
 
-    def create_item(self, telegram_message_id: str, original_path: Path, source_id: str = 'telegram', topic_id: int | None = None, topic_name: str | None = None, original_url: str | None = None) -> int:
+    def create_item(
+        self, telegram_message_id: str, original_path: Path,
+        source_id: str = "telegram", topic_id: int | None = None,
+        topic_name: str | None = None, original_url: str | None = None,
+    ) -> int:
         cur = self.conn.execute(
             "INSERT INTO items (telegram_message_id,source_id,topic_id,topic_name,original_url,state,original_path) VALUES (?,?,?,?,?,?,?)",
-            (telegram_message_id, source_id, topic_id, topic_name, original_url, State.RECEIVED.value, str(original_path)),
+            (telegram_message_id, source_id, topic_id, topic_name, original_url,
+             State.RECEIVED.value, str(original_path)),
         )
         item_id = int(cur.lastrowid)
         self.conn.execute(
@@ -129,7 +131,22 @@ class Database:
             Path(row["result_path"]) if row["result_path"] else None,
             row["affiliate_name"], row["affiliate_url"],
             row["source_id"], row["original_url"], row["topic_id"], row["topic_name"],
+            row["original_sha256"], row["attempts"], row["recovery_count"],
         )
+
+    def record_attempt(self, item_id: int) -> None:
+        self.conn.execute(
+            "UPDATE items SET attempts=attempts+1, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (item_id,),
+        )
+        self.conn.commit()
+
+    def record_recovery(self, item_id: int) -> None:
+        self.conn.execute(
+            "UPDATE items SET recovery_count=recovery_count+1, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (item_id,),
+        )
+        self.conn.commit()
 
     def transition(self, item_id: int, new_state: State, reason: str = "") -> None:
         old = self.get(item_id).state
