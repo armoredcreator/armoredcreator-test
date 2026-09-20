@@ -10,7 +10,7 @@ from .unified import UnifiedStudio
 
 
 class ArmoredStudio:
-    """Canonical Studio boundary: mandatory analysis followed by V2 processing."""
+    """Canonical Studio boundary: mandatory analysis followed by processing."""
 
     def __init__(self, root: Path):
         self.root = Path(root).resolve()
