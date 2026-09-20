@@ -45,6 +45,17 @@ class Vision:
         return VisionResult("affiliate", "https://example.invalid/affiliate")
 
 
+class FailOnceVision:
+    def __init__(self):
+        self.failed = False
+
+    def identify(self, item):
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("simulated-live-crash")
+        return VisionResult("affiliate", "https://example.invalid/affiliate")
+
+
 class Studio:
     def __init__(self, storage):
         self.storage = storage
@@ -180,6 +191,49 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertTrue(source.live_called)
             self.assertEqual(db.get("102").telegram_message_id, "102")
             coordinator.close()
+
+    def test_live_checkpoint_survives_processing_failure_and_restart_recovers_item(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            db.complete_historical_sync()
+
+            source_file = root / "200.mp4"
+            source_file.write_bytes(b"200")
+            source = LifecycleSource()
+            source.completed = True
+            source.live = [SyncMessage(
+                "200", source_id="local", source_path=source_file,
+                original_url="https://shopee.com.br/x/restart",
+            )]
+            publisher = Publisher()
+            first = Coordinator(
+                db, storage, FailOnceVision(), Studio(storage), publisher, source
+            )
+
+            with self.assertRaises(RuntimeError):
+                first.run_live_once()
+
+            self.assertEqual(db.get("200").state.value, "FAILED")
+            first.close()
+
+            # The Telegram checkpoint was already committed after durable ingest;
+            # restart must recover the DB item instead of needing a second message.
+            restarted_source = LifecycleSource()
+            restarted_source.completed = True
+            restarted_source.live = []
+            second = Coordinator(
+                Database(storage.database / "db.sqlite"), storage,
+                Vision(), Studio(storage), publisher, restarted_source,
+            )
+            recovered = second.recover_pending()
+
+            self.assertEqual(recovered, ["200"])
+            self.assertEqual(second.db.get("200").state.value, "PUBLISHED")
+            self.assertEqual(publisher.published, ["200"])
+            self.assertEqual(restarted_source.live, [])
+            second.close()
 
     def test_run_forever_catches_up_then_processes_live_in_one_sequential_cycle(self):
         with tempfile.TemporaryDirectory() as td:
