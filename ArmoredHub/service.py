@@ -18,7 +18,7 @@ class ArmoredHub:
         self.db = db
 
     def _publication(self, item: Item):
-        return self.db.publication(item.item_id) if self.db is not None else None
+        return self.db.publication(item.content_id) if self.db is not None else None
 
     def check_publication(self, item: Item) -> PublicationCheck:
         record = self._publication(item)
@@ -32,7 +32,7 @@ class ArmoredHub:
         if os.getenv("ARMORED_HUB_VERIFY_TELEGRAM", "0") == "1":
             message_id = record["published_message_id"]
             if message_id and self._verify_telegram_message(message_id):
-                self.db.publication_confirmed(item.item_id, str(message_id))
+                self.db.publication_confirmed(item.content_id, str(message_id))
                 return PublicationCheck.CONFIRMED
         return PublicationCheck.UNKNOWN
 
