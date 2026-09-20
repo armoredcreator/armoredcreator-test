@@ -46,9 +46,10 @@ class HubContractTests(unittest.TestCase):
                 db.conn.commit()
                 item = db.get(item.item_id)
                 self.assertEqual(hub.check_publication(item), PublicationCheck.ABSENT)
-                published = hub.publish(item)
-                self.assertTrue(published.confirmed)
-                self.assertEqual(db.publication(item.item_id)["confirmed"], 1)
+                with self.assertRaises(RuntimeError):
+                    hub.publish(item)
+                self.assertEqual(db.publication(item.item_id)["confirmed"], 0)
+                self.assertEqual(db.publication(item.item_id)["verification_status"], "PENDING")
                 self.assertFalse((root / "hub").exists())
                 db.close()
         finally:
@@ -58,8 +59,6 @@ class HubContractTests(unittest.TestCase):
                 os.environ["ARMORED_HUB_DRY_RUN"] = old
 
     def test_unresolved_publication_reconciles_by_exact_result(self):
-        old_verify = os.environ.get("ARMORED_HUB_VERIFY_TELEGRAM")
-        os.environ["ARMORED_HUB_VERIFY_TELEGRAM"] = "1"
         try:
             with tempfile.TemporaryDirectory() as td:
                 root = Path(td)
@@ -75,10 +74,7 @@ class HubContractTests(unittest.TestCase):
                 self.assertEqual(db.publication(item.item_id)["confirmed"], 1)
                 db.close()
         finally:
-            if old_verify is None:
-                os.environ.pop("ARMORED_HUB_VERIFY_TELEGRAM", None)
-            else:
-                os.environ["ARMORED_HUB_VERIFY_TELEGRAM"] = old_verify
+            pass
 
 
 if __name__ == "__main__":
