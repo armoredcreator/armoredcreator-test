@@ -45,26 +45,30 @@ class Storage:
 
     def original(
         self,
-        item_id: int,
+        content_id: str,
         suffix: str = ".mp4",
-        telegram_message_id: str | None = None,
         original_url: str | None = None,
     ) -> Path:
-        content_id = str(telegram_message_id or item_id)
+        content_id = str(content_id).strip()
+        if not content_id:
+            raise ValueError("content-id-required")
         tail = affiliate_tail(original_url)
         return self.workspace(content_id) / f"{content_id}_{tail}{suffix}"
 
-    def working(self, item_id: int, telegram_message_id: str | None = None) -> Path:
-        content_id = str(telegram_message_id or item_id)
+    def working(self, content_id: str) -> Path:
+        content_id = str(content_id).strip()
+        if not content_id:
+            raise ValueError("content-id-required")
         return self.workspace(content_id) / f"{content_id}_.mp4"
 
     def result(
         self,
-        item_id: int,
+        content_id: str,
         affiliate_url: str | None = None,
         affiliate_name: str | None = None,
-        telegram_message_id: str | None = None,
     ) -> Path:
-        content_id = str(telegram_message_id or item_id)
+        content_id = str(content_id).strip()
+        if not content_id:
+            raise ValueError("content-id-required")
         tail = affiliate_tail(affiliate_url, affiliate_name)
         return self.workspace(content_id) / f"{content_id}_{tail}.mp4"
