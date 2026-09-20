@@ -278,7 +278,7 @@ class Coordinator:
                 await self._release_source_connection()
                 self.run(str(item_id))
         finally:
-            if not messages or len(processed) == len(messages):
+            if checkpoints and (not messages or len(processed) == len(messages)):
                 commit = getattr(source, "commit_live_checkpoints", None)
                 if commit is not None:
                     commit(checkpoints)
