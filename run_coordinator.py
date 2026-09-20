@@ -11,6 +11,9 @@ from armored_core.coordinator import Coordinator
 def main() -> int:
     root = Path(os.getenv("ARMORED_ROOT") or Path(__file__).resolve().parent).resolve()
     os.environ.setdefault("ARMORED_ROOT", str(root))
+    # O processo real do Coordinator deve usar o ArmoredSync/Telegram real.
+    # LocalSource continua disponível apenas para testes offline via Coordinator.build().
+    os.environ.setdefault("ARMORED_REAL_TELEGRAM", "1")
 
     logging.basicConfig(
         level=os.getenv("ARMORED_LOG_LEVEL", "INFO").upper(),
@@ -22,6 +25,8 @@ def main() -> int:
         logging.info("ArmoredCreator Coordinator iniciado")
         logging.info("Root: %s", root)
         logging.info("Modo SQLite: %s", coordinator.db.sync_mode())
+        logging.info("Sync real Telegram: %s", os.getenv("ARMORED_REAL_TELEGRAM"))
+        logging.info("Fonte Sync: %s", os.getenv("ARMORED_SYNC_SOURCE", "-1003788989075"))
         coordinator.run_forever(
             poll_seconds=float(os.getenv("ARMORED_POLL_SECONDS", "2")),
         )
