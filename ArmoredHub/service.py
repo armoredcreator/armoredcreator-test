@@ -231,7 +231,7 @@ class ArmoredHub:
         if not output.is_file() or output.stat().st_size <= 0:
             raise RuntimeError("Hub recebeu resultado inexistente/vazio")
 
-        if os.getenv("ARMORED_HUB_DRY_RUN", "1") == "1":
+        if os.getenv("ARMORED_HUB_DRY_RUN", "0") == "1":
             digest = hashlib.sha256(output.read_bytes()).hexdigest()
             message_id = f"dry-{item.item_id}"
             self.db.publication_confirmed(item.item_id, message_id)
