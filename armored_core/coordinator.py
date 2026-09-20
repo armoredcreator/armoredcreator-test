@@ -125,24 +125,52 @@ class Coordinator:
         return item_id
 
     async def run_catch_up_async(self) -> list[str]:
-        """Drain Telegram history, processing each item sequentially.
+        """Collect historical Sync candidates first, then process them one by one."""
+        source = self.source
+        collect = getattr(source, "collect_historical_batch_async", None)
 
-        Sync may discover the next historical item only after the previous
-        item has been ingested; the pipeline itself remains strictly one-item
-        active at a time.
-        """
-        processed: list[str] = []
-        while True:
-            item_id = await self.ingest_once_async()
-            if item_id is None:
-                break
+        if collect is None:
+            processed: list[str] = []
+            while True:
+                item_id = await self.ingest_once_async()
+                if item_id is None:
+                    break
+                processed.append(str(item_id))
+                self.run(item_id)
+            self.db.complete_historical_sync()
+            return processed
+
+        messages, checkpoints = await collect()
+        ingested: list[str] = []
+        try:
+            for message in messages:
+                item_id = await self.sync.ingest_message_async(IngestMessage(
+                    telegram_message_id=str(message.telegram_message_id),
+                    source_id=getattr(message, "source_id", "telegram"),
+                    topic_id=getattr(message, "topic_id", None),
+                    topic_name=getattr(message, "topic_name", None),
+                    original_url=getattr(message, "original_url", None),
+                    source_path=getattr(message, "source_path", None),
+                    materialize=getattr(message, "materialize", None),
+                ))
+                marker = getattr(source, "mark_ingested", None)
+                if marker is not None:
+                    marker(str(message.telegram_message_id))
+                ingested.append(str(item_id))
+
+            commit = getattr(source, "commit_live_checkpoints", None)
+            if commit is not None:
+                commit(checkpoints)
+            self.db.complete_historical_sync()
+            complete = getattr(source, "mark_historical_complete", None)
+            if complete is not None:
+                complete()
+        finally:
+            await self._release_source_connection()
+
+        for item_id in ingested:
             self.run(item_id)
-            processed.append(str(item_id))
-        self.db.complete_historical_sync()
-        complete = getattr(self.source, "mark_historical_complete", None)
-        if complete is not None:
-            complete()
-        return processed
+        return ingested
 
     def run_catch_up(self) -> list[str]:
         import asyncio
