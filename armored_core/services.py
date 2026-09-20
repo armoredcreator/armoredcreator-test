@@ -52,11 +52,11 @@ class SyncService:
         if message.source_path is None and message.materialize is None:
             raise ValueError("ingest-message-requires-source-path-or-materializer")
         existing = self.db.conn.execute(
-            "SELECT id FROM items WHERE telegram_message_id=?",
+            "SELECT content_id FROM items WHERE telegram_message_id=?",
             (message.telegram_message_id,),
         ).fetchone()
         if existing:
-            item_id = int(existing["id"])
+            item_id = str(existing["content_id"])
             original = self.db.get(item_id).original_path
             return item_id, original, original
         suffix = (
@@ -87,12 +87,12 @@ class SyncService:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def _finish_ingest(self, item_id: str, original: Path, partial: Path) -> int:
+    def _finish_ingest(self, content_id: str, original: Path, partial: Path) -> int:
         if not partial.is_file() or partial.stat().st_size <= 0:
             raise IOError("original-materialization-empty")
         partial.replace(original)
-        self.db.finalize_original_path(item_id, original, self._sha256(original))
-        return item_id
+        self.db.finalize_original_path(content_id, original, self._sha256(original))
+        return content_id
 
     @staticmethod
     def _cleanup_ingest_files(original: Path, partial: Path) -> None:
