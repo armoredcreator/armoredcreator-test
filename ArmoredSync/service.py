@@ -209,11 +209,21 @@ class TelegramSource:
             for index, message in enumerate(messages):
                 if not getattr(message, "video", None):
                     continue
-                # O backup oficial exige VIDEO + LINK SHOPEE na mesma publicação.
-                # Não associar links de mensagens vizinhas.
+
+                # Preserva exatamente o comportamento do backup:
+                # 1) vídeo + Shopee na mesma mensagem; ou
+                # 2) vídeo + Shopee na mensagem imediatamente seguinte.
                 original_url = self._shopee_url(message)
+
+                if original_url is None and index + 1 < len(messages):
+                    next_message = messages[index + 1]
+                    next_is_video = bool(getattr(next_message, "video", None))
+                    if not next_is_video:
+                        original_url = self._shopee_url(next_message)
+
                 if original_url is None:
                     continue
+
                 yield (int(getattr(message, "id", 0) or 0), int(topic_id), topic_name, message, original_url)
 
     def mark_ingested(self, telegram_message_id: str) -> None:
