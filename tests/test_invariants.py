@@ -82,11 +82,11 @@ class InvariantTests(unittest.TestCase):
                 materialize=materialize,
             ))
             item = db.get(i)
-            self.assertEqual(item.original_path, st.original(i))
+            self.assertEqual(item.original_path, st.original(i, telegram_message_id="1383", original_url="https://shopee.com.br/example"))
             self.assertTrue(item.original_path.is_file())
             self.assertEqual(item.original_path.read_bytes(), b"TELEGRAM-BYTES")
             self.assertFalse((root / "storage" / "sync").exists())
-            self.assertEqual([p.name for p in item.workspace.iterdir()], [f"{i}_finallinkoriginal.mp4"])
+            self.assertEqual([p.name for p in item.workspace.iterdir()], ["1383_example.mp4"])
             db.close()
 
     def test_missing_original_blocks_processing(self):
