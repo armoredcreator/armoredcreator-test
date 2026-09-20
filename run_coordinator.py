@@ -26,7 +26,7 @@ def main() -> int:
         logging.info("Root: %s", root)
         logging.info("Modo SQLite: %s", coordinator.db.sync_mode())
         logging.info("Sync real Telegram: %s", os.getenv("ARMORED_REAL_TELEGRAM"))
-        logging.info("Fonte Sync: %s", os.getenv("ARMORED_SYNC_SOURCE", "-1003788989075"))
+        logging.info("Fonte Sync: %s", os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075")
         coordinator.run_forever(
             poll_seconds=float(os.getenv("ARMORED_POLL_SECONDS", "2")),
         )
