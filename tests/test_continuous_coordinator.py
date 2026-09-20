@@ -90,6 +90,7 @@ class ContinuousCoordinatorTests(unittest.TestCase):
             publisher = _Publisher()
             coordinator = Coordinator(db, storage, _Vision(), _Studio(storage), publisher, source)
 
+            restarted = None
             try:
                 coordinator.run_forever(max_cycles=2, poll_seconds=0)
                 self.assertEqual(publisher.published, ["live-1"])
@@ -97,19 +98,20 @@ class ContinuousCoordinatorTests(unittest.TestCase):
                 self.assertEqual(source.checkpoints_committed, {228: 100})
 
                 restarted_db = Database(storage.database / "db.sqlite")
-            restarted_source = _LiveSource(restarted_db)
-            restarted_source.done = True
-            restarted = Coordinator(
-                restarted_db, storage, _Vision(), _Studio(storage), publisher, restarted_source
-            )
+                restarted_source = _LiveSource(restarted_db)
+                restarted_source.done = True
+                restarted = Coordinator(
+                    restarted_db, storage, _Vision(), _Studio(storage), publisher, restarted_source
+                )
                 restarted.run_forever(max_cycles=1, poll_seconds=0)
 
                 self.assertEqual(publisher.published, ["live-1"])
                 self.assertEqual(restarted_db.get("live-1").state, State.PUBLISHED)
             finally:
-                if "restarted" in locals():
+                if restarted is not None:
                     restarted.close()
                 coordinator.close()
+
 
 
 if __name__ == "__main__":
