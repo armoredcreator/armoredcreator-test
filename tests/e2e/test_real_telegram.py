@@ -31,6 +31,9 @@ class RealTelegramE2ETests(unittest.TestCase):
         if missing:
             self.fail("Missing real-E2E environment variables: " + ", ".join(missing))
 
+        previous = {name: os.environ.get(name) for name in ("ARMORED_REAL_TELEGRAM", "ARMORED_HUB_DRY_RUN", "ARMORED_STUDIO_FORCE_COPY")}
+        os.environ["ARMORED_REAL_TELEGRAM"] = "1"
+        os.environ["ARMORED_HUB_DRY_RUN"] = "0"
         root = Path.cwd()
         coordinator = Coordinator.build(root)
         source = coordinator.source
@@ -69,6 +72,11 @@ class RealTelegramE2ETests(unittest.TestCase):
             if reader is not None:
                 asyncio.run(reader.disconnect())
             coordinator.close()
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
 
 
 if __name__ == "__main__":
