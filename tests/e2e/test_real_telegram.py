@@ -33,7 +33,6 @@ class RealTelegramE2ETests(unittest.TestCase):
             "TELEGRAM_API_ID",
             "TELEGRAM_API_HASH",
             "ARMORED_CREATOR_BOT_TOKEN",
-            "ARMORED_CREATOR_GROUP_ID",
             "ARMORED_HUB_TOPIC_ID",
         )
         missing = [name for name in required if not os.getenv(name)]
