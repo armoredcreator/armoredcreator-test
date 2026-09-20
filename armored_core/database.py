@@ -133,13 +133,14 @@ class Database:
         topic_id: int | None = None,
         topic_name: str | None = None,
         original_url: str | None = None,
+        original_path: Path | None = None,
     ) -> str:
         content_id = str(telegram_message_id)
         cur = self.conn.execute(
             "INSERT INTO items (content_id,telegram_message_id,source_id,topic_id,topic_name,original_url,state,original_path) VALUES (?,?,?,?,?,?,?,?)",
             (
                 content_id, telegram_message_id, source_id, topic_id, topic_name, original_url,
-                State.RECEIVED.value, "",
+                State.RECEIVED.value, str(original_path or ""),
             ),
         )
         item_id = content_id
@@ -147,6 +148,7 @@ class Database:
             "INSERT INTO state_events (content_id,new_state,reason) VALUES (?,?,?)",
             (item_id, State.RECEIVED.value, "ingest-reserved"),
         )
+        self.conn.commit()
         return item_id
 
     def finalize_original_path(self, item_id: str, path: Path, sha256: str) -> None:
