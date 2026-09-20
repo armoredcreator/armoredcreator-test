@@ -9,7 +9,7 @@ import sys
 
 
 BASE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BASE_DIR.parents[2]
+PROJECT_ROOT = BASE_DIR.parents[1]
 _configured_rvc_root = os.getenv("ARMORED_RVC_ROOT", "").strip()
 RVC_ROOT = (Path(_configured_rvc_root).expanduser() if _configured_rvc_root else PROJECT_ROOT / "rvc").resolve()
 MODELS_DIR = RVC_ROOT / "models"
