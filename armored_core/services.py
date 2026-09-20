@@ -58,22 +58,22 @@ class SyncService:
         if existing:
             item_id = str(existing["content_id"])
             original = self.db.get(item_id).original_path
-            return item_id, original, original
+            partial = original.with_suffix(original.suffix + ".part")
+            return item_id, original, partial
         suffix = (
             message.source_path.suffix
             if message.source_path is not None and message.source_path.suffix
             else ".mp4"
         )
-        item_id = self.db.reserve_item(
+        item_id = str(message.telegram_message_id)
+        original = self.storage.original(item_id, suffix, original_url=message.original_url)
+        self.db.reserve_item(
             message.telegram_message_id,
             source_id=message.source_id,
             topic_id=message.topic_id,
             topic_name=message.topic_name,
             original_url=message.original_url,
-        )
-        original = self.storage.original(
-            item_id, suffix,
-            original_url=message.original_url,
+            original_path=original,
         )
         partial = original.with_suffix(original.suffix + ".part")
         return item_id, original, partial
