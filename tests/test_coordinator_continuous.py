@@ -11,8 +11,9 @@ from armored_core.storage import Storage
 
 
 class LiveSource:
-    def __init__(self, messages):
+    def __init__(self, messages, db=None):
         self.messages = list(messages)
+        self.db = db
         self.calls = 0
         self.disconnected = 0
         self.committed = []
@@ -43,6 +44,9 @@ class LiveSource:
 
     def commit_live_checkpoints(self, checkpoints):
         self.committed.append(dict(checkpoints))
+        if self.db is not None:
+            for topic_id, message_id in checkpoints.items():
+                self.db.set_sync_topic_checkpoint(topic_id, "LIVE", message_id)
 
     def mark_ingested(self, message_id):
         pass
@@ -96,7 +100,7 @@ class CoordinatorContinuousTests(unittest.TestCase):
             db = Database(storage.database / "db.sqlite")
             db.complete_historical_sync()
             db.set_sync_topic_checkpoint(101, "LIVE", 99)
-            source = LiveSource(["live-1"])
+            source = LiveSource(["live-1"], db)
             publisher = Publisher()
             coordinator = self._coordinator(root, db, source, publisher)
 
@@ -122,18 +126,19 @@ class CoordinatorContinuousTests(unittest.TestCase):
             db.complete_historical_sync()
             db.set_sync_topic_checkpoint(101, "LIVE", 99)
 
-            first_source = LiveSource(["live-restart"])
+            first_source = LiveSource(["live-restart"], db)
             first_publisher = Publisher()
             first = self._coordinator(root, db, first_source, first_publisher)
             first.run_forever(poll_seconds=0, max_cycles=1)
             first.close()
 
-            second_source = LiveSource(["live-restart"])
+            restarted_db = Database(storage.database / "db.sqlite")
+            second_source = LiveSource(["live-restart"], restarted_db)
             second_publisher = Publisher()
-            second = self._coordinator(root, db, second_source, second_publisher)
+            second = self._coordinator(root, restarted_db, second_source, second_publisher)
             try:
                 second.run_forever(poll_seconds=0, max_cycles=1)
-                self.assertEqual(db.get("live-restart").state, State.PUBLISHED)
+                self.assertEqual(restarted_db.get("live-restart").state, State.PUBLISHED)
                 self.assertEqual(second_publisher.published, [])
             finally:
                 second.close()
@@ -155,9 +160,8 @@ class CoordinatorContinuousTests(unittest.TestCase):
                     db2.acquire_runtime_lock("coordinator")
                 db1.release_runtime_lock("coordinator")
             finally:
-                second.close()
                 first.close()
-                db1.close()
+                second.close()
 
 
 if __name__ == "__main__":
