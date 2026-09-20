@@ -178,8 +178,8 @@ class TelegramSource:
             raise RuntimeError(f"download incompleto: {actual_size} bytes de {int(telegram_size)}")
 
     async def fetch_next_async(self) -> SyncMessage | None:
-        source = os.getenv("ARMORED_SYNC_SOURCE", "-1003788989075")
-        source_id = os.getenv("ARMORED_SYNC_SOURCE_ID", source)
+        source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
+        source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
         source_ref = int(source) if str(source).lstrip("-").isdigit() else source
 
         if self._topic_iterator is None:
@@ -209,11 +209,9 @@ class TelegramSource:
             for index, message in enumerate(messages):
                 if not getattr(message, "video", None):
                     continue
+                # O backup oficial exige VIDEO + LINK SHOPEE na mesma publicação.
+                # Não associar links de mensagens vizinhas.
                 original_url = self._shopee_url(message)
-                if original_url is None and index + 1 < len(messages):
-                    next_message = messages[index + 1]
-                    if not getattr(next_message, "video", None):
-                        original_url = self._shopee_url(next_message)
                 if original_url is None:
                     continue
                 yield (int(getattr(message, "id", 0) or 0), int(topic_id), topic_name, message, original_url)
