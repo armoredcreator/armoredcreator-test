@@ -160,8 +160,8 @@ class CoordinatorContinuousTests(unittest.TestCase):
                     db2.acquire_runtime_lock("coordinator")
                 db1.release_runtime_lock("coordinator")
             finally:
-                db1.close()
                 db2.close()
+                db1.close()
 
 
 if __name__ == "__main__":
