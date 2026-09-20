@@ -84,6 +84,8 @@ class ContinuousCoordinatorTests(unittest.TestCase):
             root = Path(td)
             storage = Storage(root)
             db = Database(storage.database / "db.sqlite")
+            db.complete_historical_sync()
+            db.set_sync_topic_checkpoint(228, "topic", 99)
             source = _LiveSource(db)
             publisher = _Publisher()
             coordinator = Coordinator(db, storage, _Vision(), _Studio(storage), publisher, source)
