@@ -491,32 +491,39 @@ Esta seção registra **somente validações realmente executadas**. O README é
 
 ### Última validação local confirmada
 
-**Commit:** `1f3f85f`  
+**Commit:** `be130c1`  
 **Branch:** `refactor/single-storage-pipeline`  
-**Working tree após o commit:** limpa
+**Ambiente local:** Windows 11 / Python 3.11.9 / pytest 9.1.1
 
 Suite completa:
 
 ```
 python -m pytest -q
 
-27 passed
+34 passed, 1 skipped
 ```
+
+O `1 skipped` é o teste E2E real quando a variável de execução real não está habilitada. A suíte completa, incluindo a auditoria arquitetural, terminou sem falhas.
 
 E2E real do Telegram:
 
 ```
 $env:ARMORED_REAL_TELEGRAM_E2E="1"
-python -m pytest tests\e2e\test_real_telegram.py -v -s
+python -m pytest tests\\e2e\\test_real_telegram.py -v -s
 
-1 passed
+1 passed in 10.87s
 ```
 
 ### Estado aprovado
 
 | Área | Estado |
 |---|---|
-| Suite automatizada | ✅ APROVADO — 27 passed |
+| Suite automatizada | ✅ APROVADO — 34 passed, 1 skipped |
+| Auditoria arquitetural | ✅ APROVADO |
+| Storage canônico | ✅ APROVADO |
+| Ausência de storage legado | ✅ APROVADO |
+| Studio sem modules/v1 e modules/v2 | ✅ APROVADO |
+| Portabilidade — sem caminhos de máquina no código de produção | ✅ APROVADO |
 | E2E real Telegram | ✅ APROVADO — 1 passed |
 | Fluxo Sync → Vision → Studio → Hub → Telegram | ✅ APROVADO no E2E real |
 | CATCH-UP → LIVE | ✅ APROVADO nos testes de lifecycle |
@@ -529,33 +536,36 @@ python -m pytest tests\e2e\test_real_telegram.py -v -s
 ### Como repetir a validação
 
 ```powershell
-cd C:\Users\Administrador\Downloads\ArmoredCreator
+cd C:\\Users\\Administrador\\Downloads\\ArmoredCreator
 git pull origin refactor/single-storage-pipeline
 
 python -m pytest -q
 
 $env:ARMORED_REAL_TELEGRAM_E2E="1"
-python -m pytest tests\e2e\test_real_telegram.py -v -s
+python -m pytest tests\\e2e\\test_real_telegram.py -v -s
 ```
 
-### Auditoria arquitetural adicionada
+### Auditoria arquitetural
 
-Foi adicionado `tests/test_architecture_cleanup.py` para bloquear regressões em pontos críticos:
+O teste `tests/test_architecture_cleanup.py` bloqueia regressões em pontos críticos:
 
 - storage legado;
 - filas físicas antigas;
 - arquitetura `ArmoredStudio/modules/v1` e `ArmoredStudio/modules/v2`;
 - caminhos Windows dependentes de uma máquina específica.
 
-**Estado desta nova auditoria:** 🔲 NÃO VALIDADO LOCALMENTE após a criação do teste. O número `27 passed` acima continua sendo o último resultado realmente executado e aprovado.
+A auditoria também exclui explicitamente `ArmoredStudio/runtime/` da varredura de código de produção, porque esse diretório contém o ambiente/vendor local do RVC e seus `site-packages`. O runtime é ignorado pelo Git e não representa código-fonte do projeto.
+
+**Validação:** ✅ APROVADA localmente com `34 passed, 1 skipped`.
 
 ### Histórico de resultados
 
-Resultados anteriores registrados no laboratório:
+Resultados principais registrados no laboratório:
 
 - `22 passed` — etapa anterior, antes do fechamento do lifecycle CATCH-UP → LIVE.
-- `27 passed` — suite atual após o lifecycle.
-- `1 passed` — E2E real Telegram executado com `ARMORED_REAL_TELEGRAM_E2E=1`.
+- `27 passed` — suite após o lifecycle e antes da auditoria arquitetural.
+- `34 passed, 1 skipped` — suite completa com a auditoria arquitetural.
+- `1 passed in 10.87s` — E2E real Telegram executado com `ARMORED_REAL_TELEGRAM_E2E=1`.
 
 **Regra:** quando uma alteração mudar o comportamento, esta seção deve ser atualizada somente após executar os testes correspondentes. Registrar separadamente `APROVADO`, `SKIP`, `FALHOU` e `NÃO VALIDADO`.
 
