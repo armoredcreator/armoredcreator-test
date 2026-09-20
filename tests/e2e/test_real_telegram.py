@@ -42,7 +42,7 @@ class RealTelegramE2ETests(unittest.TestCase):
         # Backup contract: publication target is Telegram forum topic 228.
         # The parent group ID may be discovered automatically from the existing
         # ArmoredSync user session; it is not required in configuration.
-        topic_id = os.getenv("ARMORED_HUB_TOPIC_ID", "228").strip()
+        topic_id = (os.getenv("ARMORED_HUB_TOPIC_ID") or "228").strip()
         self.assertEqual(topic_id, "228", "Backup contract requires Telegram topic 228")
 
         source = coordinator.source
