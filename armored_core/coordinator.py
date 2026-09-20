@@ -138,6 +138,7 @@ class Coordinator:
                 break
             self.run(item_id)
             processed.append(str(item_id))
+        self.db.complete_historical_sync()
         complete = getattr(self.source, "mark_historical_complete", None)
         if complete is not None:
             complete()
