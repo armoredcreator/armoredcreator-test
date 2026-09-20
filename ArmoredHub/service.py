@@ -36,10 +36,99 @@ class ArmoredHub:
                 return PublicationCheck.CONFIRMED
         return PublicationCheck.UNKNOWN
 
+    def _telegram_session_path(self) -> Path:
+        """Reuse the existing ArmoredSync user session for destination discovery."""
+        return self.root / "credentials" / "telegram" / "session" / "armoredsync"
+
+    def _resolve_destination_chat_id(self, topic_id: str | int | None = None) -> str | None:
+        """Resolve the destination forum's parent chat when its ID is not configured.
+
+        The backup contract fixes the publication topic as 228, but the parent
+        group ID is not stored in the repository. When ARMORED_CREATOR_GROUP_ID
+        is absent, inspect the already-authenticated Telegram user session and
+        find the unique forum containing the configured topic.
+        """
+        configured = (os.getenv("ARMORED_CREATOR_GROUP_ID") or "").strip()
+        if configured:
+            return configured
+
+        topic_value = str(topic_id or os.getenv("ARMORED_HUB_TOPIC_ID", "228")).strip()
+        if not topic_value or not topic_value.lstrip("-").isdigit():
+            raise RuntimeError("ARMORED_HUB_TOPIC_ID inválido para descoberta automática")
+
+        api_id = os.getenv("TELEGRAM_API_ID")
+        api_hash = os.getenv("TELEGRAM_API_HASH")
+        if not api_id or not api_hash:
+            raise RuntimeError(
+                "Descoberta automática do grupo exige TELEGRAM_API_ID e TELEGRAM_API_HASH"
+            )
+
+        async def discover() -> str | None:
+            try:
+                from telethon import TelegramClient, functions
+            except ImportError as exc:
+                raise RuntimeError("Dependência Telethon ausente para descoberta do Hub") from exc
+
+            session = self._telegram_session_path()
+            session.parent.mkdir(parents=True, exist_ok=True)
+            client = TelegramClient(str(session), int(api_id), api_hash)
+            matches: list[str] = []
+            try:
+                await client.start()
+                async for dialog in client.iter_dialogs():
+                    entity = getattr(dialog, "entity", None)
+                    if entity is None:
+                        continue
+
+                    # Telegram forum topics belong to supergroups/channels
+                    # represented by Channel entities. Avoid scanning users,
+                    # private chats and ordinary groups.
+                    if not bool(getattr(entity, "megagroup", False) or getattr(entity, "forum", False)):
+                        continue
+
+                    try:
+                        result = await client(
+                            functions.messages.GetForumTopicsRequest(
+                                peer=entity,
+                                q=None,
+                                offset_date=None,
+                                offset_id=0,
+                                offset_topic=0,
+                                limit=100,
+                            )
+                        )
+                    except Exception:
+                        # Some dialogs visible to the user may not expose forum
+                        # topics to this account. They are simply not candidates.
+                        continue
+
+                    for topic in getattr(result, "topics", []) or []:
+                        if str(getattr(topic, "id", "")) == topic_value:
+                            matches.append(str(dialog.id))
+                            break
+
+                unique_matches = sorted(set(matches))
+                if len(unique_matches) == 1:
+                    return unique_matches[0]
+                if not unique_matches:
+                    raise RuntimeError(
+                        f"Nenhum grupo-fórum com tópico {topic_value} foi encontrado "
+                        "pela sessão Telegram existente"
+                    )
+                raise RuntimeError(
+                    f"Tópico {topic_value} encontrado em múltiplos grupos: "
+                    + ", ".join(unique_matches)
+                )
+            finally:
+                if client.is_connected():
+                    await client.disconnect()
+
+        return __import__("asyncio").run(discover())
+
     def _verify_telegram_message(self, message_id: str) -> bool:
         api_id = os.getenv("TELEGRAM_API_ID")
         api_hash = os.getenv("TELEGRAM_API_HASH")
-        chat_id = os.getenv("ARMORED_CREATOR_GROUP_ID")
+        chat_id = self._resolve_destination_chat_id()
         if not message_id or not api_id or not api_hash or not chat_id:
             return False
 
@@ -48,7 +137,7 @@ class ArmoredHub:
                 from telethon import TelegramClient
             except ImportError:
                 return False
-            session = self.root / "credentials" / "telegram" / "session" / "armoredhub-verify"
+            session = self._telegram_session_path()
             session.parent.mkdir(parents=True, exist_ok=True)
             client = TelegramClient(str(session), int(api_id), api_hash)
             try:
@@ -86,13 +175,12 @@ class ArmoredHub:
 
     def _publish_telegram(self, item: Item, output: Path) -> PublicationResult:
         token = os.getenv("ARMORED_CREATOR_BOT_TOKEN")
-        chat_id = os.getenv("ARMORED_CREATOR_GROUP_ID")
         topic_id = os.getenv("ARMORED_HUB_TOPIC_ID", "228")
-        if not token or not chat_id or not topic_id:
+        if not token or not topic_id:
             raise RuntimeError(
-                "Telegram Hub exige ARMORED_CREATOR_BOT_TOKEN, "
-                "ARMORED_CREATOR_GROUP_ID e ARMORED_HUB_TOPIC_ID"
+                "Telegram Hub exige ARMORED_CREATOR_BOT_TOKEN e ARMORED_HUB_TOPIC_ID"
             )
+        chat_id = self._resolve_destination_chat_id(topic_id)
 
         try:
             from telegram import Bot
