@@ -83,7 +83,7 @@ class CoordinatorTests(unittest.TestCase):
 
             item_id = coordinator.ingest_once()
 
-            self.assertEqual(item_id, 1)
+            self.assertEqual(item_id, "telegram-async-1")
             item = db.get(item_id)
             self.assertEqual(item.original_path.name, "telegram-async-1_finaldomeulinknovo.mp4")
             self.assertEqual(item.original_path.read_bytes(), b"ASYNC-TELEGRAM")
@@ -102,7 +102,7 @@ class CoordinatorTests(unittest.TestCase):
             pub = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), pub, Source(src))
             item_id = coordinator.process_next()
-            self.assertEqual(item_id, 1)
+            self.assertEqual(item_id, "telegram-async-1")
             row = db.get(item_id)
             self.assertEqual(row.state, State.PUBLISHED)
             self.assertEqual(row.original_path.read_bytes(), b"ORIGINAL")
