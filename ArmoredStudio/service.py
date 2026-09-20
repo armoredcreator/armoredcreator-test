@@ -20,9 +20,10 @@ class ArmoredStudio:
         self.engine = UnifiedStudio(self.root, self.storage)
 
     def process(self, item: Item) -> StudioResult:
-        ffmpeg = os.getenv("ARMORED_FFMPEG", "ffmpeg")
-        if not shutil.which(ffmpeg):
-            raise RuntimeError("FFmpeg não encontrado")
+        if os.getenv("ARMORED_STUDIO_FORCE_COPY") != "1":
+            ffmpeg = os.getenv("ARMORED_FFMPEG", "ffmpeg")
+            if not shutil.which(ffmpeg):
+                raise RuntimeError("FFmpeg não encontrado")
 
         result_path, _details = self.engine.process(item)
         return StudioResult(
