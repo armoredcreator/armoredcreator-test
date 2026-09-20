@@ -280,6 +280,66 @@ class Database:
             "SELECT * FROM publications WHERE content_id=?", (item_id,)
         ).fetchone()
 
+    def acquire_runtime_lock(self, name: str = "coordinator") -> None:
+        """Acquire the single-process runtime lease stored in SQLite.
+
+        The lease intentionally lives in the database, not in a legacy lock
+        directory/file. A crashed process leaves the row behind; on restart,
+        a dead PID is deterministically replaced. A live PID blocks a second
+        Coordinator from starting.
+        """
+        import os
+
+        now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+        self.conn.execute(
+            """CREATE TABLE IF NOT EXISTS runtime_locks (
+                name TEXT PRIMARY KEY,
+                pid INTEGER NOT NULL,
+                started_at TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL
+            )"""
+        )
+        row = self.conn.execute(
+            "SELECT pid FROM runtime_locks WHERE name=?", (str(name),)
+        ).fetchone()
+        current_pid = os.getpid()
+        if row is not None and int(row["pid"]) != current_pid:
+            pid = int(row["pid"])
+            alive = True
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                alive = False
+            if alive:
+                raise RuntimeError(
+                    f"runtime-lock-active: {name} is already owned by PID {pid}"
+                )
+
+        self.conn.execute(
+            "INSERT INTO runtime_locks(name,pid,started_at,heartbeat_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(name) DO UPDATE SET pid=excluded.pid, "
+            "started_at=excluded.started_at, heartbeat_at=excluded.heartbeat_at",
+            (str(name), current_pid, now, now),
+        )
+        self.conn.commit()
+
+    def heartbeat_runtime_lock(self, name: str = "coordinator") -> None:
+        import os
+        self.conn.execute(
+            "UPDATE runtime_locks SET heartbeat_at=CURRENT_TIMESTAMP "
+            "WHERE name=? AND pid=?",
+            (str(name), os.getpid()),
+        )
+        self.conn.commit()
+
+    def release_runtime_lock(self, name: str = "coordinator") -> None:
+        import os
+        self.conn.execute(
+            "DELETE FROM runtime_locks WHERE name=? AND pid=?",
+            (str(name), os.getpid()),
+        )
+        self.conn.commit()
+
     def close(self) -> None:
         if self.conn is None:
             return
