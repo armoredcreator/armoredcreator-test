@@ -25,7 +25,7 @@ class FakeAPI:
 class VisionStudioContractTests(unittest.TestCase):
     def _item(self, root):
         storage = Storage(root)
-        original = storage.original(1)
+        original = storage.original(1, telegram_message_id="tg-1", original_url="https://shopee.com.br/abc/123/456")
         original.write_bytes(b"ORIGINAL")
         return Item(
             item_id=1,
@@ -76,11 +76,11 @@ class VisionStudioContractTests(unittest.TestCase):
                 self.assertEqual(result.working_path, storage.working(1))
                 self.assertEqual(
                     result.result_path.name,
-                    "1_finaldomeulinknovo.mp4",
+                    "tg-1_finaldomeulinknovo.mp4",
                 )
                 self.assertEqual(
                     sorted(p.name for p in storage.workspace(1).iterdir()),
-                    ["1_.mp4", "1_finaldomeulinknovo.mp4", "1_finallinkoriginal.mp4"],
+                    ["tg-1_working.mp4", "tg-1_finaldomeulinknovo.mp4", "tg-1_456.mp4"],
                 )
                 self.assertFalse((root / "storage" / "sync").exists())
                 self.assertFalse((root / "storage" / "queue").exists())
