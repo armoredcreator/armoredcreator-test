@@ -538,6 +538,17 @@ $env:ARMORED_REAL_TELEGRAM_E2E="1"
 python -m pytest tests\e2e\test_real_telegram.py -v -s
 ```
 
+### Auditoria arquitetural adicionada
+
+Foi adicionado `tests/test_architecture_cleanup.py` para bloquear regressões em pontos críticos:
+
+- storage legado;
+- filas físicas antigas;
+- arquitetura `ArmoredStudio/modules/v1` e `ArmoredStudio/modules/v2`;
+- caminhos Windows dependentes de uma máquina específica.
+
+**Estado desta nova auditoria:** 🔲 NÃO VALIDADO LOCALMENTE após a criação do teste. O número `27 passed` acima continua sendo o último resultado realmente executado e aprovado.
+
 ### Histórico de resultados
 
 Resultados anteriores registrados no laboratório:
