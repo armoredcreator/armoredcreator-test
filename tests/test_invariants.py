@@ -21,7 +21,7 @@ class S:
         w = self.storage.working(item.content_id)
         w.write_bytes(b"WORK")
         r = self.storage.result(
-            item.item_id,
+            item.content_id,
             item.affiliate_url,
             item.affiliate_name,
         )
@@ -47,6 +47,7 @@ class InvariantTests(unittest.TestCase):
             root = Path(td)
             st = Storage(root)
             db = Database(st.database / "db.sqlite")
+            self.addCleanup(db.close)
             src = root / "source.mp4"
             src.write_bytes(b"IMMUTABLE")
             i = SyncService(db, st).ingest(src, "telegram-1", original_url="https://shopee.com.br/example/original")
@@ -54,7 +55,6 @@ class InvariantTests(unittest.TestCase):
             Pipeline(db, st, V(), S(st), P()).run(i)
             self.assertEqual(original.read_bytes(), b"IMMUTABLE")
             self.assertEqual(list(original.parent.iterdir()), [original])
-            db.close()
 
     def test_database_keeps_original_hash_attempts_and_recovery_metadata(self):
         with tempfile.TemporaryDirectory() as td:
