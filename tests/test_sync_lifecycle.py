@@ -181,6 +181,45 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertEqual(db.get("102").telegram_message_id, "102")
             coordinator.close()
 
+    def test_run_forever_catches_up_then_processes_live_in_one_sequential_cycle(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+
+            history_files = {}
+            for message_id in ("100", "101", "102", "103"):
+                path = root / f"{message_id}.mp4"
+                path.write_bytes(message_id.encode())
+                history_files[message_id] = path
+
+            source = LifecycleSource()
+            source.history = [
+                SyncMessage("100", source_id="local", source_path=history_files["100"],
+                            original_url="https://shopee.com.br/x/a"),
+                SyncMessage("101", source_id="local", source_path=history_files["101"],
+                            original_url="https://shopee.com.br/x/b"),
+            ]
+            source.live = [
+                SyncMessage("102", source_id="local", source_path=history_files["102"],
+                            original_url="https://shopee.com.br/x/c"),
+                SyncMessage("103", source_id="local", source_path=history_files["103"],
+                            original_url="https://shopee.com.br/x/d"),
+            ]
+            publisher = Publisher()
+            coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source)
+
+            coordinator.run_forever(max_cycles=1)
+
+            self.assertTrue(db.historical_complete())
+            self.assertTrue(source.live_called)
+            self.assertEqual(publisher.published, ["100", "101", "102", "103"])
+            self.assertEqual(
+                [db.get(item_id).state.value for item_id in ("100", "101", "102", "103")],
+                ["PUBLISHED", "PUBLISHED", "PUBLISHED", "PUBLISHED"],
+            )
+            coordinator.close()
+
     def test_history_and_live_same_id_is_idempotent(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
