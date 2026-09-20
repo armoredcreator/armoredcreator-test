@@ -245,6 +245,61 @@ class TelegramSource:
 
                 yield (int(getattr(message, "id", 0) or 0), int(topic_id), topic_name, message, original_url)
 
+    async def collect_historical_batch_async(self) -> tuple[list[SyncMessage], dict[int, int]]:
+        """Collect the complete historical candidate set while one Telegram
+        connection is open, then let the Coordinator process it sequentially.
+        """
+        if self.is_historical_complete():
+            return [], {}
+
+        source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
+        source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
+        source_ref = int(source) if str(source).lstrip("-").isdigit() else source
+
+        await self.reader.connect()
+        try:
+            topics = await self._discover_topics(source_ref)
+            if not topics:
+                raise RuntimeError(f"Nenhum tópico de fórum encontrado na fonte Telegram {source}.")
+
+            candidates: list[SyncMessage] = []
+            checkpoints: dict[int, int] = {}
+
+            for topic_id, topic_name in topics:
+                messages = [message async for message in self._topic_messages(source_ref, topic_id)]
+                ids = [int(getattr(message, "id", 0) or 0) for message in messages]
+                if ids:
+                    checkpoints[topic_id] = max(ids)
+
+                for index, message in enumerate(messages):
+                    message_id = int(getattr(message, "id", 0) or 0)
+                    if message_id <= 0 or message_id in self._seen:
+                        continue
+                    if not getattr(message, "video", None):
+                        continue
+
+                    original_url = self._shopee_url(message)
+                    if original_url is None and index + 1 < len(messages):
+                        next_message = messages[index + 1]
+                        if not getattr(next_message, "video", None):
+                            original_url = self._shopee_url(next_message)
+                    if original_url is None:
+                        continue
+
+                    candidates.append(SyncMessage(
+                        telegram_message_id=str(message_id),
+                        source_id=source_id,
+                        topic_id=topic_id,
+                        topic_name=topic_name,
+                        original_url=original_url,
+                        materialize=lambda target, m=message: self._download_to(m, target),
+                    ))
+
+            return candidates, checkpoints
+        except Exception:
+            await self.reader.disconnect()
+            raise
+
     async def fetch_live_batch_async(self) -> tuple[list[SyncMessage], dict[int, int]]:
         """Discover all new candidates since the persisted topic checkpoints."""
         source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
