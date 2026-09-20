@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from armored_core.database import Database
 from armored_core.services import IngestMessage, SyncService
 
 
@@ -80,11 +81,26 @@ class TelegramSource:
     URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
     SHOPEE_DOMAINS = ("shopee.com.br", "shopee.co", "shopee.ee")
 
-    def __init__(self, root: Path, reader: Any):
+    def __init__(self, root: Path, reader: Any, db: Database | None = None):
         self.root = Path(root)
         self.reader = reader
+        self.db = db
         self._seen: set[int] = set()
         self._topic_iterator = None
+        self._topics: list[tuple[int, str]] | None = None
+        self._historical_complete = False
+
+    @property
+    def mode(self) -> str:
+        return self.db.sync_mode() if self.db is not None else ("LIVE" if self._historical_complete else "CATCH_UP")
+
+    def mark_historical_complete(self) -> None:
+        if self.db is not None:
+            self.db.complete_historical_sync()
+        self._historical_complete = True
+
+    def is_historical_complete(self) -> bool:
+        return self.mode == "LIVE"
 
     @staticmethod
     def _shopee_url(message: Any) -> str | None:
