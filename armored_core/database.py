@@ -51,6 +51,17 @@ class Database:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS sync_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS sync_topics (
+            topic_id INTEGER PRIMARY KEY,
+            topic_name TEXT NOT NULL,
+            last_seen_message_id INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
         """)
         self.conn.commit()
         self._migrate_columns()
@@ -70,6 +81,43 @@ class Database:
         for name, sql in migrations:
             if name not in existing:
                 self.conn.execute(sql)
+        self.conn.commit()
+
+    def sync_mode(self) -> str:
+        row = self.conn.execute(
+            "SELECT value FROM sync_state WHERE key='mode'"
+        ).fetchone()
+        return str(row["value"]) if row else "CATCH_UP"
+
+    def set_sync_mode(self, mode: str) -> None:
+        self.conn.execute(
+            "INSERT INTO sync_state(key,value) VALUES('mode',?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP",
+            (str(mode),),
+        )
+        self.conn.commit()
+
+    def historical_complete(self) -> bool:
+        return self.sync_mode() == "LIVE"
+
+    def complete_historical_sync(self) -> None:
+        self.set_sync_mode("LIVE")
+
+    def sync_topic_checkpoint(self, topic_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT last_seen_message_id FROM sync_topics WHERE topic_id=?",
+            (int(topic_id),),
+        ).fetchone()
+        return int(row["last_seen_message_id"]) if row else 0
+
+    def set_sync_topic_checkpoint(self, topic_id: int, topic_name: str, message_id: int) -> None:
+        self.conn.execute(
+            "INSERT INTO sync_topics(topic_id,topic_name,last_seen_message_id) VALUES(?,?,?) "
+            "ON CONFLICT(topic_id) DO UPDATE SET topic_name=excluded.topic_name, "
+            "last_seen_message_id=MAX(sync_topics.last_seen_message_id, excluded.last_seen_message_id), "
+            "updated_at=CURRENT_TIMESTAMP",
+            (int(topic_id), str(topic_name), int(message_id)),
+        )
         self.conn.commit()
 
     def reserve_item(
