@@ -96,40 +96,53 @@ fonte de verdade; nomes de arquivo são uma projeção determinística.
 
 ## Studio unificado
 
-O código importado do backup foi separado por responsabilidade:
+Existe **um único ArmoredStudio**, sem conceito arquitetural de V1/V2.
+Os módulos funcionais foram migrados para duas responsabilidades internas:
 
-### Análise preservada
+### Análise
 
-- `modules/v1/video.py` — metadata do vídeo.
-- `modules/v1/blackbar.py` — barras pretas, espacial + temporal.
-- `modules/v1/banner_analyzer.py` — análise visual inicial.
-- `modules/v1/banner.py` — início de voz/corte temporal.
-- `modules/v1/veo_detector.py` — VEO FAST/FULL.
-- `modules/v1/gemini_detector.py` — Gemini FAST/FULL.
-- `modules/v1/export_planner.py` — consolidação geométrica/temporal.
-- `modules/v1/export_plan_validator.py` — validação do plano.
-- `modules/v1/export_executor.py` — executor V1 de referência.
+    ArmoredStudio/analysis/
+    ├── video.py
+    ├── blackbar.py
+    ├── banner_analyzer.py
+    ├── banner.py
+    ├── veo_detector.py
+    ├── gemini_detector.py
+    ├── export_planner.py
+    ├── export_plan_validator.py
+    ├── export_executor.py
+    └── logger.py
 
-### Processamento preservado
+A análise obrigatória executa metadata, barras pretas, banner, corte/banner
+temporal, VEO, Gemini, planejamento e validação antes de qualquer processamento.
 
-- `modules/v2/rvc_voice.py` — RVC.
-- `modules/v2/editing/tool_paths.py` — resolução portátil de executáveis.
-- `modules/v2/editing/finalizer.py` — finalização FFmpeg em uma passada.
+### Processamento
 
-### Orquestração nova
+    ArmoredStudio/processing/
+    ├── rvc.py
+    ├── tool_paths.py
+    └── finalizer.py
 
-`ArmoredStudio/unified.py` é a fronteira única:
+O processamento recebe o plano já validado e executa RVC, áudio, banner/intro,
+música, ajustes audiovisuais e a finalização FFmpeg.
+
+### Orquestração
+
+ArmoredStudio/unified.py é a fronteira única:
 
 1. recebe o item;
 2. preserva o original;
 3. normaliza o working;
 4. executa toda a análise;
 5. cria e valida o plano;
-6. executa o processamento V2;
+6. executa o processamento;
 7. valida o resultado;
-8. devolve somente `working_path` e `result_path` ao Core.
+8. devolve somente working_path e result_path ao Core.
 
-O serviço não conhece `storage/input`, `storage/output` ou checkout antigo.
+Não existem mais modules/v1 ou modules/v2 como arquitetura do Studio.
+Também não há modos alternativos de processamento.
+
+O serviço não conhece storage/input, storage/output, storage/temp, queue ou checkout antigo.
 
 ## RVC e assets
 
@@ -208,11 +221,13 @@ git pull
 python -m pytest -q
 ```
 
-O último estado confirmado antes desta etapa tinha:
+O último estado confirmado antes da migração tinha:
 
 ```
 19 passed
 ```
+
+Após esta migração, a suíte deve ser executada novamente antes de qualquer E2E.
 
 Cada alteração do laboratório deve manter essa suíte verde antes de avançar
 para o E2E Telegram real.
