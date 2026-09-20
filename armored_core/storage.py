@@ -40,7 +40,7 @@ class Storage:
 
     def working(self, item_id: int, telegram_message_id: str | None = None) -> Path:
         message_id = str(telegram_message_id or item_id)
-        return self.workspace(item_id) / f"{message_id}_working.mp4"
+        return self.workspace(item_id) / f"{message_id}_.mp4"
 
     def result(self, item_id: int, affiliate_url: str | None = None, affiliate_name: str | None = None, telegram_message_id: str | None = None) -> Path:
         message_id = str(telegram_message_id or item_id)
