@@ -77,20 +77,31 @@ class Database:
         self._migrate_columns()
 
     def _migrate_columns(self) -> None:
-        existing = {r[1] for r in self.conn.execute("PRAGMA table_info(items)").fetchall()}
-        migrations = [
-            ("source_id", "ALTER TABLE items ADD COLUMN source_id TEXT NOT NULL DEFAULT 'telegram'"),
-            ("topic_id", "ALTER TABLE items ADD COLUMN topic_id INTEGER"),
-            ("topic_name", "ALTER TABLE items ADD COLUMN topic_name TEXT"),
-            ("original_url", "ALTER TABLE items ADD COLUMN original_url TEXT"),
-            ("original_sha256", "ALTER TABLE items ADD COLUMN original_sha256 TEXT"),
-            ("attempts", "ALTER TABLE items ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"),
-            ("recovery_count", "ALTER TABLE items ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0"),
-            ("cleanup_completed", "ALTER TABLE items ADD COLUMN cleanup_completed INTEGER NOT NULL DEFAULT 0"),
-        ]
-        for name, sql in migrations:
-            if name not in existing:
-                self.conn.execute(sql)
+        migrations = {
+            "items": [
+                ("source_id", "ALTER TABLE items ADD COLUMN source_id TEXT NOT NULL DEFAULT 'telegram'"),
+                ("topic_id", "ALTER TABLE items ADD COLUMN topic_id INTEGER"),
+                ("topic_name", "ALTER TABLE items ADD COLUMN topic_name TEXT"),
+                ("original_url", "ALTER TABLE items ADD COLUMN original_url TEXT"),
+                ("original_sha256", "ALTER TABLE items ADD COLUMN original_sha256 TEXT"),
+                ("attempts", "ALTER TABLE items ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"),
+                ("recovery_count", "ALTER TABLE items ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0"),
+                ("cleanup_completed", "ALTER TABLE items ADD COLUMN cleanup_completed INTEGER NOT NULL DEFAULT 0"),
+            ],
+            "publications": [
+                ("verification_status", "ALTER TABLE publications ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'PENDING'"),
+                ("destination_chat_id", "ALTER TABLE publications ADD COLUMN destination_chat_id TEXT"),
+                ("destination_topic_id", "ALTER TABLE publications ADD COLUMN destination_topic_id INTEGER"),
+                ("verified_at", "ALTER TABLE publications ADD COLUMN verified_at TEXT"),
+            ],
+        }
+        for table, columns in migrations.items():
+            existing = {
+                row[1] for row in self.conn.execute(`PRAGMA table_info({table})`).fetchall()
+            }
+            for name, sql in columns:
+                if name not in existing:
+                    self.conn.execute(sql)
         self.conn.commit()
 
     def sync_mode(self) -> str:
