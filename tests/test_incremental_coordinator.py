@@ -139,18 +139,20 @@ class IncrementalCoordinatorTests(unittest.TestCase):
             publisher = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source)
 
-            processed = coordinator.run_catch_up()
+            try:
+                processed = coordinator.run_catch_up()
 
-            self.assertEqual(processed, ["telegram-batch-1"])
-            self.assertEqual(source.marked, ["telegram-batch-1"])
-            self.assertTrue(source.disconnected)
-            self.assertEqual(source.checkpoints, {101: 900})
-            self.assertTrue(db.historical_complete())
-            item = db.get("telegram-batch-1")
-            self.assertEqual(item.state, State.PUBLISHED)
-            self.assertTrue(item.original_path.exists())
-            self.assertEqual(publisher.published, ["telegram-batch-1"])
-            coordinator.close()
+                self.assertEqual(processed, ["telegram-batch-1"])
+                self.assertEqual(source.marked, ["telegram-batch-1"])
+                self.assertTrue(source.disconnected)
+                self.assertEqual(source.checkpoints, {101: 900})
+                self.assertTrue(db.historical_complete())
+                item = db.get("telegram-batch-1")
+                self.assertEqual(item.state, State.PUBLISHED)
+                self.assertTrue(item.original_path.exists())
+                self.assertEqual(publisher.published, ["telegram-batch-1"])
+            finally:
+                coordinator.close()
 
 
 if __name__ == "__main__":
