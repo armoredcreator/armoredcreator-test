@@ -79,6 +79,7 @@ class Coordinator:
         fetch_async = getattr(self.source, "fetch_next_async", None)
         message = await fetch_async() if fetch_async is not None else self.source.fetch_next()
         if message is None:
+            await self._release_source_connection()
             return None
         item_id = await self.sync.ingest_message_async(IngestMessage(
             telegram_message_id=str(message.telegram_message_id),
