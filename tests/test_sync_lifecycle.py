@@ -192,6 +192,66 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertEqual(db.get("102").telegram_message_id, "102")
             coordinator.close()
 
+    def test_live_reconnects_before_each_materialization(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            db.complete_historical_sync()
+
+            class Reader:
+                def __init__(self):
+                    self.connected = False
+                    self.connects = 0
+                    self.disconnects = 0
+
+                async def connect(self):
+                    self.connected = True
+                    self.connects += 1
+
+                async def disconnect(self):
+                    self.connected = False
+                    self.disconnects += 1
+
+                def is_connected(self):
+                    return self.connected
+
+            reader = Reader()
+
+            class LiveSource(LifecycleSource):
+                def __init__(self):
+                    super().__init__()
+                    self.reader = reader
+                    self.completed = True
+
+                async def fetch_live_batch_async(self):
+                    self.live_called = True
+                    messages = []
+                    for message_id in ("201", "202"):
+                        async def materialize(target, message_id=message_id):
+                            if not reader.connected:
+                                raise RuntimeError("telegram-client-not-connected")
+                            target.write_bytes(message_id.encode())
+                        messages.append(SyncMessage(
+                            message_id,
+                            source_id="telegram",
+                            original_url="https://shopee.com.br/x/live",
+                            materialize=materialize,
+                        ))
+                    return messages, {10: 202}
+
+            source = LiveSource()
+            publisher = Publisher()
+            coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source)
+
+            live = coordinator.run_live_once()
+
+            self.assertEqual(live, ["201", "202"])
+            self.assertEqual(publisher.published, ["201", "202"])
+            self.assertGreaterEqual(reader.connects, 2)
+            self.assertGreaterEqual(reader.disconnects, 2)
+            coordinator.close()
+
     def test_live_checkpoint_survives_processing_failure_and_restart_recovers_item(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
