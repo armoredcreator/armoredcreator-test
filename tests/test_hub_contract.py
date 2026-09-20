@@ -57,6 +57,29 @@ class HubContractTests(unittest.TestCase):
             else:
                 os.environ["ARMORED_HUB_DRY_RUN"] = old
 
+    def test_unresolved_publication_reconciles_by_exact_result(self):
+        old_verify = os.environ.get("ARMORED_HUB_VERIFY_TELEGRAM")
+        os.environ["ARMORED_HUB_VERIFY_TELEGRAM"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                storage = Storage(root)
+                db = Database(storage.database / "db.sqlite")
+                item = self._item(db, storage)
+                db.publication_started(item.item_id)
+                hub = ArmoredHub(root, db)
+
+                hub._find_telegram_publications = lambda current: ["9876"]
+                self.assertEqual(hub.check_publication(item), PublicationCheck.CONFIRMED)
+                self.assertEqual(db.publication(item.item_id)["published_message_id"], "9876")
+                self.assertEqual(db.publication(item.item_id)["confirmed"], 1)
+                db.close()
+        finally:
+            if old_verify is None:
+                os.environ.pop("ARMORED_HUB_VERIFY_TELEGRAM", None)
+            else:
+                os.environ["ARMORED_HUB_VERIFY_TELEGRAM"] = old_verify
+
 
 if __name__ == "__main__":
     unittest.main()
