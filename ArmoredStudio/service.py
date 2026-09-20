@@ -27,7 +27,7 @@ class ArmoredStudio:
 
         result_path, _details = self.engine.process(item)
         return StudioResult(
-            self.storage.working(item.item_id, item.telegram_message_id),
+            self.storage.working(item.content_id),
             Path(result_path),
         )
 
