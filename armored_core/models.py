@@ -32,3 +32,6 @@ class Item:
     original_url: str | None = None
     topic_id: int | None = None
     topic_name: str | None = None
+    original_sha256: str | None = None
+    attempts: int = 0
+    recovery_count: int = 0
