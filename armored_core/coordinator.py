@@ -306,6 +306,17 @@ class Coordinator:
                 item = self.db.get(item_id)
                 if not item.original_path.is_file():
                     continue
-            self.recover(item_id)
-            recovered.append(item_id)
+            try:
+                self.recover(item_id)
+                recovered.append(item_id)
+            except Exception as exc:
+                # A single unrecoverable item must not terminate the Coordinator.
+                # Pipeline failures are persisted in SQLite; startup continues
+                # with the remaining pending items and LIVE discovery.
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Recovery falhou para item %s; Coordinator continuará: %s",
+                    item_id,
+                    exc,
+                )
         return recovered
