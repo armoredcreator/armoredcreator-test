@@ -97,7 +97,7 @@ class Database:
         }
         for table, columns in migrations.items():
             existing = {
-                row[1] for row in self.conn.execute(`PRAGMA table_info({table})`).fetchall()
+                row[1] for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()
             }
             for name, sql in columns:
                 if name not in existing:
