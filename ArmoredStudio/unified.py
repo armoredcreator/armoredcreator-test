@@ -80,8 +80,8 @@ class UnifiedStudio:
         if not original.is_file():
             raise FileNotFoundError(original)
 
-        working = self.storage.working(item.item_id)
-        output = self.storage.result(item.item_id, item.affiliate_url, item.affiliate_name)
+        working = self.storage.working(item.item_id, item.telegram_message_id)
+        output = self.storage.result(item.item_id, item.affiliate_url, item.affiliate_name, item.telegram_message_id)
         if output.exists():
             output.unlink()
 
@@ -118,8 +118,8 @@ class UnifiedStudio:
         # RVC voice stage. RVC is deliberately explicit: if the configured
         # environment/model is unavailable, the item fails instead of silently
         # downgrading production processing.
-        audio_original = source.with_name(f"{item.item_id}_audio_original.wav")
-        audio_rvc = source.with_name(f"{item.item_id}_audio_rvc.wav")
+        audio_original = source.with_name(f"{item.telegram_message_id}_audio_original.wav")
+        audio_rvc = source.with_name(f"{item.telegram_message_id}_audio_rvc.wav")
         subprocess.run(
             [ffmpeg, "-y", "-i", str(source), "-vn", "-ac", "2", "-ar", "44100", str(audio_original)],
             check=True,
