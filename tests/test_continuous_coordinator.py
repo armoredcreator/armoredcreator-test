@@ -90,24 +90,26 @@ class ContinuousCoordinatorTests(unittest.TestCase):
             publisher = _Publisher()
             coordinator = Coordinator(db, storage, _Vision(), _Studio(storage), publisher, source)
 
-            coordinator.run_forever(max_cycles=2, poll_seconds=0)
-            self.assertEqual(publisher.published, ["live-1"])
-            self.assertEqual(db.get("live-1").state, State.PUBLISHED)
-            self.assertEqual(source.checkpoints_committed, {228: 100})
+            try:
+                coordinator.run_forever(max_cycles=2, poll_seconds=0)
+                self.assertEqual(publisher.published, ["live-1"])
+                self.assertEqual(db.get("live-1").state, State.PUBLISHED)
+                self.assertEqual(source.checkpoints_committed, {228: 100})
 
-            restarted_db = Database(storage.database / "db.sqlite")
+                restarted_db = Database(storage.database / "db.sqlite")
             restarted_source = _LiveSource(restarted_db)
             restarted_source.done = True
             restarted = Coordinator(
                 restarted_db, storage, _Vision(), _Studio(storage), publisher, restarted_source
             )
-            restarted.run_forever(max_cycles=1, poll_seconds=0)
+                restarted.run_forever(max_cycles=1, poll_seconds=0)
 
-            self.assertEqual(publisher.published, ["live-1"])
-            self.assertEqual(restarted_db.get("live-1").state, State.PUBLISHED)
-
-            restarted.close()
-            coordinator.close()
+                self.assertEqual(publisher.published, ["live-1"])
+                self.assertEqual(restarted_db.get("live-1").state, State.PUBLISHED)
+            finally:
+                if "restarted" in locals():
+                    restarted.close()
+                coordinator.close()
 
 
 if __name__ == "__main__":
