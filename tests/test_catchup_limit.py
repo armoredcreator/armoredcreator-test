@@ -50,7 +50,7 @@ def test_historical_catchup_limit_stops_after_candidate_count(monkeypatch, tmp_p
     assert source.historical_limit_reached is True
     assert reader.connected is True
 
-    await reader.disconnect()
+    asyncio.run(reader.disconnect())
     assert reader.connected is False
 
 
