@@ -319,6 +319,82 @@ class TelegramSource:
 
                 yield (int(getattr(message, "id", 0) or 0), int(topic_id), topic_name, message, original_url)
 
+    async def iter_historical_candidates_async(self):
+        """Yield historical candidates as soon as they are discovered.
+
+        The Telegram connection stays open for the whole generator lifetime,
+        allowing each candidate to be materialized immediately like the
+        legacy Sync instead of waiting for the complete history scan.
+        """
+        if self.is_historical_complete():
+            return
+
+        source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
+        source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
+        source_ref = int(source) if str(source).lstrip("-").isdigit() else source
+
+        await self.reader.connect()
+        topics = await self._discover_topics(source_ref)
+        if not topics:
+            raise RuntimeError(f"Nenhum tópico de fórum encontrado na fonte Telegram {source}.")
+
+        self._historical_checkpoints.clear()
+        try:
+            for topic_id, topic_name in topics:
+                pending_video = None
+                topic_max_id = 0
+                candidate_ids: set[int] = set()
+
+                async for message in self._topic_messages(source_ref, topic_id):
+                    message_id = int(getattr(message, "id", 0) or 0)
+                    if message_id > topic_max_id:
+                        topic_max_id = message_id
+                    if message_id <= 0:
+                        continue
+
+                    if pending_video is not None:
+                        pending_id, pending_message = pending_video
+                        if pending_id not in self._seen and pending_id not in candidate_ids:
+                            original_url = self._shopee_url(pending_message)
+                            if original_url is None and not getattr(message, "video", None):
+                                original_url = self._shopee_url(message)
+                            if original_url is not None:
+                                candidate_ids.add(pending_id)
+                                yield SyncMessage(
+                                    telegram_message_id=str(pending_id),
+                                    source_id=source_id,
+                                    topic_id=topic_id,
+                                    topic_name=topic_name,
+                                    original_url=original_url,
+                                    materialize=lambda target, m=pending_message: self._download_to(m, target),
+                                )
+                        pending_video = None
+
+                    if not getattr(message, "video", None):
+                        continue
+
+                    original_url = self._shopee_url(message)
+                    if original_url is not None:
+                        if message_id not in self._seen and message_id not in candidate_ids:
+                            candidate_ids.add(message_id)
+                            yield SyncMessage(
+                                telegram_message_id=str(message_id),
+                                source_id=source_id,
+                                topic_id=topic_id,
+                                topic_name=topic_name,
+                                original_url=original_url,
+                                materialize=lambda target, m=message: self._download_to(m, target),
+                            )
+                        continue
+
+                    pending_video = (message_id, message)
+
+                if topic_max_id:
+                    self._historical_checkpoints[topic_id] = topic_max_id
+        except Exception:
+            await self.reader.disconnect()
+            raise
+
     async def collect_historical_batch_async(self) -> tuple[list[SyncMessage], dict[int, int]]:
         """Collect the complete historical candidate set while one Telegram
         connection is open, then let the Coordinator process it sequentially.
