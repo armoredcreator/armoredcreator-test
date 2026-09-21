@@ -155,6 +155,7 @@ class Coordinator:
         released, and only then does Vision/Studio/Hub run.
         """
         processed: list[str] = []
+        checkpoint_blocked = False
         source = self.source
         fetch_next = getattr(source, "fetch_next_async", None)
         if fetch_next is None:
@@ -191,11 +192,12 @@ class Coordinator:
                 # durably materialized. Processing may fail later; SQLite keeps
                 # the item recoverable and startup recovery can finish it.
                 topic_id = getattr(message, "topic_id", None)
-                if topic_id is not None:
+                if topic_id is not None and not checkpoint_blocked:
                     commit = getattr(source, "commit_live_checkpoints", None)
                     if commit is not None:
                         commit({int(topic_id): int(message.telegram_message_id)})
             except Exception as exc:
+                checkpoint_blocked = True
                 marker = getattr(source, "mark_materialization_failed", None)
                 if marker is not None:
                     marker()
