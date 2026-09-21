@@ -108,6 +108,7 @@ class TelegramSource:
         self._historical_candidates_emitted = 0
         self._historical_limit_reached = False
         self._historical_materialization_failed = False
+        self._historical_scan_exhausted = False
 
     @property
     def mode(self) -> str:
@@ -140,6 +141,17 @@ class TelegramSource:
     def historical_materialization_failed(self) -> bool:
         return self._historical_materialization_failed
 
+    @property
+    def historical_scan_exhausted(self) -> bool:
+        return self._historical_scan_exhausted
+
+    def complete_historical_sync(self) -> None:
+        """Commit final historical checkpoints only after every candidate completed."""
+        if self.db is not None and self._historical_checkpoints:
+            self.commit_live_checkpoints(self._historical_checkpoints)
+        self.mark_historical_complete()
+        self._historical_scan_exhausted = True
+
     def mark_materialization_failed(self) -> None:
         self._historical_materialization_failed = True
 
@@ -159,6 +171,7 @@ class TelegramSource:
         if self.db is not None:
             self.db.complete_historical_sync()
         self._historical_complete = True
+        self._historical_scan_exhausted = True
         self._historical_checkpoints.clear()
 
     def is_historical_complete(self) -> bool:
@@ -351,9 +364,10 @@ class TelegramSource:
             # not switch to LIVE. The failed candidate remains recoverable and
             # will be rediscovered after restart.
             return None
-        if self.db is not None and self._historical_checkpoints:
-            self.commit_live_checkpoints(self._historical_checkpoints)
-        self.mark_historical_complete()
+        # The Coordinator owns historical checkpoint advancement. Reaching
+        # the end of discovery is not sufficient to declare CATCH-UP complete:
+        # the last discovered candidates may still be processing.
+        self._historical_scan_exhausted = True
         return None
 
     async def _candidate_iterator(self, source: str, topics: list[tuple[int, str]]):
