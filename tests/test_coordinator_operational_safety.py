@@ -74,16 +74,17 @@ class CoordinatorOperationalSafetyTests(unittest.TestCase):
             db = Database(storage.database / "db.sqlite")
 
             class FailingSource(_Source):
-                async def collect_historical_batch_async(self):
+                async def fetch_next_async(self):
                     raise RuntimeError("simulated-catchup-source-failure")
 
             coordinator = Coordinator(
                 db, storage, _Vision(), _Studio(), _Publisher(), FailingSource()
             )
-            with self.assertRaisesRegex(RuntimeError, "simulated-catchup-source-failure"):
-                coordinator.run_forever(max_cycles=1, poll_seconds=0)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "simulated-catchup-source-failure"):
+                    coordinator.run_forever(max_cycles=1, poll_seconds=0)
 
-            self.assertIsNone(
+                self.assertIsNone(
                 db.conn.execute(
                     "SELECT 1 FROM runtime_locks WHERE name='coordinator'"
                 ).fetchone()
