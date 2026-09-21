@@ -275,14 +275,16 @@ class SyncLifecycleTests(unittest.TestCase):
                 db, storage, FailOnceVision(), Studio(storage), publisher, source
             )
 
-            with self.assertRaises(RuntimeError):
-                first.run_live_once()
-
+            # Processing failures are isolated by the continuous Coordinator:
+            # the item is durably FAILED, but the LIVE loop itself does not raise.
+            live = first.run_live_once()
+            self.assertEqual(live, ["200"])
             self.assertEqual(db.get("200").state.value, "FAILED")
             first.close()
 
-            # The Telegram checkpoint was already committed after durable ingest;
-            # restart must recover the DB item instead of needing a second message.
+            # FAILED is an explicit/manual-retry state. Startup recovery only
+            # resumes deterministic in-flight states; it must not blindly retry
+            # arbitrary failures after a process restart.
             restarted_source = LifecycleSource()
             restarted_source.completed = True
             restarted_source.live = []
@@ -292,9 +294,6 @@ class SyncLifecycleTests(unittest.TestCase):
             )
             recovered = second.recover_pending()
 
-            # FAILED is an explicit/manual-retry state. Startup recovery only
-            # resumes deterministic in-flight states; it must not blindly retry
-            # arbitrary failures after a process restart.
             self.assertEqual(recovered, [])
             self.assertEqual(second.db.get("200").state.value, "FAILED")
             self.assertEqual(publisher.published, [])
