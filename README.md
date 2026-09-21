@@ -493,11 +493,11 @@ Nunca promover um teste antigo para "validado no HEAD atual" sem executá-lo nov
 
 ### 16.1 Estado do código no momento deste registro
 
-**Branch de trabalho:** refactor/single-storage-pipeline
+**Branch de trabalho:** refactor/closure-batch
 
-**HEAD atual:** d827ccfc9f9c9bf79ccfc32617e8cdafa93404e6
+**HEAD atual:** ee4ac0b2847c8429f2778ce56950983505683dfc0
 
-**Último commit:** test: align durable-result recovery with cleanup contract
+**Último commit:** chore: remove unused process lab import
 
 Esse commit corrigiu o teste de Recovery de resultado durável para respeitar o contrato real de cleanup:
 - o resultado derivado pode ser removido após publicação confirmada;
@@ -513,7 +513,7 @@ A suíte local foi executada após a correção acima com:
 
 **Resultado confirmado pelo usuário:**
 
-    47 passed, 1 skipped in 13.90s
+    54 passed, 1 skipped in 19.11s
 
 Portanto:
 - 47 testes passaram;
@@ -796,7 +796,7 @@ Já existem testes cobrindo o contrato de:
 
 Esses testes fazem parte da suíte automatizada atual e estão incluídos no resultado:
 
-    47 passed, 1 skipped
+    54 passed, 1 skipped
 
 Porém, **teste automatizado não equivale à certificação de operação real contínua do processo Windows**.
 
@@ -1220,10 +1220,10 @@ Se este chat atingir o limite, o próximo chat deve continuar **a partir desta s
     armoredcreator/armoredcreator-test
 
     BRANCH:
-    refactor/single-storage-pipeline
+    refactor/closure-batch
 
     HEAD REGISTRADO:
-    d827ccfc9f9c9bf79ccfc32617e8cdafa93404e6
+    ee4ac0b2847c8429f2778ce56950983505683dfc0
 
     REPOSITÓRIO OFICIAL:
     armoredcreator/armoredcreator
@@ -1284,7 +1284,7 @@ Se este chat atingir o limite, o próximo chat deve continuar **a partir desta s
 
 ### Última suíte automatizada
 
-    47 passed, 1 skipped in 13.90s
+    54 passed, 1 skipped in 19.11s
 
 ### Próxima tarefa
 
@@ -1327,4 +1327,4 @@ Nunca alterar:
 
 Todo trabalho desta fase permanece em:
 
-    refactor/single-storage-pipeline
+    refactor/closure-batch
