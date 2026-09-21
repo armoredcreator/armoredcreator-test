@@ -44,7 +44,7 @@ class _Publisher:
         return PublicationResult(True, "telegram-" + item.content_id)
 
 
-class _ReconnectableLiveSource:
+class _BatchLiveSource:
     def __init__(self, db):
         self.db = db
         self.connected = False
@@ -103,7 +103,7 @@ class _ReconnectableLiveSource:
 
 
 class LiveReconnectTests(unittest.TestCase):
-    def test_live_batch_reconnects_after_each_sequential_item(self):
+    def test_live_batch_materializes_before_disconnect_then_processes_sequentially(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
@@ -111,7 +111,7 @@ class LiveReconnectTests(unittest.TestCase):
             db.complete_historical_sync()
             db.set_sync_topic_checkpoint(228, "topic", 100)
 
-            source = _ReconnectableLiveSource(db)
+            source = _BatchLiveSource(db)
             publisher = _Publisher()
             coordinator = Coordinator(
                 db, storage, _Vision(), _Studio(storage), publisher, source
@@ -124,8 +124,8 @@ class LiveReconnectTests(unittest.TestCase):
                 self.assertEqual(db.get("live-1").state, State.PUBLISHED)
                 self.assertEqual(db.get("live-2").state, State.PUBLISHED)
                 self.assertEqual(source.checkpoints, {228: 102})
-                self.assertGreaterEqual(source.connect_count, 2)
-                self.assertGreaterEqual(source.disconnect_count, 2)
+                self.assertEqual(source.connect_count, 1)
+                self.assertEqual(source.disconnect_count, 1)
             finally:
                 coordinator.close()
 
