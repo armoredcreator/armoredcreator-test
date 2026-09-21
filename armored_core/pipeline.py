@@ -66,7 +66,7 @@ class Pipeline:
                         # RECOVERY so Coordinator.recover_pending() can
                         # reconcile later without republishing blindly.
                         self.db.transition(item_id, State.RECOVERY, str(exc))
-                        raise
+                        return
                     if not result.confirmed:
                         raise RuntimeError("publication-not-confirmed")
                     self.db.publication_confirmed(item_id, result.message_id or f"published-{item_id}")
