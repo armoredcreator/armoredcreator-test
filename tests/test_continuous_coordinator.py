@@ -112,11 +112,16 @@ class _LiveSourceSerialized(_LiveSource):
         self.events = events
         self.index = 0
 
-    async def fetch_live_batch_async(self):
+    async def fetch_live_batch_async(self, limit=None):
         self.connected = True
         from types import SimpleNamespace
+        remaining = ["live-1", "live-2"][self.index:]
+        if not remaining:
+            return [], {}
+        if limit is not None:
+            remaining = remaining[:limit]
         messages = []
-        for message_id in ("live-1", "live-2"):
+        for message_id in remaining:
             async def materialize(target, message_id=message_id):
                 self.events.append("materialize:" + message_id)
                 target.write_bytes(message_id.encode())
@@ -128,7 +133,8 @@ class _LiveSourceSerialized(_LiveSource):
                 original_url="https://shopee.example/source",
                 materialize=materialize,
             ))
-        return messages, {228: 102}
+            self.index += 1
+        return messages, {228: 99 + self.index}
 
 
 
@@ -162,20 +168,17 @@ class ContinuousCoordinatorTests(unittest.TestCase):
 
             try:
                 coordinator.run_forever(max_cycles=1, poll_seconds=0)
-                # LIVE is strictly serialized: each candidate is
-                # materialized, the Sync session is released, and that single
-                # item completes the pipeline before the next candidate is
-                # materialized.
+                # LIVE is strictly serialized: discovery itself is limited
+                # to one candidate, then that candidate is materialized and
+                # completes the pipeline before the next discovery.
                 self.assertEqual(events, [
                     "materialize:live-1",
                     "pipeline:live-1",
-                    "materialize:live-2",
-                    "pipeline:live-2",
                 ])
-                self.assertEqual(publisher.published, ["live-1", "live-2"])
+                self.assertEqual(publisher.published, ["live-1"])
                 self.assertEqual(db.get("live-1").state, State.PUBLISHED)
-                self.assertEqual(db.get("live-2").state, State.PUBLISHED)
-                self.assertEqual(source.checkpoints_committed, {228: 102})
+                self.assertIsNone(db.get("live-2"))
+                self.assertEqual(source.checkpoints_committed, {228: 100})
             finally:
                 coordinator.close()
 
