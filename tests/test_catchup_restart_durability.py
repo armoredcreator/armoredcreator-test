@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from armored_core.coordinator import Coordinator
 from armored_core.database import Database
@@ -70,14 +71,14 @@ class _BatchSource:
             async def materialize(target, path=path):
                 self.materializations += 1
                 target.write_bytes(path.read_bytes())
-            messages.append(type("Message", (), {
-                "telegram_message_id": message_id,
-                "source_id": "telegram",
-                "topic_id": 10,
-                "topic_name": "topic",
-                "original_url": "https://shopee.example/" + message_id,
-                "materialize": materialize,
-            })())
+            messages.append(SimpleNamespace(
+                telegram_message_id=message_id,
+                source_id="telegram",
+                topic_id=10,
+                topic_name="topic",
+                original_url="https://shopee.example/" + message_id,
+                materialize=materialize,
+            ))
         return messages, {10: max(int(value) for value in self.files)}
 
     async def disconnect(self):
@@ -110,8 +111,11 @@ class CatchUpRestartTests(unittest.TestCase):
                 db, storage, _Vision(), _Studio(storage), _CrashAfterFirst(), source
             )
 
-            with self.assertRaises(RuntimeError):
-                crashing.run_catch_up()
+            try:
+                with self.assertRaises(RuntimeError):
+                    crashing.run_catch_up()
+            finally:
+                crashing.close()
 
             # All historical originals were materialized before processing.
             # Checkpoints may already be persisted, but the canonical originals
@@ -121,8 +125,6 @@ class CatchUpRestartTests(unittest.TestCase):
             self.assertTrue(db.get("301").original_path.is_file())
             self.assertTrue(db.get("302").original_path.is_file())
             self.assertEqual(db.get("301").state.value, "FAILED")
-            crashing.close()
-
             restarted_db = Database(storage.database / "db.sqlite")
             restarted_source = _BatchSource(restarted_db, files)
             publisher = _Publisher()
