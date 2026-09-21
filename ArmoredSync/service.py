@@ -538,7 +538,7 @@ class TelegramSource:
             await self.reader.disconnect()
             raise
 
-    async def fetch_live_batch_async(self) -> tuple[list[SyncMessage], dict[int, int]]:
+    async def fetch_live_batch_async(self, limit: int | None = None) -> tuple[list[SyncMessage], dict[int, int]]:
         """Discover all new candidates since the persisted topic checkpoints."""
         source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
         source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
@@ -589,6 +589,8 @@ class TelegramSource:
                         original_url=original_url,
                         materialize=lambda target, m=message: self._download_to(m, target),
                     ))
+                    if limit is not None and len(candidates) >= limit:
+                        return candidates, {topic_id: message_id}
             return candidates, checkpoints
         except Exception:
             await self.reader.disconnect()
