@@ -485,846 +485,908 @@ Comportamentos preservados:
 
 A reconstrução muda a organização física para centralizar estado e execução no Core/SQLite.
 
-## 16. Testes e estado de validação
+## 16. Registro definitivo de reconstrução e validação
 
-Esta seção é o **registro operacional do laboratório**. Ela distingue claramente entre código implementado, teste automatizado aprovado, teste real executado, teste ainda não executado e resultado de laboratório usado apenas para diagnóstico.
+Esta seção substitui todos os registros históricos abaixo do título anterior. O objetivo é registrar exatamente o que existe no HEAD atual, o que foi preservado/recriado/implementado/removido e o que já foi realmente testado.
 
-Nunca promover um teste antigo para "validado no HEAD atual" sem executá-lo novamente.
+### 16.1 Estado atual
 
-### 16.1 Estado do código no momento deste registro
+- Branch: refactor/closure-batch
+- HEAD: 1e5285b61da64760ca39ed4ec9474277dd47113e
+- Último teste local confirmado: 58 passed, 1 skipped in 20.47s
+- Repositório oficial: armoredcreator/armoredcreator — intocado
+- Baseline oficial: audit/baseline-2026-09-19 @ dbea0b609040d1635ef7002f7144fecd531ec0b4
 
-**Branch de trabalho:** refactor/closure-batch
+### 16.2 Classificação da reconstrução
 
-**HEAD atual:** 34fe92e121d2e18bcf594833b871343caf469737
+PRESERVADO significa comportamento funcional vindo do sistema anterior/backup.
 
-**Último commit:** test: reopen database after coordinator shutdown
+RECRIADO significa que o comportamento foi reconstruído em uma arquitetura nova.
 
-Esse commit corrigiu o teste de Recovery de resultado durável para respeitar o contrato real de cleanup:
-- o resultado derivado pode ser removido após publicação confirmada;
-- o original imutável deve permanecer;
-- o banco deve ser fechado antes do cleanup do diretório temporário;
-- o teste verifica o estado final e os eventos de RECOVERY/PUBLISHING/PUBLISHED.
+IMPLEMENTADO significa capacidade nova necessária para tornar o pipeline determinístico, recuperável ou operacional.
 
-### 16.2 Suíte automatizada atual
+ALTERADO significa que a implementação foi deliberadamente modificada para corrigir um defeito.
 
-A suíte local foi executada após a correção acima com:
+REMOVIDO significa que uma arquitetura antiga, duplicada ou insegura deixou de existir.
+
+TESTADO significa que há cobertura automatizada ou uma validação real documentada.
+
+NÃO CERTIFICADO significa que o código existe, mas a operação real correspondente ainda precisa ser executada.
+
+---
+
+## 17. Mapa módulo por módulo
+
+### 17.1 ArmoredSync
+
+Responsabilidade: descobrir e materializar candidatos. Não processa, não publica e não cria fila física.
+
+PRESERVADO:
+- CATCH-UP histórico;
+- monitoramento LIVE;
+- identidade pelo Telegram message ID;
+- vídeo + Shopee na mesma mensagem;
+- vídeo + Shopee na mensagem imediatamente seguinte quando a seguinte não é vídeo.
+
+RECRIADO:
+- ingestão centralizada pelo SQLite;
+- materialização direta no workspace canônico;
+- deduplicação por Telegram ID;
+- checkpoints persistentes.
+
+IMPLEMENTADO:
+- materializer assíncrono;
+- arquivo .part durante download;
+- rollback da reserva quando a materialização falha;
+- não baixar novamente quando o original já existe;
+- CATCH-UP em lote;
+- LIVE em lote.
+
+ALTERADO:
+- a coleta histórica deixou de desconectar/reconectar a cada item;
+- todos os candidatos do lote são coletados/materializados enquanto a sessão Telegram permanece conectada.
+
+TESTADO:
+- regra de candidato;
+- ingestão;
+- deduplicação;
+- checkpoints;
+- lifecycle da sessão;
+- CATCH-UP em lote;
+- LIVE em lote;
+- restart sem rematerialização do original.
+
+### 17.2 Database / SQLite
+
+Responsabilidade: fonte de verdade operacional.
+
+PRESERVADO:
+- identidade do conteúdo;
+- estado;
+- URLs;
+- caminhos;
+- tentativas;
+- erros.
+
+RECRIADO:
+- schema centralizado;
+- state_events;
+- sync_topics;
+- publication ledger.
+
+IMPLEMENTADO:
+- idempotency_key;
+- published_message_id;
+- verification_status;
+- destination_chat_id;
+- destination_topic_id;
+- verified_at;
+- recovery_count;
+- cleanup_completed;
+- SHA-256 do original.
+
+ALTERADO:
+- migração de schema corrigida;
+- fechamento SQLite tornou-se seguro quando existe outra conexão durante shutdown;
+- WAL não é forçado de volta para DELETE.
+
+TESTADO:
+- migração;
+- schema legado;
+- persistência;
+- checkpoints;
+- eventos;
+- fechamento.
+
+### 17.3 Coordinator
+
+Arquivo: armored_core/coordinator.py
+
+É a única raiz de composição.
+
+Funções principais:
+
+Coordinator.build():
+- resolve root;
+- carrega ambientes;
+- cria Database;
+- cria Sync;
+- seleciona Telegram real ou fonte de teste;
+- cria Pipeline;
+- cria Recovery.
+
+run_catch_up_async():
+- coleta lote;
+- materializa lote;
+- libera a fonte;
+- persiste checkpoints;
+- processa itens sequencialmente.
+
+run_catch_up():
+- wrapper síncrono do CATCH-UP.
+
+run_live_once_async():
+- coleta lote LIVE;
+- materializa antes do disconnect;
+- libera Sync;
+- processa um item por vez;
+- confirma checkpoint somente após processamento do lote;
+- não reprocessa FAILED automaticamente.
+
+run_live_once():
+- wrapper síncrono do LIVE.
+
+recover_pending():
+- recupera estados recuperáveis no startup;
+- FAILED fica fora do retry automático.
+
+recover(item_id):
+- executa Recovery explícito.
+
+run_forever():
+- adquire runtime lock;
+- faz recovery de startup;
+- executa CATCH-UP quando necessário;
+- entra em LIVE;
+- permanece em polling;
+- usa o mesmo Pipeline para itens novos.
+
+close():
+- fecha Database;
+- libera recursos;
+- libera runtime lock.
+
+TESTADO:
+- composição;
+- CATCH-UP;
+- LIVE;
+- restart;
+- deduplicação;
+- runtime lock;
+- falha em CATCH-UP;
+- falha em LIVE.
+
+### 17.4 Runtime lock
+
+PRESERVADO/RECRIADO:
+- exclusividade de um Coordinator ativo.
+
+IMPLEMENTADO:
+- recuperação de lock órfão;
+- liberação em shutdown;
+- liberação após exceção operacional.
+
+TESTADO:
+- segundo Coordinator é bloqueado;
+- lock morto é recuperado;
+- lock é removido após falha CATCH-UP;
+- lock é removido após falha LIVE.
+
+### 17.5 Pipeline
+
+Responsabilidade: executar exatamente uma unidade de trabalho por vez.
+
+Fluxo:
+
+RECEIVED → VISION → STUDIO → PUBLISHING → PUBLISHED → CLEANUP → DONE
+
+RECOVERY e FAILED são estados auxiliares.
+
+PRESERVADO:
+- ordem Vision → Studio → Hub.
+
+RECRIADO:
+- transições persistidas;
+- cleanup como etapa explícita.
+
+IMPLEMENTADO:
+- regra de um item ativo;
+- reutilização de artefatos duráveis durante Recovery.
+
+TESTADO:
+- ordem;
+- transições;
+- cleanup;
+- publicação;
+- falhas;
+- recovery.
+
+### 17.6 ArmoredVision
+
+Responsabilidade:
+- resolver URL Shopee;
+- obter dados do produto;
+- obter/generar affiliate URL;
+- registrar affiliate_name;
+- registrar affiliate_url.
+
+PRESERVADO:
+- Vision ocorre antes do Studio.
+
+RECRIADO:
+- integração como etapa do Pipeline.
+
+REMOVIDO:
+- qualquer dependência de fila física.
+
+TESTADO:
+- integração por testes do Pipeline/Core;
+- fluxo de falha;
+- persistência dos dados necessários.
+
+A operação E2E real desde Telegram fonte ainda precisa ser certificada em um único teste contínuo.
+
+### 17.7 ArmoredStudio
+
+Arquitetura final:
+
+ArmoredStudio/
+- analysis/
+- processing/
+- runtime/
+- unified.py
+
+REMOVIDO:
+- modules/v1 como arquitetura;
+- modules/v2 como arquitetura;
+- composição duplicada do Studio.
+
+RECRIADO:
+- uma única fronteira de processamento.
+
+IMPLEMENTADO:
+- unified.py;
+- plano de exportação;
+- validação do plano;
+- execução;
+- validação do resultado;
+- integração interna de RVC.
+
+### 17.8 ArmoredStudio/analysis
+
+Componentes atuais:
+
+- video.py — análise estrutural do vídeo;
+- blackbar.py — análise de barras pretas;
+- banner_analyzer.py — análise de condições do banner;
+- banner.py — lógica de banner;
+- veo_detector.py — detecção relacionada ao fluxo VEO;
+- gemini_detector.py — detecção relacionada à marca/elemento Gemini;
+- export_planner.py — construção do plano de exportação;
+- export_plan_validator.py — validação do plano;
+- export_executor.py — execução do plano;
+- logger.py — logging da análise.
+
+PRESERVADO:
+- responsabilidades de análise existentes no Studio anterior.
+
+RECRIADO:
+- essas responsabilidades dentro de uma única arquitetura.
+
+### 17.9 ArmoredStudio/processing
+
+Componentes:
+
+- rvc.py;
+- tool_paths.py;
+- finalizer.py.
+
+rvc.py:
+- RVC é interno ao Studio;
+- localiza runtime/modelo;
+- executa transformação de voz;
+- retorna artefato para o fluxo.
+
+tool_paths.py:
+- centraliza descoberta de ferramentas;
+- evita caminho absoluto da máquina.
+
+finalizer.py:
+- montagem/exportação final;
+- preserva as regras de composição do Studio.
+
+Assets preservados:
+- ArmoredStudio/assets/banner.png;
+- ArmoredStudio/assets/efeitosonoro.wav.
+
+IMPLEMENTADO:
+- cópia somente para laboratório via ARMORED_STUDIO_ALLOW_COPY=1 / ARMORED_STUDIO_FORCE_COPY=1;
+- processamento real não deve cair silenciosamente para cópia.
+
+### 17.10 ArmoredStudio/runtime/rvc
+
+É runtime local/heavy e não arquitetura separada.
+
+Modelo real utilizado na validação:
+- melody.pth;
+- melody_v2.index.
+
+A máquina de validação atual não possui GPU Nvidia suportada; o runtime pode utilizar CPU.
+
+O runtime pesado não deve ser tratado como módulo Python versionado.
+
+### 17.11 ArmoredHub
+
+Responsabilidade:
+- registrar tentativa de publicação;
+- garantir idempotência;
+- publicar resultado;
+- persistir message_id;
+- verificar;
+- confirmar somente depois da verificação.
+
+PRESERVADO:
+- publicação Telegram no tópico 228.
+
+RECRIADO:
+- publication ledger.
+
+IMPLEMENTADO:
+- publication_started;
+- publication_message_sent;
+- publication_confirmed;
+- destination chat/topic;
+- crash window explícita para teste;
+- verificação independente.
+
+REGRA:
+- CONFIRMED → PUBLISHED;
+- ABSENT → publicação pode ocorrer;
+- UNKNOWN → parar e não republicar.
+
+### 17.12 Recovery
+
+Responsabilidade: reconciliar SQLite + filesystem + Telegram.
+
+Casos implementados:
+
+STUDIO + working:
+→ continuar Studio.
+
+STUDIO sem working + original:
+→ reconstruir.
+
+PUBLISHING + result:
+→ verificar publicação.
+
+PUBLISHING + Telegram confirmado:
+→ PUBLISHED.
+
+PUBLISHED:
+→ nunca republicar; cleanup.
+
+UNKNOWN:
+→ nunca republicar automaticamente.
+
+FAILED:
+→ recovery explícito/manual, não retry infinito.
+
+Original ausente:
+→ recuperação bloqueada.
+
+TESTADO:
+- recovery automatizado;
+- FAILED + resultado durável;
+- publicação real do item 557;
+- cleanup pós-confirmação.
+
+---
+
+## 18. Storage e arquivos — contrato final
+
+Workspace único:
+
+storage/videos/{telegram_message_id}/
+
+Artefatos:
+- original = permanente;
+- working = derivado;
+- result = derivado.
+
+Original é sempre preservado.
+
+Result é removido somente depois de publicação confirmada e cleanup.
+
+Não existem filas físicas.
+
+Não recriar:
+storage/sync/
+storage/queue/
+storage/publish_queue/
+storage/pipeline/
+storage/hub/
+storage/products/
+storage/generated/
+storage/rejected/
+storage/archive/
+storage/input/
+storage/output/
+storage/temp/
+
+---
+
+## 19. Telegram e confirmação
+
+A publicação usa Bot API para envio e MTProto para verificação independente.
+
+A verificação exige:
+- chat correto;
+- tópico correto;
+- caption exatamente igual ao affiliate_url;
+- mídia de vídeo/documento;
+- nome do arquivo quando Telegram o expõe.
+
+A busca utiliza o tail do affiliate URL e depois aplica os critérios exatos.
+
+Tópico real validado:
+228.
+
+A confirmação independente do item 557 foi realizada com:
+- destination_chat_id = -1004341972306;
+- destination_topic_id = 228;
+- published_message_id = 772;
+- verification_status = CONFIRMED.
+
+---
+
+## 20. Testes automatizados — resultado atual
+
+Comando:
 
     python -m pytest -q
 
-**Resultado confirmado pelo usuário:**
+Resultado confirmado no HEAD 1e5285b:
 
-    56 passed, 1 skipped
+    58 passed, 1 skipped in 20.47s
 
-Portanto:
-- 56 testes passaram;
-- 1 teste foi marcado como skip;
-- nenhum teste falhou;
-- a regressão de migração SQLite está coberta;
-- o Recovery de FAILED + resultado durável está coberto;
-- o contrato de cleanup está coberto.
+0 testes falharam.
 
-O resultado anterior de 45 passed, 1 skipped ficou obsoleto após a inclusão dos testes adicionais. Não usar os números antigos como estado atual.
+O número 58 é o estado atual. Resultados antigos de 45/54/55/56 testes são históricos.
 
-### 16.3 Correção da migração SQLite
+Coberturas relevantes:
+- Database;
+- migrations;
+- Storage;
+- Sync;
+- CATCH-UP;
+- LIVE;
+- checkpoints;
+- deduplicação;
+- Pipeline;
+- Coordinator;
+- Recovery;
+- Hub;
+- publication ledger;
+- runtime lock;
+- process restart lab;
+- arquitetura/launcher.
 
-Foi encontrada uma regressão na migração da tabela publications: o código continha uma chamada PRAGMA inválida.
+---
 
-Correção aplicada em:
+## 21. Testes de durabilidade e restart
 
-    armored_core/database.py
+### CATCH-UP
 
-Commit:
+O teste de restart verifica que um original já materializado não é baixado novamente.
 
-    0505ac9cfe7d14b9511562325f5f4dd23d5b2fae
-    fix: correct SQLite schema migration pragma
+### LIVE
 
-Depois foi criado um teste de regressão:
+O teste verifica:
+- batch;
+- materialização antes do disconnect;
+- processamento sequencial;
+- checkpoint;
+- deduplicação;
+- restart.
 
-    tests/test_database_migration.py
+### Process lab
 
-Commit:
+tests/e2e/run_process_lab.py executa processos separados contra a mesma base.
 
-    b4e002bcd3e8d3cdb963c9309c26d68efc0268b7
-    test: cover legacy publication schema migration
+Primeira execução:
 
-A migração também foi executada sobre o banco real do laboratório e terminou com:
+    STATE=PUBLISHED
+    CHECKPOINT=100
+    PUBLICATIONS=['lab-live-1']
 
-    DB MIGRADO OK
+Segunda execução:
 
-O schema real passou a conter:
+    STATE=PUBLISHED
+    CHECKPOINT=100
+    PUBLICATIONS=['lab-live-1']
 
-    content_id
-    idempotency_key
-    published_message_id
-    confirmed
-    created_at
-    updated_at
-    verification_status
-    destination_chat_id
-    destination_topic_id
-    verified_at
+Isso demonstra persistência entre processos e publicação única.
 
-Antes da migração foi criado um backup temporário do banco para permitir reversão durante a validação.
+---
 
-### 16.4 Recovery determinístico — teste automatizado
+## 22. Teste real do item 557
 
-Foi criado:
+Estado inicial:
+- FAILED;
+- working ausente;
+- result durável.
 
-    tests/test_failed_result_recovery.py
+Dry-run:
+- Recovery chegou a PUBLISHING;
+- ARMORED_HUB_DRY_RUN=1 bloqueou publicação;
+- item não foi marcado PUBLISHED.
 
-Cenário coberto:
+Execução real:
+- ARMORED_HUB_DRY_RUN=0;
+- Telegram publicou;
+- message_id = 772;
+- MTProto confirmou;
+- tópico = 228;
+- verification_status = CONFIRMED;
+- state = PUBLISHED;
+- cleanup_completed = True.
 
-    FAILED
-      ↓
-    resultado final já existente e durável
-      ↓
-    Recovery
-      ↓
-    não executa Vision
-      ↓
-    não executa Studio
-      ↓
-    PUBLISHING
-      ↓
-    Publisher
-      ↓
-    PUBLISHED
-      ↓
-    cleanup
-
-O teste usa Vision/Studio que falham deliberadamente se forem chamados. Isso prova que, quando o resultado final já é durável, o Recovery pode reutilizá-lo diretamente.
-
-O teste também confirma:
-- publicação executada uma única vez;
-- estado final PUBLISHED;
-- resultado derivado removido pelo cleanup;
-- original preservado;
-- workspace contendo somente o original após cleanup;
-- eventos de RECOVERY, PUBLISHING e PUBLISHED.
-
-Esse teste foi corrigido depois de uma primeira versão que esperava que o resultado permanecesse no disco mesmo após cleanup. O contrato correto é remover o derivado após confirmação e preservar o original.
-
-### 16.5 Recovery real do item 557
-
-Este é o teste real mais importante executado até agora.
-
-O item 557 existia no banco real do laboratório como:
-
-    state = FAILED
-    working_path = None
-    result_path = storage/videos/557/557_9zxtYncz8J.mp4
-    affiliate_url = https://s.shopee.com.br/9zxtYncz8J
-
-Workspace inicial:
-
-    557/
-    ├── 557_7VFOfg3R52.mp4   ← original
-    └── 557_9zxtYncz8J.mp4   ← resultado
-
-Primeiro foi executado Recovery com:
-
-    ARMORED_HUB_DRY_RUN=1
-
-O Recovery reconheceu o resultado durável e chegou a PUBLISHING, mas o Hub bloqueou a publicação por segurança:
-
-    RuntimeError:
-    ARMORED_HUB_DRY_RUN=1:
-    publicação real bloqueada;
-    nenhum item pode ser marcado como PUBLISHED
-
-Isso confirmou que o Recovery estava funcionando até a fronteira real de publicação.
-
-Em seguida foi feita a mesma recuperação com:
-
-    ARMORED_HUB_DRY_RUN=0
-
-Resultado real:
-
-    ANTES
-    state: FAILED
-    result: .../storage/videos/557/557_9zxtYncz8J.mp4
-
-    DEPOIS
-    state: PUBLISHED
-    cleanup_completed: True
-    recovery_count: 4
-    attempts: 6
-
-Publication real persistida:
-
-    content_id: 557
-    idempotency_key: armoredcreator:content:557
-    published_message_id: 772
-    confirmed: 1
-    verification_status: CONFIRMED
-    destination_chat_id: -1004341972306
-    destination_topic_id: 228
-    verified_at: 2026-09-20 21:48:20
-
-Workspace após o processo:
+Workspace final:
 
     557/
     └── 557_7VFOfg3R52.mp4
 
-O resultado derivado foi removido e o original permaneceu.
+Prova obtida:
+- resultado durável foi reutilizado;
+- Vision não foi repetido;
+- Studio não foi repetido;
+- publicação real ocorreu;
+- ID real foi persistido;
+- confirmação independente ocorreu;
+- cleanup ocorreu somente depois da confirmação;
+- original permaneceu;
+- resultado derivado foi removido;
+- nenhuma duplicação foi observada.
 
-**Conclusão desta validação:** o Recovery real de um FAILED com resultado durável foi executado de ponta a ponta, com publicação Telegram real e confirmação real no tópico 228, sem reexecutar Vision/Studio.
+Limite:
+este teste não certifica sozinho o caminho completo Telegram fonte → Sync → Vision → Studio → Hub → Telegram.
 
-### 16.6 O que o teste 557 realmente provou
+---
 
-O teste 557 comprovou:
-- item FAILED pode entrar em Recovery manual;
-- Recovery encontra resultado durável;
-- Recovery não precisa reconstruir Vision/Studio quando o resultado existe;
-- publicação real no Telegram funciona;
-- ID real da mensagem é persistido;
-- confirmação independente funciona;
-- destino real é o chat -1004341972306;
-- tópico real é 228;
-- verification_status chega a CONFIRMED;
-- confirmed chega a 1;
-- estado chega a PUBLISHED;
-- cleanup ocorre somente depois da confirmação;
-- resultado derivado é removido;
-- original permanece;
-- não houve duplicação durante essa recuperação.
+## 23. Correções arquiteturais importantes
 
-Esse teste é uma **validação real de Recovery + publicação**, mas não é ainda a certificação do Coordinator contínuo completo.
+### Migração SQLite
 
-### 16.7 Estado do banco real usado no laboratório
+Commit:
+0505ac9cfe7d14b9511562325f5f4dd23d5b2fae
 
-Após os testes, o banco local contém uma mistura deliberada de estados históricos e resultados de testes. Isso é útil para diagnóstico, mas não representa o banco limpo final de produção.
+Teste:
+b4e002bcd3e8d3cdb963c9309c26d68efc0268b7
 
-No inventário executado após o teste 557:
+### CATCH-UP em lote
 
-    FAILED:    2
-    PUBLISHED: 12
-    RECEIVED:   1
+Commits principais:
+d9a7660e6f022e42cf185db0685dc241062c47ea
+0b12f4c404ac7ac23382d6cd5ca981c13e8dcd5
+57fd8089ba2c3f53e39ac3795d5f8e5f63677c41
+e1b7d7e3535ef17bb4de17f7111cf2c925b374fc0
 
-Itens observados:
+### Conexão Telegram
 
-    530  FAILED
-    532  FAILED
-    536  PUBLISHED
-    539  PUBLISHED
-    542  PUBLISHED
-    544  RECEIVED
-    557  PUBLISHED
-    558  PUBLISHED
-    560  PUBLISHED
-    563  PUBLISHED
-    564  PUBLISHED
-    706  PUBLISHED
-    823  PUBLISHED
-    1174 PUBLISHED
-    1383 PUBLISHED
+a52dffb29d1bd283ca5e4b941f334844247aba0b
+0d489b1410a3097fff966f8fcb5d6fbe97b8b3c0
 
-### 16.8 Publicações históricas e contaminação de teste
+### Process restart lab
 
-O inventário revelou registros que não podem ser tratados como publicação real:
+f71c1c42af1de19f3cdc5133c58e90008c94d968
+2c569e31f0c9c3179795894ee41926fd3afc8a19
+35ba648c018d5caf84aca6db02c32b4a52c43adf
 
-    536  message=dry-536  confirmed=1  verification_status=PENDING
-    539  message=dry-539  confirmed=1  verification_status=PENDING
-    542  message=dry-542  confirmed=1  verification_status=PENDING
-    558  message=dry-558  confirmed=1  verification_status=PENDING
-    560  message=dry-560  confirmed=1  verification_status=PENDING
-    563  message=dry-563  confirmed=1  verification_status=PENDING
-    564  message=dry-564  confirmed=1  verification_status=PENDING
-    706  message=dry-706  confirmed=1  verification_status=PENDING
-    823  message=dry-823  confirmed=1  verification_status=PENDING
-    1174 message=dry-1174 confirmed=1  verification_status=PENDING
-    1383 message=771     confirmed=1  verification_status=PENDING
+### Limpeza arquitetural
 
-Esses registros são tratados como **diagnóstico de laboratório**, não como evidência de publicação real.
+e7374398aeb97217c1c88f82b23bdb5def52f195
+b07ac56e836f54bdd87540da0d75ff4ed900497c
+85246cab83d893131f1b4b68abfce83ef050080
+8b73144048472fcb907109db... 
 
-O único item explicitamente comprovado nesta etapa por publicação real e confirmação independente foi:
+### Segurança operacional
 
-    557 → Telegram message 772 → CONFIRMED → PUBLISHED
+1e5285b61da64760ca39ed4ec9474277dd47113e
 
-Não assumir que qualquer confirmed=1 antigo significa Telegram real confirmado. A evidência confiável exige estado e verification coerentes e, quando necessário, reconciliação com Telegram.
+---
 
-### 16.9 Falhas históricas preservadas para diagnóstico
+## 24. O que ainda falta — somente o fechamento operacional
 
-Os itens 530 e 532 permanecem como FAILED no laboratório.
+A arquitetura não precisa ser reconstruída novamente.
 
-Erros registrados anteriormente:
+Faltam quatro certificações principais:
 
-    530 = ShopeeAPIError: Produto não encontrado: 590473480:50603522807
-    532 = ShopeeAPIError: Produto não encontrado: 319857762:22093051984
+1. Coordinator contínuo real;
+2. restart real durante LIVE;
+3. integração operacional START_ALL;
+4. E2E completo Telegram fonte → destino.
 
-Eles não devem ser apagados enquanto ainda estivermos usando o banco atual para diagnóstico, mas também não devem ser confundidos com uma base limpa de produção.
+Depois disso:
+5. reset final do DB/storage;
+6. CATCH-UP limpo;
+7. LIVE limpo;
+8. E2E final em ambiente limpo.
 
-O item 544 está em:
+### Coordinator contínuo real
 
-    RECEIVED
+Executar processo real e observar:
+- startup recovery;
+- CATCH-UP;
+- transição para LIVE;
+- polling;
+- item novo;
+- mesmo Pipeline;
+- exatamente um item ativo.
 
-e possui um artefato parcial:
-
-    544_5AqOWAutYS.mp4.part
-
-Esse arquivo não deve ser tratado como vídeo finalizado.
-
-### 16.10 Regra atual para FAILED
-
-A exclusão de FAILED do Recovery automático no startup é intencional.
-
-    Coordinator startup
-        ↓
-    recover_pending()
-        ↓
-    FAILED não entra automaticamente
-
-A recuperação de FAILED é explícita:
-
-    coordinator.recover(item_id)
-
-Isso evita loops automáticos de erro e preserva a possibilidade de recuperação determinística/manual.
-
-O teste real do 557 confirmou que essa recuperação explícita funciona.
-
-### 16.11 Testes de operação contínua
-
-Já existem testes cobrindo o contrato de:
-- CATCH-UP → LIVE;
-- checkpoints por tópico;
-- deduplicação;
-- múltiplas mensagens;
-- processamento sequencial;
-- restart;
-- persistência da identidade;
-- recuperação após falha.
-
-Esses testes fazem parte da suíte automatizada atual e estão incluídos no resultado:
-
-    54 passed, 1 skipped
-
-Porém, **teste automatizado não equivale à certificação de operação real contínua do processo Windows**.
-
-Ainda precisamos executar no ambiente real:
-
-    START_COORDINATOR
-        ↓
-    CATCH-UP real
-        ↓
-    LIVE real
-        ↓
-    novo Telegram
-        ↓
-    processamento
-        ↓
-    publicação
-        ↓
-    restart real do processo
-        ↓
-    retomada por checkpoint
-
-### 16.12 Bot / START_ALL
-
-O laboratório possui uma única entrada operacional:
-
-    run_coordinator.py
-    START_ALL.bat
-
-O START_ALL.bat resolve a raiz do projeto de maneira portátil e não depende de caminhos fixos de máquina.
-
-Entretanto, a **integração final com o Bot histórico e o START_ALL de produção ainda não está certificada**.
-
-Não declarar essa etapa como concluída somente porque o Coordinator isolado inicia.
-
-### 16.13 E2E real completo
-
-Existe suporte para E2E real e a publicação real já foi comprovada no item 557.
-
-Entretanto, o teste 557 foi:
-
-    FAILED existente
-        ↓
-    Recovery
-        ↓
-    resultado já produzido
-        ↓
-    Hub
-        ↓
-    Telegram destino
-
-Ele **não cobre** todo o caminho:
-
-    Telegram fonte
-        ↓
-    ArmoredSync CATCH-UP/LIVE
-        ↓
-    SQLite
-        ↓
-    Coordinator
-        ↓
-    Vision real
-        ↓
-    Studio real
-        ↓
-    Hub real
-        ↓
-    Telegram destino
-        ↓
-    confirmação
-        ↓
-    cleanup
-
-Portanto:
-
-**Recovery + publicação real: APROVADO.**
-
-**E2E completo desde a descoberta do Telegram fonte até o destino: AINDA NÃO CERTIFICADO.**
-
-### 16.14 Estado de validação atual
-
-| Área | Estado |
-|---|---|
-| Arquitetura canônica | ✅ APROVADA por auditoria/testes |
-| Storage único | ✅ APROVADO |
-| SQLite como fonte de verdade | ✅ APROVADO |
-| Identidade por Telegram ID | ✅ APROVADO |
-| CATCH-UP/LIVE | ✅ APROVADO por testes automatizados |
-| Deduplicação | ✅ APROVADA por testes |
-| Pipeline sequencial | ✅ APROVADO por testes |
-| ArmoredStudio unificado | ✅ APROVADO por auditoria |
-| RVC interno ao Studio | ✅ IMPLEMENTADO |
-| Migração SQLite | ✅ APROVADA |
-| Recovery determinístico | ✅ APROVADO |
-| FAILED + resultado durável | ✅ APROVADO em teste automatizado |
-| FAILED + resultado durável + Telegram real | ✅ APROVADO no item 557 |
-| Publicação Telegram real | ✅ COMPROVADA no item 557 |
-| Confirmação MTProto real | ✅ COMPROVADA no item 557 |
-| Cleanup pós-confirmação | ✅ COMPROVADO no item 557 |
-| Original preservado | ✅ COMPROVADO no item 557 |
-| Coordinator.run_forever implementado | ✅ IMPLEMENTADO |
-| Coordinator contínuo com Telegram real | 🔲 NÃO CERTIFICADO |
-| Restart real do processo em LIVE | 🔲 NÃO CERTIFICADO |
-| Integração Bot/START_ALL | 🔲 NÃO CERTIFICADA |
-| E2E real completo fonte → destino | 🔲 NÃO CERTIFICADO |
-| Base local limpa | 🔲 AINDA NÃO — laboratório contém histórico/testes |
-| Backup temporário de auditoria | 🟡 EXISTE APENAS COMO SEGURANÇA TEMPORÁRIA |
-| Baseline oficial | 🔒 INTACTO |
-
-### 16.15 Backup temporário e reset final
-
-Durante a validação foi criado um backup temporário **fora do repositório** para preservar o DB e os vídeos do laboratório antes de qualquer eventual reset.
-
-Esse backup é **descartável**. Ele não faz parte da arquitetura final e não deve ser mantido como dependência do projeto.
-
-A ordem correta é:
-
-    continuar usando o laboratório atual
-        ↓
-    fechar Recovery restante / Coordinator / Bot / E2E
-        ↓
-    executar inventário final
-        ↓
-    não precisar mais dos artefatos históricos
-        ↓
-    remover backup temporário
-        ↓
-    resetar DB + storage/videos
-        ↓
-    iniciar banco/storage limpos
-        ↓
-    executar CATCH-UP real
-        ↓
-    executar LIVE real
-        ↓
-    executar E2E final
-
-**Não resetar o ambiente antes de terminar os testes diagnósticos que ainda possam se beneficiar dos dados atuais.**
-
-### 16.16 Próximos passos oficiais
-
-A partir deste registro, a ordem de trabalho é:
-
-#### 1. Continuar usando o laboratório atual
-
-Usar os itens históricos somente para descobrir e corrigir falhas de Recovery/idempotência.
-
-Não considerar os estados históricos como produção limpa.
-
-#### 2. Fechar Coordinator contínuo real
-
-Validar:
-
-    run_forever()
-        ↓
-    startup recovery
-        ↓
-    CATCH-UP
-        ↓
-    LIVE
-        ↓
-    polling contínuo
-        ↓
-    novo item
-        ↓
-    mesmo pipeline
-
-#### 3. Validar restart real
+### Restart real
 
 Executar:
+- LIVE;
+- receber/processar item;
+- interromper processo;
+- iniciar novamente;
+- confirmar checkpoint;
+- confirmar ausência de duplicata.
 
-    processo ativo
-        ↓
-    LIVE
-        ↓
-    novo item/checkpoint
-        ↓
-    interrupção real
-        ↓
-    restart
-        ↓
-    checkpoint
-        ↓
-    continuação sem duplicata
+### START_ALL
 
-#### 4. Fechar Bot / START_ALL
+Executar somente o launcher operacional:
 
-Validar o processo real que será usado para iniciar a composição completa.
+    START_ALL.bat
 
-Não considerar START_ALL.bat isoladamente como substituto da integração final.
+Confirmar:
+- Python;
+- root;
+- Coordinator;
+- Telegram;
+- shutdown;
+- restart.
 
-#### 5. E2E completo real
+### E2E
 
-Validar pelo menos um conteúdo real desde:
+Um item real deve atravessar:
 
     Telegram fonte
     → Sync
     → SQLite
     → Vision
     → Studio
+    → RVC/processamento
     → Hub
-    → Telegram destino
-    → confirmação
+    → Telegram 228
+    → MTProto
+    → PUBLISHED
     → cleanup
 
-e confirmar que o segundo item entra somente depois do primeiro terminar.
+Depois deve existir um segundo item e ele só deve começar após o primeiro terminar.
 
-#### 6. Teste final limpo
+---
 
-Somente quando tudo acima estiver fechado:
+## 25. Matriz final de estado
 
-    backup temporário → remover
-    DB atual → resetar
-    storage/videos atual → resetar
-    artefatos de teste → remover
+| Área | Estado |
+|---|---|
+| Arquitetura canônica | ✅ validada |
+| Storage único | ✅ validado |
+| SQLite como verdade | ✅ validado |
+| Identidade Telegram ID | ✅ validada |
+| CATCH-UP automatizado | ✅ validado |
+| LIVE automatizado | ✅ validado |
+| Checkpoints | ✅ validados |
+| Deduplicação | ✅ validada |
+| Pipeline sequencial | ✅ validado |
+| Studio unificado | ✅ validado por auditoria/testes |
+| RVC interno | ✅ implementado |
+| Recovery determinístico | ✅ validado |
+| Publication ledger | ✅ validado |
+| Hub real | ✅ validado no caso 557 |
+| MTProto real | ✅ validado no caso 557 |
+| Cleanup pós-confirmação | ✅ validado no caso 557 |
+| Runtime lock | ✅ validado |
+| Process restart lab | ✅ validado |
+| Coordinator contínuo real | 🔲 falta certificação |
+| Restart real em LIVE | 🔲 falta certificação |
+| START_ALL operacional | 🔲 falta certificação |
+| E2E fonte → destino | 🔲 falta certificação |
+| DB/storage limpos | 🔲 fazer somente após os testes acima |
+| Baseline oficial | 🔒 intocado |
 
-Então:
+---
 
-    CATCH-UP limpo
-    → LIVE
-    → E2E real
-    → restart
-    → recovery
-    → segundo item
-    → publicação
-    → cleanup
+## 26. Laboratório atual
 
-Esse será o teste de certificação final da composição.
+O DB/storage atual ainda contém material histórico usado para diagnóstico.
 
-## 17. Ordem oficial desta fase
+Não interpretar automaticamente como produção.
 
-### Fase 1 — CATCH-UP
+Itens conhecidos incluem:
+- FAILED 530;
+- FAILED 532;
+- RECEIVED 544 com .part;
+- histórico de publicações dry-run;
+- item 557 já validado e limpo.
 
-1. coleta histórica real;
-2. todos os tópicos;
-3. candidatos válidos;
-4. download direto para workspace;
-5. deduplicação;
-6. SQLite;
-7. nenhuma cópia intermediária;
-8. detectar fim do histórico;
-9. persistir CATCH-UP → LIVE.
+Enquanto os testes finais não terminarem:
 
-### Fase 2 — LIVE
+- não apagar o DB;
+- não apagar storage/videos;
+- não apagar 530/532/544;
+- não tratar dry-* como publicação real;
+- não republicar itens sem reconciliação;
+- não alterar a baseline oficial.
 
-10. monitoramento contínuo;
-11. novas mensagens;
-12. mesma regra de candidato;
-13. checkpoints por tópico;
-14. recuperação após parada;
-15. deduplicação histórico/LIVE;
-16. novos itens no mesmo SQLite.
+O backup temporário de auditoria é descartável e só deve ser removido depois do fechamento diagnóstico.
 
-### Fase 3 — Core
+---
 
-17. Sync → DB → Coordinator → Pipeline;
-18. um item ativo;
-19. Vision;
-20. Studio;
-21. Hub;
-22. confirmação Telegram;
-23. PUBLISHED;
-24. cleanup.
+## 27. START_ALL e composição
 
-### Fase 4 — Recovery
+Arquitetura final:
 
-25. queda durante CATCH-UP;
-26. queda durante LIVE;
-27. queda durante Vision;
-28. queda durante Studio;
-29. queda após publicação;
-30. nenhuma republicação indevida;
-31. publicação UNKNOWN nunca gera republicação automática;
-32. resultado durável é reutilizado quando seguro.
+    START_ALL.bat
+        ↓
+    run_coordinator.py
+        ↓
+    Coordinator
+        ↓
+    Sync / Pipeline / Recovery
 
-### Fase 5 — Operação contínua
+Não existem mais múltiplos launchers competindo pela composição.
 
-33. Coordinator real em run_forever();
-34. CATCH-UP real;
-35. LIVE real;
-36. restart real;
-37. retomada por checkpoint;
-38. processamento sequencial após restart.
+START_ALL já está implementado e testado estruturalmente.
 
-### Fase 6 — Integração operacional
+A certificação restante é executar o processo real e observar CATCH-UP → LIVE → restart → E2E.
 
-39. Bot;
-40. START_ALL;
-41. inicialização da composição completa;
-42. shutdown/restart;
-43. recuperação automática.
+---
 
-### Fase 7 — E2E real
+## 28. Critério definitivo de encerramento
 
-44. Telegram fonte real;
-45. Sync real;
-46. Vision real;
-47. Studio/RVC real;
-48. Hub real;
-49. Telegram destino real;
-50. confirmação real;
-51. cleanup;
-52. próximo item.
+O projeto será considerado fechado quando, em ambiente limpo, for observado:
 
-### Fase 8 — Reset final
-
-53. fechar todos os testes diagnósticos;
-54. remover backups temporários;
-55. resetar DB;
-56. resetar storage/videos;
-57. preservar somente a estrutura canônica;
-58. CATCH-UP limpo;
-59. LIVE limpo;
-60. E2E final;
-61. restart final;
-62. Recovery final.
-
-Somente depois dessa sequência a composição poderá ser considerada encerrada.
-
-## 18. Estado atual de fechamento
-
-### FECHADO / VALIDADO
-
-- ✅ Arquitetura canônica.
-- ✅ Storage único.
-- ✅ SQLite como fonte de verdade.
-- ✅ CATCH-UP/LIVE por testes automatizados.
-- ✅ Deduplicação.
-- ✅ Pipeline sequencial.
-- ✅ ArmoredStudio unificado.
-- ✅ RVC interno.
-- ✅ Migração SQLite.
-- ✅ Recovery determinístico.
-- ✅ Recovery de FAILED + resultado durável.
-- ✅ Publicação Telegram real.
-- ✅ Confirmação MTProto real.
-- ✅ Cleanup pós-publicação.
-- ✅ Preservação do original.
-- ✅ Caso real 557 completo de Recovery até Telegram confirmado.
-- ✅ Suíte automatizada: **56 passed, 1 skipped**.
-
-### IMPLEMENTADO, MAS AINDA NÃO CERTIFICADO EM OPERAÇÃO CONTÍNUA REAL
-
-1. 🔲 Coordinator contínuo real em processo longo.
-2. 🔲 Restart real durante LIVE.
-3. 🔲 Integração final Bot/START_ALL.
-4. 🔲 E2E completo desde Telegram fonte até Telegram destino.
-5. 🔲 Teste final com DB/storage completamente limpos.
-
-### LABORATÓRIO ATUAL
-
-O ambiente local ainda contém dados históricos deliberadamente preservados para diagnóstico:
-- itens FAILED;
-- item RECEIVED;
-- publicações dry-run;
-- publicações históricas que ainda precisam de reconciliação;
-- arquivos antigos;
-- o caso real 557 já concluído.
-
-Isso **não é considerado o estado final**.
-
-O reset só será feito quando os testes diagnósticos restantes estiverem encerrados.
-
-## 19. Critério final de encerramento
-
-A reconstrução será considerada operacionalmente fechada somente quando o seguinte fluxo tiver sido executado e observado em ambiente limpo:
-
+    START_ALL.bat
+        ↓
+    Coordinator
+        ↓
     Telegram fonte
-           ↓
-    ArmoredSync
-           ↓
+        ↓
+    CATCH-UP
+        ↓
+    LIVE
+        ↓
+    novo conteúdo
+        ↓
     SQLite
-           ↓
-    Coordinator contínuo
-           ↓
+        ↓
     Vision
-           ↓
-    ArmoredStudio / RVC
-           ↓
-    ArmoredHub
-           ↓
-    Telegram destino / tópico 228
-           ↓
+        ↓
+    Studio
+        ↓
+    RVC quando aplicável
+        ↓
+    Hub
+        ↓
+    Telegram tópico 228
+        ↓
     confirmação independente
-           ↓
+        ↓
     PUBLISHED
-           ↓
+        ↓
     cleanup
-           ↓
+        ↓
     próximo item
-           ↓
-    LIVE contínuo
-           ↓
+        ↓
     restart
-           ↓
+        ↓
     checkpoint/recovery
-           ↓
+        ↓
     continuação sem duplicação
 
-O teste deve demonstrar simultaneamente:
+Devem ser demonstrados simultaneamente:
 - exatamente um item ativo;
-- nenhuma fila física;
+- workspace único;
 - nenhum storage legado;
-- nenhum caminho dependente da máquina;
-- nenhum processamento paralelo;
-- nenhum resultado derivado preservado indevidamente;
+- nenhuma fila física;
+- nenhum caminho fixo de máquina;
 - original sempre preservado;
-- nenhuma republicação após confirmação;
-- UNKNOWN bloqueia republicação;
-- restart não perde identidade;
-- CATCH-UP e LIVE compartilham a mesma identidade;
-- Bot/START_ALL inicia a composição real;
-- o processo permanece operacional após reinício.
+- resultado removido após confirmação;
+- publicação idempotente;
+- UNKNOWN nunca republica;
+- restart preserva identidade;
+- CATCH-UP e LIVE usam a mesma identidade;
+- START_ALL inicia a composição;
+- processo continua operacional após restart.
 
-## 20. Registro para continuidade em outro chat
+---
 
-Se este chat atingir o limite, o próximo chat deve continuar **a partir desta seção e do HEAD indicado**, sem reconstruir o histórico do zero.
+## 29. Registro para o próximo chat
 
-### Referência fixa
+Não reconstruir a arquitetura do zero.
 
-    REPOSITÓRIO DE TRABALHO:
-    armoredcreator/armoredcreator-test
+Continuar de:
 
-    BRANCH:
-    refactor/closure-batch
+    repo = armoredcreator/armoredcreator-test
+    branch = refactor/closure-batch
+    HEAD = 1e5285b61da64760ca39ed4ec9474277dd47113e
+    pytest = 58 passed, 1 skipped
 
-    HEAD REGISTRADO:
-    34fe92e121d2e18bcf594833b871343caf469737
+Oficial:
 
-    REPOSITÓRIO OFICIAL:
     armoredcreator/armoredcreator
-
-    REGRA:
-    NÃO ALTERAR O REPOSITÓRIO OFICIAL
-
-    BASELINE OFICIAL:
     audit/baseline-2026-09-19
-    commit dbea0b609040d1635ef7002f7144fecd531ec0b4
+    dbea0b609040d1635ef7002f7144fecd531ec0b4
 
-### Último teste real decisivo
+Última prova real:
 
-    ITEM:
-    557
-
-    ANTES:
-    FAILED
-
-    RESULTADO DURÁVEL:
-    557_9zxtYncz8J.mp4
-
-    RECOVERY:
-    executado
-
-    VISION:
-    não executado novamente
-
-    STUDIO:
-    não executado novamente
-
-    PUBLICAÇÃO:
-    Telegram real
-
-    MESSAGE_ID:
-    772
-
-    DESTINO:
-    -1004341972306
-
-    TÓPICO:
-    228
-
-    VERIFICAÇÃO:
+    item 557
+    FAILED → Recovery → Telegram real
+    message_id 772
+    topic 228
     CONFIRMED
-
-    ESTADO FINAL:
     PUBLISHED
+    cleanup=True
+    original preservado
+    result removido
 
-    CLEANUP:
-    True
-
-    ORIGINAL:
-    preservado
-
-    RESULTADO:
-    removido após confirmação
-
-### Última suíte automatizada
-
-    56 passed, 1 skipped
-
-### Próxima tarefa
-
-**Não começar novamente pela arquitetura.**
-
-Continuar nesta ordem:
+Próximo trabalho:
 
     1. Coordinator contínuo real
-    2. restart real durante LIVE
-    3. integração Bot / START_ALL
-    4. E2E completo Telegram fonte → destino
-    5. somente então reset final DB/storage
-    6. teste final totalmente limpo
+    2. restart real em LIVE
+    3. START_ALL real
+    4. E2E completo fonte → destino
+    5. segundo item sequencial
+    6. reset final
+    7. CATCH-UP limpo
+    8. LIVE limpo
+    9. certificação final
 
-### Regra do laboratório
+---
 
-Enquanto os testes diagnósticos ainda estiverem sendo executados:
+## 30. Resumo técnico final desta fase
 
-    NÃO apagar DB atual
-    NÃO apagar storage/videos
-    NÃO apagar 530/532/544
-    NÃO apagar histórico de state_events
-    NÃO tratar dry-* como publicação real
-    NÃO publicar novamente itens sem reconciliação
-    NÃO alterar audit/baseline-2026-09-19
+A reconstrução atual:
 
-O laboratório atual existe para diagnóstico temporário. Quando o fechamento estiver concluído, todos os dados de teste/backup serão descartados e o projeto será validado novamente a partir de uma base limpa.
+- preserva o comportamento necessário;
+- centraliza a verdade no SQLite;
+- usa filesystem apenas como projeção/runtime;
+- mantém Telegram como realidade externa;
+- possui uma única raiz de composição;
+- processa exatamente um item por vez;
+- usa um workspace por item;
+- mantém o original;
+- remove derivados após confirmação;
+- possui publicação idempotente;
+- persiste o Telegram message ID antes da confirmação;
+- verifica publicação independentemente;
+- nunca republica quando o estado é UNKNOWN;
+- possui Recovery determinístico;
+- possui CATCH-UP e LIVE no mesmo pipeline;
+- possui checkpoints;
+- possui restart lab;
+- possui runtime lock;
+- removeu a arquitetura Studio v1/v2;
+- removeu launchers duplicados;
+- eliminou dependências de caminhos da máquina;
+- possui suíte verde.
 
-## 21. Próxima otimização
+Estado automatizado atual:
 
-Agora a prioridade continua sendo **correção, recuperação, operação contínua e fechamento E2E**, não performance.
+    58 passed
+    1 skipped
+    0 failed
 
-Depois da certificação CATCH-UP → LIVE + E2E, pode ser avaliada a fusão de crop_final/cortes temporais no filter graph do finalizer para evitar uma segunda passada FFmpeg quando possível.
-
-## Regra de segurança
-
-Nunca alterar:
-
-    audit/baseline-2026-09-19
-
-Todo trabalho desta fase permanece em:
-
-    refactor/closure-batch
+O que falta é **certificação operacional real da composição contínua**, não uma nova reconstrução da arquitetura.
