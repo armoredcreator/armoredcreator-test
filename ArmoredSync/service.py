@@ -107,6 +107,7 @@ class TelegramSource:
         self._historical_limit = self._read_historical_limit()
         self._historical_candidates_emitted = 0
         self._historical_limit_reached = False
+        self._historical_materialization_failed = False
 
     @property
     def mode(self) -> str:
@@ -134,6 +135,13 @@ class TelegramSource:
     @property
     def historical_collection_limited(self) -> bool:
         return self._historical_limit is not None
+
+    @property
+    def historical_materialization_failed(self) -> bool:
+        return self._historical_materialization_failed
+
+    def mark_materialization_failed(self) -> None:
+        self._historical_materialization_failed = True
 
     def _catchup_limit_before_candidate(self) -> bool:
         if self._historical_limit is None:
@@ -338,6 +346,11 @@ class TelegramSource:
                 original_url=original_url,
                 materialize=lambda target, m=message: self._download_to(m, target),
             )
+        if self._historical_materialization_failed:
+            # Do not advance the scan checkpoint to the end of history and do
+            # not switch to LIVE. The failed candidate remains recoverable and
+            # will be rediscovered after restart.
+            return None
         if self.db is not None and self._historical_checkpoints:
             self.commit_live_checkpoints(self._historical_checkpoints)
         self.mark_historical_complete()
