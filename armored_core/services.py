@@ -66,12 +66,24 @@ class SyncService:
         if message.source_path is None and message.materialize is None:
             raise ValueError("ingest-message-requires-source-path-or-materializer")
         existing = self.db.conn.execute(
-            "SELECT content_id FROM items WHERE telegram_message_id=?",
+            "SELECT content_id, original_path, original_url FROM items WHERE telegram_message_id=?",
             (message.telegram_message_id,),
         ).fetchone()
         if existing:
             item_id = str(existing["content_id"])
-            original = self.db.get(item_id).original_path
+            stored_path = str(existing["original_path"] or "").strip()
+            if stored_path:
+                original = Path(stored_path)
+                if not original.name:
+                    stored_path = ""
+            if not stored_path:
+                # Repair legacy rows deterministically from the stable Telegram ID + URL.
+                original = self.storage.original(
+                    item_id,
+                    ".mp4",
+                    original_url=existing["original_url"] or message.original_url,
+                )
+                self.db.repair_original_path(item_id, original)
             partial = original.with_suffix(original.suffix + ".part")
             return item_id, original, partial
         suffix = (
