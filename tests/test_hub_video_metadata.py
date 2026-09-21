@@ -123,10 +123,62 @@ def test_publish_telegram_reconciles_timeout_without_republishing(monkeypatch, t
 
     result = hub._publish_telegram(item, output)
 
-    assert result.success is True
+    assert result.confirmed is True
     assert result.message_id == "1234"
     assert calls["started"] == 1
     assert calls["checked"] == 1
+
+
+def test_publish_telegram_raises_publication_unknown_on_unresolved_timeout(monkeypatch, tmp_path):
+    class TimeoutBot:
+        def __init__(self, token, request):
+            pass
+
+        async def send_video(self, **kwargs):
+            from telegram.error import TimedOut
+            raise TimedOut("simulated timeout")
+
+        async def shutdown(self):
+            pass
+
+    class FakeRequest:
+        def __init__(self, **kwargs):
+            pass
+
+    fake_telegram = types.ModuleType("telegram")
+    fake_telegram.Bot = TimeoutBot
+
+    fake_error = types.ModuleType("telegram.error")
+    fake_error.NetworkError = type("NetworkError", (Exception,), {})
+    fake_error.TimedOut = type("TimedOut", (Exception,), {})
+
+    fake_request = types.ModuleType("telegram.request")
+    fake_request.HTTPXRequest = FakeRequest
+
+    monkeypatch.setitem(sys.modules, "telegram", fake_telegram)
+    monkeypatch.setitem(sys.modules, "telegram.error", fake_error)
+    monkeypatch.setitem(sys.modules, "telegram.request", fake_request)
+
+    output = tmp_path / "550_test.mp4"
+    output.write_bytes(b"mp4")
+    item = _item(output)
+
+    hub = ArmoredHub(tmp_path, db=types.SimpleNamespace(
+        publication_started=lambda *args, **kwargs: None,
+        publication=lambda _content_id: {"published_message_id": None, "confirmed": 0},
+    ))
+    hub._resolve_destination_chat_id = lambda topic_id: "-100123"
+    hub._video_metadata = lambda _output: (1080, 1920, 8)
+    hub.check_publication = lambda _item: PublicationCheck.UNKNOWN
+
+    from armored_core.services import PublicationUnknownError
+
+    try:
+        hub._publish_telegram(item, output)
+    except PublicationUnknownError as exc:
+        assert str(exc) == "Telegram publication outcome is UNKNOWN"
+    else:
+        raise AssertionError("expected PublicationUnknownError")
 
 
 def test_publish_telegram_passes_real_video_metadata_to_send_video(monkeypatch, tmp_path):
