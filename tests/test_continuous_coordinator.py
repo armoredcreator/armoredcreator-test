@@ -177,7 +177,7 @@ class ContinuousCoordinatorTests(unittest.TestCase):
                 ])
                 self.assertEqual(publisher.published, ["live-1"])
                 self.assertEqual(db.get("live-1").state, State.PUBLISHED)
-                self.assertIsNone(db.get("live-2"))
+                self.assertIsNone(db.conn.execute("SELECT 1 FROM items WHERE content_id=?", ("live-2",)).fetchone())
                 self.assertEqual(source.checkpoints_committed, {228: 100})
             finally:
                 coordinator.close()
