@@ -180,5 +180,70 @@ class IncrementalCoordinatorTests(unittest.TestCase):
             finally:
                 coordinator.close()
 
+
+
+    def test_catch_up_does_not_complete_after_pipeline_failure(self):
+        class FailingSource:
+            def __init__(self, db):
+                self.db = db
+                self.done = False
+                self.historical_scan_exhausted = False
+                self.completed = False
+
+            async def fetch_next_async(self):
+                if self.done:
+                    self.historical_scan_exhausted = True
+                    return None
+                self.done = True
+
+                async def materialize(target):
+                    target.write_bytes(b"FAIL")
+
+                return SimpleNamespace(
+                    telegram_message_id="902",
+                    source_id="telegram",
+                    topic_id=101,
+                    topic_name="Failure",
+                    original_url="https://shopee.com.br/example/failure",
+                    materialize=materialize,
+                )
+
+            def mark_ingested(self, message_id):
+                pass
+
+            async def disconnect(self):
+                pass
+
+            def commit_live_checkpoints(self, checkpoints):
+                for topic_id, message_id in checkpoints.items():
+                    self.db.set_sync_topic_checkpoint(topic_id, "Failure", message_id)
+
+            def complete_historical_sync(self):
+                self.completed = True
+                self.db.complete_historical_sync()
+
+        class FailingCoordinator(Coordinator):
+            def run(self, item_id: str) -> None:
+                raise RuntimeError("synthetic pipeline failure")
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            source = FailingSource(db)
+            coordinator = FailingCoordinator(
+                db, storage, Vision(), Studio(storage), Publisher(), source
+            )
+
+            try:
+                processed = coordinator.run_catch_up()
+                self.assertEqual(processed, ["902"])
+                self.assertFalse(source.completed)
+                self.assertFalse(db.historical_complete())
+                self.assertEqual(db.get("902").state, State.RECEIVED)
+            finally:
+                coordinator.close()
+
+
 if __name__ == "__main__":
     unittest.main()
