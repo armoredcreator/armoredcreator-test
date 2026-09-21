@@ -351,6 +351,13 @@ class TelegramSource:
             message_id, topic_id, topic_name, message, original_url = candidate
             if message_id in self._seen:
                 continue
+            if self._catchup_limit_before_candidate():
+                # The configured lab/safety limit intentionally stops discovery
+                # before the next candidate. This is a partial catch-up, not
+                # proof that historical scanning reached the end.
+                self._historical_scan_exhausted = False
+                return None
+            self._historical_candidates_emitted += 1
             return SyncMessage(
                 telegram_message_id=str(message_id),
                 source_id=source_id,
@@ -394,6 +401,10 @@ class TelegramSource:
                             pending_id not in self._seen
                             and original_url is not None
                         ):
+                            if self._catchup_limit_before_candidate():
+                                self._historical_scan_exhausted = False
+                                return
+                            self._historical_candidates_emitted += 1
                             yield (
                                 pending_id,
                                 int(topic_id),
@@ -409,6 +420,10 @@ class TelegramSource:
                 original_url = self._shopee_url(message)
                 if original_url is not None:
                     if message_id not in self._seen:
+                        if self._catchup_limit_before_candidate():
+                            self._historical_scan_exhausted = False
+                            return
+                        self._historical_candidates_emitted += 1
                         yield (
                             message_id,
                             int(topic_id),
