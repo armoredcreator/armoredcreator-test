@@ -91,9 +91,10 @@ class Coordinator:
         if disconnect is not None:
             await disconnect()
             return
-        disconnect = getattr(source, "disconnect", None)
-        if disconnect is not None:
-            await disconnect()
+        # Non-Telegram lab sources may expose a convenience disconnect()
+        # method without owning a real Sync session. Do not call it blindly:
+        # the Coordinator must release only the connection it actually manages.
+        # Real Telegram ownership is represented by source.reader above.
 
     async def ingest_once_async(self):
         if self.source is None:
