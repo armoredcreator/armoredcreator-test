@@ -26,8 +26,11 @@ def main() -> int:
         logging.info("Modo SQLite: %s", coordinator.db.sync_mode())
         logging.info("Sync real Telegram: %s", os.getenv("ARMORED_REAL_TELEGRAM"))
         logging.info("Fonte Sync: %s", os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075")
+        max_cycles_raw = os.getenv("ARMORED_MAX_CYCLES")
+        max_cycles = int(max_cycles_raw) if max_cycles_raw else None
         coordinator.run_forever(
             poll_seconds=float(os.getenv("ARMORED_POLL_SECONDS", "2")),
+            max_cycles=max_cycles,
         )
         return 0
     except KeyboardInterrupt:
