@@ -112,29 +112,28 @@ class _LiveSourceSerialized(_LiveSource):
         self.events = events
         self.index = 0
 
-    async def fetch_live_batch_async(self, limit=None):
+    async def fetch_live_candidate_async(self):
         self.connected = True
+        self.events.append("discover")
         from types import SimpleNamespace
         remaining = ["live-1", "live-2"][self.index:]
         if not remaining:
-            return [], {}
-        if limit is not None:
-            remaining = remaining[:limit]
-        messages = []
-        for message_id in remaining:
-            async def materialize(target, message_id=message_id):
-                self.events.append("materialize:" + message_id)
-                target.write_bytes(message_id.encode())
-            messages.append(SimpleNamespace(
-                telegram_message_id=message_id,
-                source_id="telegram",
-                topic_id=228,
-                topic_name="topic",
-                original_url="https://shopee.example/source",
-                materialize=materialize,
-            ))
-            self.index += 1
-        return messages, {228: 99 + self.index}
+            return None, {}
+        message_id = remaining[0]
+
+        async def materialize(target, message_id=message_id):
+            self.events.append("materialize:" + message_id)
+            target.write_bytes(message_id.encode())
+
+        self.index += 1
+        return SimpleNamespace(
+            telegram_message_id=message_id,
+            source_id="telegram",
+            topic_id=228,
+            topic_name="topic",
+            original_url="https://shopee.example/source",
+            materialize=materialize,
+        ), {228: 99 + self.index}
 
 
 
@@ -172,6 +171,7 @@ class ContinuousCoordinatorTests(unittest.TestCase):
                 # to one candidate, then that candidate is materialized and
                 # completes the pipeline before the next discovery.
                 self.assertEqual(events, [
+                    "discover",
                     "materialize:live-1",
                     "pipeline:live-1",
                 ])
@@ -182,6 +182,39 @@ class ContinuousCoordinatorTests(unittest.TestCase):
             finally:
                 coordinator.close()
 
+
+
+
+    def test_live_pipeline_failure_does_not_advance_checkpoint(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            db.complete_historical_sync()
+            db.set_sync_topic_checkpoint(228, "topic", 99)
+            events = []
+            source = _LiveSourceSerialized(db, events)
+
+            class FailingCoordinator(Coordinator):
+                def run(self, item_id: str) -> None:
+                    events.append("pipeline:" + str(item_id))
+                    raise RuntimeError("synthetic pipeline failure")
+
+            coordinator = FailingCoordinator(
+                db, storage, _Vision(), _Studio(storage), _Publisher(), source
+            )
+            try:
+                coordinator.run_live_once()
+                self.assertEqual(events, [
+                    "discover",
+                    "materialize:live-1",
+                    "pipeline:live-1",
+                ])
+                self.assertIsNone(source.checkpoints_committed)
+                self.assertEqual(db.sync_topic_checkpoint(228), 99)
+                self.assertEqual(db.get("live-1").state, State.RECEIVED)
+            finally:
+                coordinator.close()
 
     def test_run_forever_processes_live_then_restarts_without_duplicate(self):
         with tempfile.TemporaryDirectory() as td:
