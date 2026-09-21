@@ -51,7 +51,7 @@ class ArmoredHub:
 
     def _telegram_session_path(self) -> Path:
         """Reuse the existing ArmoredSync user session for destination discovery."""
-        return self.root / "storage" / "credentials" / "telegram" / "session" / "armoredsync"
+        return self.root / "credentials" / "telegram" / "session" / "armoredsync"
 
     def _resolve_destination_chat_id(self, topic_id: str | int | None = None) -> str | None:
         """Resolve the destination forum's parent chat when its ID is not configured.
