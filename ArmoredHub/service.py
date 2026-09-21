@@ -84,10 +84,21 @@ class ArmoredHub:
 
             session = self._telegram_session_path()
             session.parent.mkdir(parents=True, exist_ok=True)
-            client = TelegramClient(str(session), int(api_id), api_hash)
+            client = TelegramClient(
+                str(session),
+                int(api_id),
+                api_hash,
+                request_retries=0,
+                connection_retries=0,
+            )
             matches: list[str] = []
             try:
-                await client.start()
+                await client.connect()
+                if not await client.is_user_authorized():
+                    raise RuntimeError(
+                        "Sessão Telegram do ArmoredSync não está autenticada; "
+                        "o Hub não fará login interativo."
+                    )
                 async for dialog in client.iter_dialogs():
                     entity = getattr(dialog, "entity", None)
                     if entity is None:
@@ -211,7 +222,9 @@ class ArmoredHub:
             session.parent.mkdir(parents=True, exist_ok=True)
             client = TelegramClient(str(session), int(api_id), api_hash, request_retries=0, connection_retries=0)
             try:
-                await client.start()
+                await client.connect()
+                if not await client.is_user_authorized():
+                    return None
                 entity = await client.get_entity(int(chat_id))
                 result = await client(functions.messages.SearchRequest(
                     peer=entity,
@@ -265,7 +278,9 @@ class ArmoredHub:
             session.parent.mkdir(parents=True, exist_ok=True)
             client = TelegramClient(str(session), int(api_id), api_hash, request_retries=0, connection_retries=0)
             try:
-                await client.start()
+                await client.connect()
+                if not await client.is_user_authorized():
+                    return None
                 message = await client.get_messages(int(chat_id), ids=int(message_id))
                 if message is None:
                     return False
