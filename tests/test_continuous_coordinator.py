@@ -103,8 +103,74 @@ class _LiveSourceWithTransientMaterializationFailure(_LiveSource):
         )], {228: 101 if self.attempts == 1 else 102}
 
 
-class ContinuousCoordinatorTests(unittest.TestCase):
-    def test_run_forever_processes_live_then_restarts_without_duplicate(self):
+
+
+
+class _LiveSourceSerialized(_LiveSource):
+    def __init__(self, db, events):
+        super().__init__(db)
+        self.events = events
+        self.index = 0
+
+    async def fetch_live_batch_async(self):
+        self.connected = True
+        from types import SimpleNamespace
+        messages = []
+        for message_id in ("live-1", "live-2"):
+            async def materialize(target, message_id=message_id):
+                self.events.append("materialize:" + message_id)
+                target.write_bytes(message_id.encode())
+            messages.append(SimpleNamespace(
+                telegram_message_id=message_id,
+                source_id="telegram",
+                topic_id=228,
+                topic_name="topic",
+                original_url="https://shopee.example/source",
+                materialize=materialize,
+            ))
+        return messages, {228: 102}
+\n\n
+
+
+class _RecordingCoordinator(Coordinator):
+    def __init__(self, *args, events):
+        super().__init__(*args)
+        self._events = events
+
+    def run(self, item_id: str) -> None:
+        self._events.append("pipeline:" + str(item_id))
+        super().run(item_id)
+\n\nclass ContinuousCoordinatorTests(unittest.TestCase):
+    def test_live_materializes_and_processes_strictly_one_at_a_time(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            db.complete_historical_sync()
+            db.set_sync_topic_checkpoint(228, "topic", 99)
+            events = []
+            source = _LiveSourceSerialized(db, events)
+            publisher = _Publisher()
+
+            coordinator = _RecordingCoordinator(
+                db, storage, _Vision(), _Studio(storage), publisher, source, events
+            )
+
+            try:
+                coordinator.run_forever(max_cycles=1, poll_seconds=0)
+                self.assertEqual(events, [
+                    "materialize:live-1",
+                    "pipeline:live-1",
+                    "materialize:live-2",
+                    "pipeline:live-2",
+                ])
+                self.assertEqual(publisher.published, ["live-1", "live-2"])
+                self.assertEqual(db.get("live-1").state, State.PUBLISHED)
+                self.assertEqual(db.get("live-2").state, State.PUBLISHED)
+                self.assertEqual(source.checkpoints_committed, {228: 102})
+            finally:
+                coordinator.close()
+\n\n    def test_run_forever_processes_live_then_restarts_without_duplicate(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
