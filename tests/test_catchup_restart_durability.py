@@ -121,6 +121,8 @@ class CatchUpRestartTests(unittest.TestCase):
                 self.assertEqual(source.checkpoints, [{10: 301}, {10: 302}])
                 self.assertEqual(events, [("pipeline", "301"), ("pipeline", "302")])
                 self.assertEqual(source.connects, 0)
+                # This fake never exposes a reader connection, so Coordinator
+                # must not call a nonexistent/unused disconnect lifecycle.
                 self.assertEqual(source.disconnects, 0)
             finally:
                 coordinator.close()
@@ -177,7 +179,14 @@ class CatchUpRestartTests(unittest.TestCase):
                     attempts["401"] += 1
                     async def fail(target):
                         raise TimeoutError("simulated-download-timeout")
-                    message = SimpleNamespace(**message.__dict__, materialize=fail)
+                    message = SimpleNamespace(
+                        telegram_message_id=message.telegram_message_id,
+                        source_id=message.source_id,
+                        topic_id=message.topic_id,
+                        topic_name=message.topic_name,
+                        original_url=message.original_url,
+                        materialize=fail,
+                    )
                 return message
 
             source.fetch_next_async = fetch
