@@ -372,7 +372,8 @@ class Coordinator:
         production default remains ``None`` (run until interrupted).
         """
         import asyncio
-        self.db.acquire_runtime_lock("coordinator")        self._runtime_lock_held = True
+        self.db.acquire_runtime_lock("coordinator")
+        self._runtime_lock_held = True
         try:
             # Do not pre-connect and disconnect Telethon here. Each
             # asyncio.run() owns a different event loop, while Telethon binds a
