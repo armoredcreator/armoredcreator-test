@@ -161,6 +161,13 @@ class TelegramSource:
         return topics
 
     async def _topic_messages(self, source: str, topic_id: int):
+        """Yield historical messages page-by-page.
+
+        The backup processed Telegram pages incrementally. Do the same here:
+        never build the complete topic history in memory before candidate
+        detection. The caller keeps the Telegram connection open for the whole
+        catch-up batch, so candidates can still be materialized safely.
+        """
         from telethon import functions
         offset_id = 0
         while True:
@@ -192,22 +199,66 @@ class TelegramSource:
             offset_id = oldest
 
     async def _download_to(self, message: Any, target: Path) -> None:
+        """Materialize one Telegram video with bounded, observable download.
+
+        The legacy Sync used a 180s download timeout. Keep that protection in
+        the unified pipeline so a stalled Telegram transfer cannot make the
+        Coordinator appear frozen forever.
+        """
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             target.unlink()
-        with target.open("wb") as output:
-            async for chunk in self.reader.client.iter_download(
-                message,
-                request_size=1024 * 1024,
-            ):
-                if chunk:
-                    output.write(chunk)
-        actual_size = target.stat().st_size if target.exists() else 0
+
         telegram_size = getattr(getattr(message, "document", None), "size", None)
+        timeout = max(30, int(os.getenv("ARMORED_SYNC_DOWNLOAD_TIMEOUT", "180")))
+        started = asyncio.get_running_loop().time()
+        downloaded = 0
+        last_report = 0
+
+        async def consume() -> None:
+            nonlocal downloaded, last_report
+            with target.open("wb") as output:
+                async for chunk in self.reader.client.iter_download(
+                    message,
+                    request_size=1024 * 1024,
+                ):
+                    if not chunk:
+                        continue
+                    output.write(chunk)
+                    downloaded += len(chunk)
+                    now = asyncio.get_running_loop().time()
+                    if now - last_report >= 5:
+                        last_report = now
+                        if telegram_size:
+                            pct = downloaded * 100.0 / int(telegram_size)
+                            print(
+                                f"[SYNC][DOWNLOAD] {getattr(message, 'id', '?')} "
+                                f"{downloaded / 1048576:.1f}/{int(telegram_size) / 1048576:.1f} MiB "
+                                f"({pct:.0f}%)"
+                            )
+                        else:
+                            print(
+                                f"[SYNC][DOWNLOAD] {getattr(message, 'id', '?')} "
+                                f"{downloaded / 1048576:.1f} MiB"
+                            )
+
+        try:
+            await asyncio.wait_for(consume(), timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(
+                f"download Telegram excedeu {timeout}s para mensagem {getattr(message, 'id', '?')}"
+            ) from exc
+
+        actual_size = target.stat().st_size if target.exists() else 0
+        elapsed = max(asyncio.get_running_loop().time() - started, 0.001)
         if actual_size <= 0:
             raise RuntimeError("download retornou arquivo vazio")
         if telegram_size is not None and actual_size != int(telegram_size):
             raise RuntimeError(f"download incompleto: {actual_size} bytes de {int(telegram_size)}")
+        print(
+            f"[SYNC][DOWNLOAD] {getattr(message, 'id', '?')} concluído "
+            f"{actual_size / 1048576:.1f} MiB em {elapsed:.1f}s"
+        )
 
     async def fetch_next_async(self) -> SyncMessage | None:
         if self.is_historical_complete():
@@ -289,34 +340,55 @@ class TelegramSource:
             checkpoints: dict[int, int] = {}
 
             for topic_id, topic_name in topics:
-                messages = [message async for message in self._topic_messages(source_ref, topic_id)]
-                ids = [int(getattr(message, "id", 0) or 0) for message in messages]
-                if ids:
-                    checkpoints[topic_id] = max(ids)
-
-                for index, message in enumerate(messages):
+                # Process pages incrementally instead of first materializing the
+                # entire topic history into a Python list. Keep only the prior
+                # message needed for the exact "video -> immediately next
+                # message with Shopee" association rule.
+                previous_message = None
+                topic_max_id = 0
+                async for message in self._topic_messages(source_ref, topic_id):
                     message_id = int(getattr(message, "id", 0) or 0)
+                    if message_id > topic_max_id:
+                        topic_max_id = message_id
                     if message_id <= 0 or message_id in self._seen:
-                        continue
-                    if not getattr(message, "video", None):
-                        continue
-
-                    original_url = self._shopee_url(message)
-                    if original_url is None and index + 1 < len(messages):
-                        next_message = messages[index + 1]
-                        if not getattr(next_message, "video", None):
-                            original_url = self._shopee_url(next_message)
-                    if original_url is None:
+                        previous_message = message
                         continue
 
-                    candidates.append(SyncMessage(
-                        telegram_message_id=str(message_id),
-                        source_id=source_id,
-                        topic_id=topic_id,
-                        topic_name=topic_name,
-                        original_url=original_url,
-                        materialize=lambda target, m=message: self._download_to(m, target),
-                    ))
+                    if previous_message is not None:
+                        previous_id = int(getattr(previous_message, "id", 0) or 0)
+                        if getattr(previous_message, "video", None):
+                            original_url = self._shopee_url(previous_message)
+                            if original_url is None and not getattr(message, "video", None):
+                                original_url = self._shopee_url(message)
+                            if original_url is not None and previous_id not in self._seen:
+                                candidates.append(SyncMessage(
+                                    telegram_message_id=str(previous_id),
+                                    source_id=source_id,
+                                    topic_id=topic_id,
+                                    topic_name=topic_name,
+                                    original_url=original_url,
+                                    materialize=lambda target, m=previous_message: self._download_to(m, target),
+                                ))
+                                self._seen.add(previous_id)
+
+                    # A video with its own Shopee link is immediately eligible.
+                    if getattr(message, "video", None):
+                        original_url = self._shopee_url(message)
+                        if original_url is not None and message_id not in self._seen:
+                            candidates.append(SyncMessage(
+                                telegram_message_id=str(message_id),
+                                source_id=source_id,
+                                topic_id=topic_id,
+                                topic_name=topic_name,
+                                original_url=original_url,
+                                materialize=lambda target, m=message: self._download_to(m, target),
+                            ))
+                            self._seen.add(message_id)
+
+                    previous_message = message
+
+                if topic_max_id:
+                    checkpoints[topic_id] = topic_max_id
 
             return candidates, checkpoints
         except Exception:
