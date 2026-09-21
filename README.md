@@ -6,7 +6,7 @@ Laboratório isolado da reconstrução do **ArmoredCreator**. Este documento é 
 
 **Branch de trabalho:** `refactor/closure-batch`  
 **Base:** `refactor/single-storage-pipeline`  
-**HEAD documentado:** `0bca2c38a2d6f10b8225fa623ef9487b8e45f9bd`
+**HEAD atual da branch:** `cd4c9f90f4c61d74dfe4c13bb0027f77074ee74a`
 
 ---
 
@@ -1209,7 +1209,7 @@ Essa é a base da recuperação e da operação contínua.
 # 30. Estado de fechamento
 
 **Arquitetura reconstruída:** SIM  
-**Testes automatizados:** 58 PASS / 1 SKIP  
+**Testes automatizados:** executar no HEAD atual antes de declarar fechamento  
 **CI:** aprovado  
 **Recovery determinístico:** implementado e testado  
 **Publicação real:** comprovada  
