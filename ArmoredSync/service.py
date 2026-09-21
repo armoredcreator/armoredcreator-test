@@ -237,55 +237,67 @@ class TelegramSource:
             offset_id = oldest
 
     async def _download_to(self, message: Any, target: Path) -> None:
-        """Materialize one Telegram video with bounded, observable download.
+        """Materialize one Telegram video without a false total-duration timeout.
 
-        The legacy Sync used a 180s download timeout. Keep that protection in
-        the unified pipeline so a stalled Telegram transfer cannot make the
-        Coordinator appear frozen forever.
+        Telegram downloads can legitimately take more than three minutes on a
+        slow connection. A wall-clock timeout therefore converts a healthy,
+        progressing transfer into a lost candidate. The safety bound here is
+        an inactivity timeout per chunk: a transfer may take as long as
+        necessary as long as Telegram keeps delivering data.
         """
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             target.unlink()
 
         telegram_size = getattr(getattr(message, "document", None), "size", None)
-        timeout = max(30, int(os.getenv("ARMORED_SYNC_DOWNLOAD_TIMEOUT", "180")))
+        idle_timeout = max(
+            15,
+            int(os.getenv("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT", "60")),
+        )
         started = asyncio.get_running_loop().time()
         downloaded = 0
         last_report = 0
 
-        async def consume() -> None:
-            nonlocal downloaded, last_report
-            with target.open("wb") as output:
-                async for chunk in self.reader.client.iter_download(
-                    message,
-                    request_size=1024 * 1024,
-                ):
-                    if not chunk:
-                        continue
-                    output.write(chunk)
-                    downloaded += len(chunk)
-                    now = asyncio.get_running_loop().time()
-                    if now - last_report >= 5:
-                        last_report = now
-                        if telegram_size:
-                            pct = downloaded * 100.0 / int(telegram_size)
-                            print(
-                                f"[SYNC][DOWNLOAD] {getattr(message, 'id', '?')} "
-                                f"{downloaded / 1048576:.1f}/{int(telegram_size) / 1048576:.1f} MiB "
-                                f"({pct:.0f}%)"
-                            )
-                        else:
-                            print(
-                                f"[SYNC][DOWNLOAD] {getattr(message, 'id', '?')} "
-                                f"{downloaded / 1048576:.1f} MiB"
-                            )
+        iterator = self.reader.client.iter_download(
+            message,
+            request_size=1024 * 1024,
+        ).__aiter__()
 
-        try:
-            await asyncio.wait_for(consume(), timeout=timeout)
-        except asyncio.TimeoutError as exc:
-            raise TimeoutError(
-                f"download Telegram excedeu {timeout}s para mensagem {getattr(message, 'id', '?')}"
-            ) from exc
+        with target.open("wb") as output:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        iterator.__anext__(),
+                        timeout=idle_timeout,
+                    )
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError as exc:
+                    raise TimeoutError(
+                        f"download Telegram ficou {idle_timeout}s sem progresso "
+                        f"para mensagem {getattr(message, 'id', '?')}"
+                    ) from exc
+
+                if not chunk:
+                    continue
+
+                output.write(chunk)
+                downloaded += len(chunk)
+                now = asyncio.get_running_loop().time()
+                if now - last_report >= 5:
+                    last_report = now
+                    if telegram_size:
+                        pct = downloaded * 100.0 / int(telegram_size)
+                        print(
+                            f"[SYNC][DOWNLOAD] {getattr(message, 'id', '?')} "
+                            f"{downloaded / 1048576:.1f}/{int(telegram_size) / 1048576:.1f} MiB "
+                            f"({pct:.0f}%)"
+                        )
+                    else:
+                        print(
+                            f"[SYNC][DOWNLOAD] {getattr(message, 'id', '?')} "
+                            f"{downloaded / 1048576:.1f} MiB"
+                        )
 
         actual_size = target.stat().st_size if target.exists() else 0
         elapsed = max(asyncio.get_running_loop().time() - started, 0.001)
