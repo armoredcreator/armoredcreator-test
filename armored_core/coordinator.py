@@ -299,7 +299,19 @@ class Coordinator:
         if fetch_batch is None:
             return []
 
-        messages, checkpoints = await fetch_batch()
+        # LIVE is intentionally one-candidate-at-a-time. The real Telegram
+        # source supports a discovery limit so we never materialize a whole
+        # batch before the first item reaches Vision/Studio/Hub. Test doubles
+        # that expose the historical zero-argument contract remain compatible.
+        try:
+            messages, checkpoints = await fetch_batch(limit=1)
+        except TypeError as exc:
+            if "limit" not in str(exc):
+                raise
+            messages, checkpoints = await fetch_batch()
+            messages = messages[:1]
+            checkpoints = dict(checkpoints) if messages else {}
+
         processed: list[str] = []
         materialization_ok = True
 
