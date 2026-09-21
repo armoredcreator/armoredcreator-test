@@ -182,6 +182,25 @@ class Coordinator:
                 break
 
             item_id = str(message.telegram_message_id)
+
+            # A historical candidate can be rediscovered when the persisted
+            # checkpoint is still behind it (for example after an interrupted
+            # certification run). A previously completed item must never be
+            # counted as part of the current bounded certification.
+            try:
+                existing = self.db.get(item_id)
+            except KeyError:
+                existing = None
+            if (
+                existing is not None
+                and existing.state == State.PUBLISHED
+                and existing.cleanup_completed
+            ):
+                marker = getattr(source, "mark_ingested", None)
+                if marker is not None:
+                    marker(item_id)
+                continue
+
             materialized = False
             try:
                 await self._ensure_source_connection()
