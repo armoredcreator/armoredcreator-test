@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,14 +60,24 @@ class ArmoredHub:
                 return PublicationCheck.ABSENT
             return PublicationCheck.UNKNOWN
 
-        matches = self._find_telegram_publications(item)
-        if matches is None:
-            return PublicationCheck.UNKNOWN
-        if len(matches) == 1:
-            self.db.publication_confirmed(item.content_id, matches[0])
-            return PublicationCheck.CONFIRMED
-        if len(matches) == 0:
-            return PublicationCheck.ABSENT
+        attempts = max(1, int(os.getenv("ARMORED_TELEGRAM_VERIFY_ATTEMPTS", "3")))
+        delay = max(0.0, float(os.getenv("ARMORED_TELEGRAM_VERIFY_RETRY_DELAY", "2")))
+        for attempt in range(1, attempts + 1):
+            matches = self._find_telegram_publications(item)
+            if matches is not None:
+                if len(matches) == 1:
+                    self.db.publication_confirmed(item.content_id, matches[0])
+                    return PublicationCheck.CONFIRMED
+                if len(matches) > 1:
+                    print(f"[HUB][VERIFY][UNKNOWN] item={item.content_id} multiple exact matches={len(matches)}")
+                    return PublicationCheck.UNKNOWN
+                if attempt < attempts and delay:
+                    time.sleep(delay)
+                    continue
+                return PublicationCheck.ABSENT
+            print(f"[HUB][VERIFY] item={item.content_id} attempt={attempt}/{attempts} returned UNKNOWN")
+            if attempt < attempts and delay:
+                time.sleep(delay)
         return PublicationCheck.UNKNOWN
 
     def _telegram_session_path(self) -> Path:
@@ -221,9 +232,11 @@ class ArmoredHub:
             return None
         try:
             chat_id = self._resolve_destination_chat_id(topic_id)
-        except Exception:
+        except Exception as exc:
+            print(f"[HUB][VERIFY][UNKNOWN] item={item.content_id} destination-resolution: {type(exc).__name__}: {exc}")
             return None
         if not chat_id:
+            print(f"[HUB][VERIFY][UNKNOWN] item={item.content_id}: destination chat unavailable")
             return None
 
         affiliate = str(item.affiliate_url or "").strip()
@@ -271,8 +284,12 @@ class ArmoredHub:
                     await client.disconnect()
 
         try:
-            return self._run_async(find())
-        except Exception:
+            result = self._run_async(find())
+            count = len(result) if result is not None else "UNKNOWN"
+            print(f"[HUB][VERIFY] item={item.content_id} query={query!r} topic={topic_id} chat={chat_id} matches={count}")
+            return result
+        except Exception as exc:
+            print(f"[HUB][VERIFY][UNKNOWN] item={item.content_id} query={query!r}: {type(exc).__name__}: {exc}")
             return None
 
     def _verify_telegram_message(self, message_id: str, item: Item) -> bool | None:
@@ -310,8 +327,11 @@ class ArmoredHub:
                     await client.disconnect()
 
         try:
-            return self._run_async(verify())
-        except Exception:
+            result = self._run_async(verify())
+            print(f"[HUB][VERIFY] item={item.content_id} message_id={message_id} topic={topic_id} chat={chat_id} result={result}")
+            return result
+        except Exception as exc:
+            print(f"[HUB][VERIFY][UNKNOWN] item={item.content_id} message_id={message_id}: {type(exc).__name__}: {exc}")
             return None
 
     def publish(self, item: Item) -> PublicationResult:
