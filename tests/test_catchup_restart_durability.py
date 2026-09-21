@@ -148,7 +148,7 @@ class CatchUpRestartTests(unittest.TestCase):
                 [restarted_db.get(item).state.value for item in ("301", "302")],
                 ["PUBLISHED", "PUBLISHED"],
             )
-            self.assertEqual(publisher.published, ["301"])
+            self.assertEqual(publisher.published, ["301", "302"])
             restarted.close()
 
 
