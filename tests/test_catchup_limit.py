@@ -61,3 +61,43 @@ def test_historical_catchup_limit_is_optional(monkeypatch, tmp_path):
 
     assert source.historical_collection_limited is False
     assert source.historical_limit_reached is False
+
+
+def test_historical_catchup_limit_applies_to_fetch_next_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARMORED_SYNC_CATCHUP_LIMIT", "2")
+
+    reader = _Reader()
+    source = TelegramSource(tmp_path, reader)
+
+    async def discover(_source):
+        return [(10, "Teste")]
+
+    async def topic_messages(_source, _topic_id):
+        from types import SimpleNamespace
+
+        for message_id in (201, 202, 203):
+            yield SimpleNamespace(
+                id=message_id,
+                video=True,
+                message=f"https://shopee.com.br/produto/{message_id}",
+                entities=[],
+            )
+
+    source._discover_topics = discover
+    source._topic_messages = topic_messages
+
+    async def collect():
+        first = await source.fetch_next_async()
+        second = await source.fetch_next_async()
+        third = await source.fetch_next_async()
+        return first, second, third
+
+    first, second, third = asyncio.run(collect())
+
+    assert [first.telegram_message_id, second.telegram_message_id] == ["201", "202"]
+    assert third is None
+    assert source.historical_limit_reached is True
+    assert source.historical_scan_exhausted is False
+    assert reader.connected is True
+
+    asyncio.run(reader.disconnect())
