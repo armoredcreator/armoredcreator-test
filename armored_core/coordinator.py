@@ -168,8 +168,15 @@ class Coordinator:
                 failed = checkpoint_blocked or bool(
                     getattr(source, "historical_materialization_failed", False)
                 )
-                if not failed:
-                    self.db.complete_historical_sync()
+                scan_complete = bool(
+                    getattr(source, "historical_scan_exhausted", True)
+                )
+                if scan_complete and not failed:
+                    complete = getattr(source, "complete_historical_sync", None)
+                    if complete is not None:
+                        complete()
+                    else:
+                        self.db.complete_historical_sync()
                 break
 
             item_id = str(message.telegram_message_id)
@@ -222,8 +229,11 @@ class Coordinator:
                     if (
                         current.state == State.PUBLISHED
                         and current.cleanup_completed
-                        and not checkpoint_blocked
                     ):
+                        # Advance only this candidate's checkpoint after the
+                        # full item is durably published and cleaned. A prior
+                        # failed candidate must not block later successful
+                        # candidates from recording their own progress.
                         topic_id = getattr(message, "topic_id", None)
                         commit = getattr(source, "commit_live_checkpoints", None)
                         if topic_id is not None and commit is not None:
