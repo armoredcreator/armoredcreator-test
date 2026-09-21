@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -356,6 +357,93 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(len(db.conn.execute("SELECT * FROM items").fetchall()), 1)
             db.close()
+
+
+class DownloadTimeoutTests(unittest.TestCase):
+    def test_telegram_download_allows_slow_but_progressing_transfer(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "slow.mp4"
+
+            class Document:
+                size = 3
+
+            class Message:
+                id = 999
+                document = Document()
+
+            class SlowIterator:
+                def __init__(self):
+                    self.chunks = [b"a", b"b", b"c"]
+                    self.index = 0
+
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    if self.index >= len(self.chunks):
+                        raise StopAsyncIteration
+                    await asyncio.sleep(0.05)
+                    value = self.chunks[self.index]
+                    self.index += 1
+                    return value
+
+            class Client:
+                def iter_download(self, message, request_size):
+                    return SlowIterator()
+
+            class Reader:
+                client = Client()
+
+            source = TelegramSource(Path(td), Reader())
+            old_idle = os.environ.get("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT")
+            os.environ["ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT"] = "1"
+            try:
+                asyncio.run(source._download_to(Message(), target))
+            finally:
+                if old_idle is None:
+                    os.environ.pop("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT", None)
+                else:
+                    os.environ["ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT"] = old_idle
+
+            self.assertEqual(target.read_bytes(), b"abc")
+
+    def test_telegram_download_stall_is_bounded_by_inactivity_timeout(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "stalled.mp4"
+
+            class Document:
+                size = 1
+
+            class Message:
+                id = 1000
+                document = Document()
+
+            class StalledIterator:
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    await asyncio.sleep(0.05)
+                    return b"x"
+
+            class Client:
+                def iter_download(self, message, request_size):
+                    return StalledIterator()
+
+            class Reader:
+                client = Client()
+
+            source = TelegramSource(Path(td), Reader())
+            old_idle = os.environ.get("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT")
+            os.environ["ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT"] = "0"
+            try:
+                with self.assertRaises(TimeoutError):
+                    asyncio.run(source._download_to(Message(), target))
+            finally:
+                if old_idle is None:
+                    os.environ.pop("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT", None)
+                else:
+                    os.environ["ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT"] = old_idle
 
 
 if __name__ == "__main__":
