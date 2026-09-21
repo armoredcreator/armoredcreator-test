@@ -300,15 +300,30 @@ class Coordinator:
         processed: list[str] = []
         try:
             for message in messages:
-                item_id = await self.sync.ingest_message_async(IngestMessage(
-                    telegram_message_id=str(message.telegram_message_id),
-                    source_id=getattr(message, "source_id", "telegram"),
-                    topic_id=getattr(message, "topic_id", None),
-                    topic_name=getattr(message, "topic_name", None),
-                    original_url=getattr(message, "original_url", None),
-                    source_path=getattr(message, "source_path", None),
-                    materialize=getattr(message, "materialize", None),
-                ))
+                try:
+                    item_id = await self.sync.ingest_message_async(IngestMessage(
+                        telegram_message_id=str(message.telegram_message_id),
+                        source_id=getattr(message, "source_id", "telegram"),
+                        topic_id=getattr(message, "topic_id", None),
+                        topic_name=getattr(message, "topic_name", None),
+                        original_url=getattr(message, "original_url", None),
+                        source_path=getattr(message, "source_path", None),
+                        materialize=getattr(message, "materialize", None),
+                    ))
+                except Exception as exc:
+                    # LIVE is continuous: one bad Telegram download must never
+                    # terminate the Coordinator or prevent later candidates from
+                    # being retried. SyncService cleans the partial/original files;
+                    # the SQLite reservation remains RECEIVED and checkpoints are
+                    # intentionally left uncommitted for deterministic retry.
+                    import logging
+                    logging.getLogger(__name__).exception(
+                        "[COORDINATOR][LIVE] Falha ao materializar %s; "
+                        "item permanece recuperável e o LIVE continuará: %s",
+                        getattr(message, "telegram_message_id", "?"),
+                        exc,
+                    )
+                    continue
                 marker = getattr(source, "mark_ingested", None)
                 if marker is not None:
                     marker(str(message.telegram_message_id))
