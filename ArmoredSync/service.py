@@ -351,12 +351,11 @@ class TelegramSource:
             message_id, topic_id, topic_name, message, original_url = candidate
             if message_id in self._seen:
                 continue
-            if self._catchup_limit_before_candidate():
-                # The configured lab/safety limit intentionally stops discovery
-                # before the next candidate. This is a partial catch-up, not
-                # proof that historical scanning reached the end.
-                self._historical_scan_exhausted = False
-                return None
+            # The bounded certification limit belongs to the
+            # Coordinator, not to Sync discovery. Sync must behave exactly
+            # like production: keep discovering the next eligible candidate
+            # until the Coordinator has completed the requested number of
+            # full pipeline items.
             self._historical_candidates_emitted += 1
             return SyncMessage(
                 telegram_message_id=str(message_id),
