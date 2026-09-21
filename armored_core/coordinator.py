@@ -151,13 +151,47 @@ class Coordinator:
         processed: list[str] = []
         source = self.source
 
-        # The real Telegram source exposes a batch collector. It must keep the
-        # Sync Telethon session open while materializing every historical video,
-        # then release that session before Hub opens the same SQLite-backed
-        # Telethon session. This avoids both the Windows session-lock race and
-        # the invalid state of resuming an async topic iterator after disconnect.
+        # Stream real Telegram candidates while the Sync connection remains open.
+        # Originals are materialized immediately, avoiding a full-history
+        # in-memory batch and restoring the legacy Sync's early-download behavior.
+        iter_historical = getattr(source, "iter_historical_candidates_async", None)
+        if iter_historical is not None:
+            processed: list[str] = []
+            try:
+                async for message in iter_historical():
+                    item_id = await self.sync.ingest_message_async(IngestMessage(
+                        telegram_message_id=str(message.telegram_message_id),
+                        source_id=getattr(message, "source_id", "telegram"),
+                        topic_id=getattr(message, "topic_id", None),
+                        topic_name=getattr(message, "topic_name", None),
+                        original_url=getattr(message, "original_url", None),
+                        source_path=getattr(message, "source_path", None),
+                        materialize=getattr(message, "materialize", None),
+                    ))
+                    marker = getattr(source, "mark_ingested", None)
+                    if marker is not None:
+                        marker(str(message.telegram_message_id))
+                    processed.append(str(item_id))
+            finally:
+                await self._release_source_connection()
+
+            commit = getattr(source, "commit_live_checkpoints", None)
+            checkpoints = getattr(source, "_historical_checkpoints", None)
+            if commit is not None and checkpoints:
+                commit(dict(checkpoints))
+
+            for item_id in processed:
+                if self.db.get(str(item_id)).state == State.FAILED:
+                    continue
+                self.run(str(item_id))
+
+            self.db.complete_historical_sync()
+            return processed
+
+        # Compatibility path for sources that still expose the older batch API.
         collect_batch = getattr(source, "collect_historical_batch_async", None)
         if collect_batch is not None:
+            processed = []
             messages, checkpoints = await collect_batch()
             try:
                 for message in messages:
@@ -181,9 +215,6 @@ class Coordinator:
             if commit is not None:
                 commit(checkpoints)
 
-            # All candidates are now durable in SQLite/filesystem. Processing
-            # remains strictly sequential and can safely use Hub's independent
-            # Telegram connection.
             for item_id in processed:
                 if self.db.get(str(item_id)).state == State.FAILED:
                     continue
