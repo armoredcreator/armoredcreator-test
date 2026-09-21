@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil
 from .database import Database
 from .models import PublicationCheck, State
-from .services import Publisher, StudioService, VisionService, VisionUnresolvedError
+from .services import Publisher, StudioService, VisionService, VisionUnresolvedError, PublicationUnknownError
 from .storage import Storage
 
 class Pipeline:
@@ -58,7 +58,15 @@ class Pipeline:
                     raise RuntimeError("publication-check-uncertain-refusing-to-publish")
                 self.db.publication_started(item_id)
                 if check == PublicationCheck.ABSENT:
-                    result = self.publisher.publish(item)
+                    try:
+                        result = self.publisher.publish(item)
+                    except PublicationUnknownError as exc:
+                        # A Telegram timeout is an unresolved external side
+                        # effect, not a terminal processing failure. Persist
+                        # RECOVERY so Coordinator.recover_pending() can
+                        # reconcile later without republishing blindly.
+                        self.db.transition(item_id, State.RECOVERY, str(exc))
+                        raise
                     if not result.confirmed:
                         raise RuntimeError("publication-not-confirmed")
                     self.db.publication_confirmed(item_id, result.message_id or f"published-{item_id}")
