@@ -177,8 +177,7 @@ class Coordinator:
 
             limited_catchup = bool(getattr(source, "historical_limit_reached", False))
             commit = getattr(source, "commit_live_checkpoints", None)
-            checkpoints = getattr(source, "_historical_checkpoints", None)
-            if not limited_catchup and commit is not None and checkpoints:
+            checkpoints = getattr(source, "_historical_checkpoints", None)            if not limited_catchup and commit is not None and checkpoints:
                 commit(dict(checkpoints))
 
             for item_id in processed:
@@ -292,55 +291,70 @@ class Coordinator:
         if fetch_batch is None:
             return []
 
-        # Materialize the complete LIVE batch while the Sync Telegram session
-        # is connected. Telethon materializers depend on that live session and
-        # must never run after disconnect. Only durable originals may cross the
-        # Sync -> Hub boundary.
+        # Discovery is allowed to return several metadata-only candidates, but
+        # materialization and pipeline execution are strictly one item at a
+        # time. The Sync Telegram session is released before Studio/Hub run and
+        # reconnected only for the next candidate.
         messages, checkpoints = await fetch_batch()
         processed: list[str] = []
-        try:
-            for message in messages:
-                try:
-                    item_id = await self.sync.ingest_message_async(IngestMessage(
-                        telegram_message_id=str(message.telegram_message_id),
-                        source_id=getattr(message, "source_id", "telegram"),
-                        topic_id=getattr(message, "topic_id", None),
-                        topic_name=getattr(message, "topic_name", None),
-                        original_url=getattr(message, "original_url", None),
-                        source_path=getattr(message, "source_path", None),
-                        materialize=getattr(message, "materialize", None),
-                    ))
-                except Exception as exc:
-                    # LIVE is continuous: one bad Telegram download must never
-                    # terminate the Coordinator or prevent later candidates from
-                    # being retried. SyncService cleans the partial/original files;
-                    # the SQLite reservation remains RECEIVED and checkpoints are
-                    # intentionally left uncommitted for deterministic retry.
-                    import logging
-                    logging.getLogger(__name__).exception(
-                        "[COORDINATOR][LIVE] Falha ao materializar %s; "
-                        "item permanece recuperável e o LIVE continuará: %s",
-                        getattr(message, "telegram_message_id", "?"),
-                        exc,
-                    )
-                    continue
-                marker = getattr(source, "mark_ingested", None)
-                if marker is not None:
-                    marker(str(message.telegram_message_id))
-                processed.append(str(item_id))
-        finally:
-            # Never leave the Sync Telethon session open while Hub/Studio run.
-            # If materialization failed, checkpoints are intentionally not
-            # committed and the interrupted items remain recoverable.
-            await self._release_source_connection()
+        batch_ok = True
 
-        # All originals are now durable. Process exactly one item at a time.
-        for item_id in processed:
-            if self.db.get(str(item_id)).state == State.FAILED.value:
+        for index, message in enumerate(messages):
+            item_id = None
+            materialized = False
+            try:
+                item_id = await self.sync.ingest_message_async(IngestMessage(
+                    telegram_message_id=str(message.telegram_message_id),
+                    source_id=getattr(message, "source_id", "telegram"),
+                    topic_id=getattr(message, "topic_id", None),
+                    topic_name=getattr(message, "topic_name", None),
+                    original_url=getattr(message, "original_url", None),
+                    source_path=getattr(message, "source_path", None),
+                    materialize=getattr(message, "materialize", None),
+                ))
+                materialized = True
+            except Exception as exc:
+                batch_ok = False
+                import logging
+                logging.getLogger(__name__).exception(
+                    "[COORDINATOR][LIVE] Falha ao materializar %s; "
+                    "item permanece recuperável e o LIVE continuará: %s",
+                    getattr(message, "telegram_message_id", "?"),
+                    exc,
+                )
+            finally:
+                # A failed Telegram transfer can leave the Telethon transport
+                # in a cancelled state. Always close it before the next item.
+                await self._release_source_connection()
+
+            if not materialized:
                 continue
-            self.run(str(item_id))
 
-        if checkpoints and len(processed) == len(messages):
+            marker = getattr(source, "mark_ingested", None)
+            if marker is not None:
+                marker(str(message.telegram_message_id))
+            processed.append(str(item_id))
+
+            try:
+                if self.db.get(str(item_id)).state != State.FAILED.value:
+                    self.run(str(item_id))
+            except Exception as exc:
+                # One pipeline item must not terminate continuous LIVE.
+                batch_ok = False
+                import logging
+                logging.getLogger(__name__).exception(
+                    "[COORDINATOR][LIVE] Falha no processamento de %s; "
+                    "Coordinator continuará: %s",
+                    item_id,
+                    exc,
+                )
+
+            # Reconnect only when another candidate from this discovery batch
+            # still needs its canonical original materialized.
+            if index + 1 < len(messages):
+                await self._ensure_source_connection()
+
+        if batch_ok and checkpoints and len(processed) == len(messages):
             commit = getattr(source, "commit_live_checkpoints", None)
             if commit is not None:
                 commit(checkpoints)
@@ -357,8 +371,7 @@ class Coordinator:
         production default remains ``None`` (run until interrupted).
         """
         import asyncio
-        self.db.acquire_runtime_lock("coordinator")
-        self._runtime_lock_held = True
+        self.db.acquire_runtime_lock("coordinator")        self._runtime_lock_held = True
         try:
             # Do not pre-connect and disconnect Telethon here. Each
             # asyncio.run() owns a different event loop, while Telethon binds a
