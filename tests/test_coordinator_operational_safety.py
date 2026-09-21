@@ -57,15 +57,17 @@ class CoordinatorOperationalSafetyTests(unittest.TestCase):
             coordinator = Coordinator(
                 db, storage, _Vision(), _Studio(), _Publisher(), FailingSource()
             )
-            with self.assertRaisesRegex(RuntimeError, "simulated-live-source-failure"):
-                coordinator.run_forever(max_cycles=1, poll_seconds=0)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "simulated-live-source-failure"):
+                    coordinator.run_forever(max_cycles=1, poll_seconds=0)
 
-            self.assertIsNone(
-                db.conn.execute(
-                    "SELECT 1 FROM runtime_locks WHERE name='coordinator'"
-                ).fetchone()
-            )
-            coordinator.close()
+                self.assertIsNone(
+                    db.conn.execute(
+                        "SELECT 1 FROM runtime_locks WHERE name='coordinator'"
+                    ).fetchone()
+                )
+            finally:
+                coordinator.close()
 
     def test_run_forever_releases_runtime_lock_after_catchup_failure(self):
         with tempfile.TemporaryDirectory() as td:
@@ -85,11 +87,12 @@ class CoordinatorOperationalSafetyTests(unittest.TestCase):
                     coordinator.run_forever(max_cycles=1, poll_seconds=0)
 
                 self.assertIsNone(
-                db.conn.execute(
-                    "SELECT 1 FROM runtime_locks WHERE name='coordinator'"
-                ).fetchone()
-            )
-            coordinator.close()
+                    db.conn.execute(
+                        "SELECT 1 FROM runtime_locks WHERE name='coordinator'"
+                    ).fetchone()
+                )
+            finally:
+                coordinator.close()
 
 
 if __name__ == "__main__":
