@@ -1,0 +1,61 @@
+import pytest
+
+from ArmoredSync.service import TelegramSource
+
+
+class _Reader:
+    def __init__(self):
+        self.client = self
+        self.connected = False
+
+    def is_connected(self):
+        return self.connected
+
+    async def connect(self):
+        self.connected = True
+
+    async def disconnect(self):
+        self.connected = False
+
+
+@pytest.mark.asyncio
+async def test_historical_catchup_limit_stops_after_candidate_count(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARMORED_SYNC_CATCHUP_LIMIT", "2")
+
+    reader = _Reader()
+    source = TelegramSource(tmp_path, reader)
+
+    async def discover(_source):
+        return [(10, "Teste")]
+
+    async def topic_messages(_source, _topic_id):
+        from types import SimpleNamespace
+
+        for message_id in (101, 102, 103):
+            yield SimpleNamespace(
+                id=message_id,
+                video=True,
+                message=f"https://shopee.com.br/produto/{message_id}",
+                entities=[],
+            )
+
+    source._discover_topics = discover
+    source._topic_messages = topic_messages
+
+    candidates = [item async for item in source.iter_historical_candidates_async()]
+
+    assert [item.telegram_message_id for item in candidates] == ["101", "102"]
+    assert source.historical_limit_reached is True
+    assert reader.connected is True
+
+    await reader.disconnect()
+    assert reader.connected is False
+
+
+def test_historical_catchup_limit_is_optional(monkeypatch, tmp_path):
+    monkeypatch.delenv("ARMORED_SYNC_CATCHUP_LIMIT", raising=False)
+
+    source = TelegramSource(tmp_path, _Reader())
+
+    assert source.historical_collection_limited is False
+    assert source.historical_limit_reached is False
