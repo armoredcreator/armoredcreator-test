@@ -67,8 +67,14 @@ class Coordinator:
         connect = getattr(reader, "connect", None)
         if connect is not None:
             is_connected = getattr(reader, "is_connected", None)
-            if callable(is_connected) and is_connected():
-                return
+            if callable(is_connected):
+                if is_connected():
+                    return
+            else:
+                client = getattr(reader, "client", None)
+                client_is_connected = getattr(client, "is_connected", None)
+                if callable(client_is_connected) and client_is_connected():
+                    return
             await connect()
 
     async def _release_source_connection(self) -> None:
