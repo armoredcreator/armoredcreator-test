@@ -78,11 +78,31 @@ def converter_interno(entrada, saida, modelo, index):
         device="cpu:0",
     )
     print("Modelo carregado.\n\nConvertendo voz...")
-    resultado = rvc.infer_file(str(entrada), str(saida))
-    if isinstance(resultado, tuple):
+    try:
+        resultado = rvc.infer_file(str(entrada), str(saida))
+    except Exception:
+        Path(saida).unlink(missing_ok=True)
+        raise
+
+    # rvc-python normally writes the requested output file itself. Some
+    # versions also return (sample_rate, audio); only rewrite the file
+    # when that tuple is a valid audio result. Failed/interrupted inference
+    # can otherwise return an error string, which scipy would report later as
+    # the misleading str has no attribute dtype.
+    if isinstance(resultado, tuple) and len(resultado) == 2:
         sample_rate, audio = resultado
+        if not isinstance(sample_rate, int) or not hasattr(audio, "dtype"):
+            Path(saida).unlink(missing_ok=True)
+            raise RuntimeError(
+                "RVC retornou resultado inválido; conversão não concluída"
+            )
         wavfile.write(str(saida), sample_rate, audio)
-    validar_arquivo(saida, "Áudio RVC")
+
+    try:
+        validar_arquivo(saida, "Áudio RVC")
+    except Exception:
+        Path(saida).unlink(missing_ok=True)
+        raise
     print("\nConversão RVC concluída:")
     print(saida)
     return Path(saida)
