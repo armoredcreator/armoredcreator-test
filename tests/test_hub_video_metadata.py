@@ -4,7 +4,7 @@ import sys
 import types
 from pathlib import Path
 
-from armored_core.models import Item, State
+from armored_core.models import Item, PublicationCheck, State
 from armored_core.services import PublicationResult
 from ArmoredHub.service import ArmoredHub
 
@@ -127,7 +127,7 @@ def test_publish_telegram_passes_real_video_metadata_to_send_video(monkeypatch, 
         publication_message_sent=lambda *args, **kwargs: None,
     ))
     hub._resolve_destination_chat_id = lambda topic_id: "-100123"
-    hub.check_publication = lambda item: __import__("armored_core.models", fromlist=["PublicationCheck"]).PublicationCheck.CONFIRMED
+    hub.check_publication = lambda item: PublicationCheck.CONFIRMED
 
     result = hub._publish_telegram(item, output)
 
