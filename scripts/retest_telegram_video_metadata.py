@@ -119,8 +119,20 @@ def run_one(root: Path, source: Item) -> None:
     storage = Storage(root)
     workspace = storage.workspace(test_id)
 
-    with tempfile.TemporaryDirectory(prefix="armoredcreator-retest-") as temp_dir:
-        test_db = Database(Path(temp_dir) / "retest.db")
+    source_publication = None
+    try:
+        source_publication = Database(root / "storage" / "database" / "armoredcreator.db").publication(source.content_id)
+    except Exception:
+        source_publication = None
+
+    previous_group_id = os.environ.get("ARMORED_CREATOR_GROUP_ID")
+    if source_publication and source_publication["destination_chat_id"]:
+        os.environ["ARMORED_CREATOR_GROUP_ID"] = str(source_publication["destination_chat_id"])
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="armoredcreator-retest-") as temp_dir:
+            test_db = Database(Path(temp_dir) / "retest.db")
+            try
         test_db.create_item(
             telegram_message_id=test_id,
             original_path=source.original_path,
@@ -133,37 +145,43 @@ def run_one(root: Path, source: Item) -> None:
         test_db.transition(test_id, State.STUDIO, "controlled-studio-retest")
         item = test_db.get(test_id)
 
-        print(f"\n=== RETESTE REAL {source.content_id} -> {test_id} ===")
-        print(f"ORIGINAL: {source.original_path}")
-        print("STUDIO: executando análise + RVC + finalização real...")
-        studio = ArmoredStudio(root)
-        result = studio.process(item)
+                print(f"\n=== RETESTE REAL {source.content_id} -> {test_id} ===")
+                print(f"ORIGINAL: {source.original_path}")
+                print("STUDIO: executando análise + RVC + finalização real...")
+                studio = ArmoredStudio(root)
+                result = studio.process(item)
 
-        if not result.result_path.is_file() or result.result_path.stat().st_size <= 0:
-            raise RuntimeError("Studio não produziu resultado válido")
+                if not result.result_path.is_file() or result.result_path.stat().st_size <= 0:
+                    raise RuntimeError("Studio não produziu resultado válido")
 
-        test_db.set_result(test_id, result.result_path)
-        test_db.transition(test_id, State.PUBLISHING, "controlled-studio-complete")
-        item = test_db.get(test_id)
+                test_db.set_result(test_id, result.result_path)
+                test_db.transition(test_id, State.PUBLISHING, "controlled-studio-complete")
+                item = test_db.get(test_id)
 
-        print(f"STUDIO RESULT: {result.result_path}")
-        print("HUB: enviando pelo mesmo send_video real usado em produção...")
-        hub = ArmoredHub(root, test_db)
-        publication = hub._publish_telegram(item, result.result_path)
+                print(f"STUDIO RESULT: {result.result_path}")
+                print("HUB: enviando pelo mesmo send_video real usado em produção...")
+                hub = ArmoredHub(root, test_db)
+                publication = hub._publish_telegram(item, result.result_path)
 
-        if not publication.confirmed:
-            raise RuntimeError("Publicação do reteste não foi confirmada")
+                if not publication.confirmed:
+                    raise RuntimeError("Publicação do reteste não foi confirmada")
 
-        row = test_db.publication(test_id)
-        message_id = str(row["published_message_id"])
-        chat_id = str(row["destination_chat_id"])
+                row = test_db.publication(test_id)
+                message_id = str(row["published_message_id"])
+                chat_id = str(row["destination_chat_id"])
 
-        print(f"PUBLICATION: CONFIRMED message_id={message_id}")
-        print(f"DESTINATION CHAT: {chat_id}")
-        print(f"DESTINATION TOPIC: {row['destination_topic_id']}")
-        print("TELEGRAM: lendo metadata via MTProto...")
-        asyncio.run(inspect_telegram(root, chat_id, message_id))
-
+                print(f"PUBLICATION: CONFIRMED message_id={message_id}")
+                print(f"DESTINATION CHAT: {chat_id}")
+                print(f"DESTINATION TOPIC: {row['destination_topic_id']}")
+                print("TELEGRAM: lendo metadata via MTProto...")
+                asyncio.run(inspect_telegram(root, chat_id, message_id))
+            finally:
+                test_db.close()
+    finally:
+        if previous_group_id is None:
+            os.environ.pop("ARMORED_CREATOR_GROUP_ID", None)
+        else:
+            os.environ["ARMORED_CREATOR_GROUP_ID"] = previous_group_id
         if os.getenv("ARMORED_RETEST_KEEP_OUTPUT") != "1":
             shutil.rmtree(workspace, ignore_errors=True)
             print(f"LIMPEZA: workspace temporário {workspace} removido")
