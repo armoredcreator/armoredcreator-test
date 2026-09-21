@@ -307,6 +307,12 @@ class Coordinator:
         self.db.acquire_runtime_lock("coordinator")
         self._runtime_lock_held = True
         try:
+            # Authenticate the shared Telegram user session at the Sync boundary
+            # before startup recovery. Sync owns interactive login; Hub only
+            # reuses an already-authorized session and never prompts.
+            if os.getenv("ARMORED_REAL_TELEGRAM", "0") == "1":
+                asyncio.run(self._ensure_source_connection())
+                asyncio.run(self._release_source_connection())
             self.recover_pending()
             # SQLite is authoritative for CATCH-UP/LIVE state. This makes a
             # fresh process restart independent of in-memory Sync state.
