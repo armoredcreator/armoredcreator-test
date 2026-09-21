@@ -1,4 +1,4 @@
-import pytest
+import asyncio
 
 from ArmoredSync.service import TelegramSource
 
@@ -18,8 +18,7 @@ class _Reader:
         self.connected = False
 
 
-@pytest.mark.asyncio
-async def test_historical_catchup_limit_stops_after_candidate_count(monkeypatch, tmp_path):
+def test_historical_catchup_limit_stops_after_candidate_count(monkeypatch, tmp_path):
     monkeypatch.setenv("ARMORED_SYNC_CATCHUP_LIMIT", "2")
 
     reader = _Reader()
@@ -42,7 +41,10 @@ async def test_historical_catchup_limit_stops_after_candidate_count(monkeypatch,
     source._discover_topics = discover
     source._topic_messages = topic_messages
 
-    candidates = [item async for item in source.iter_historical_candidates_async()]
+    async def collect():
+        return [item async for item in source.iter_historical_candidates_async()]
+
+    candidates = asyncio.run(collect())
 
     assert [item.telegram_message_id for item in candidates] == ["101", "102"]
     assert source.historical_limit_reached is True
