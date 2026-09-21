@@ -163,7 +163,9 @@ class Coordinator:
         while True:
             message = await fetch_next()
             if message is None:
-                self.db.complete_historical_sync()
+                failed = bool(getattr(source, "historical_materialization_failed", False))
+                if not failed:
+                    self.db.complete_historical_sync()
                 break
 
             item_id = str(message.telegram_message_id)
@@ -194,6 +196,9 @@ class Coordinator:
                     if commit is not None:
                         commit({int(topic_id): int(message.telegram_message_id)})
             except Exception as exc:
+                marker = getattr(source, "mark_materialization_failed", None)
+                if marker is not None:
+                    marker()
                 import logging
                 logging.getLogger(__name__).exception(
                     "[COORDINATOR][CATCH-UP] Falha ao materializar %s; "
@@ -307,7 +312,7 @@ class Coordinator:
             # Exactly one item crosses the Sync -> Pipeline boundary.
             # No second candidate is materialized until this item finishes.
             try:
-                if self.db.get(str(item_id)).state != State.FAILED.value:
+                if self.db.get(str(item_id)).state != State.FAILED:
                     self.run(str(item_id))
             except Exception as exc:
                 import logging
