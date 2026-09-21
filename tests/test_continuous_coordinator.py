@@ -153,7 +153,7 @@ class _RecordingCoordinator(Coordinator):
             publisher = _Publisher()
 
             coordinator = _RecordingCoordinator(
-                db, storage, _Vision(), _Studio(storage), publisher, source, events
+                db, storage, _Vision(), _Studio(storage), publisher, source, events=events
             )
 
             try:
