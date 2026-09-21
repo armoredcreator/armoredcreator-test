@@ -123,40 +123,43 @@ Não é permitido procurar links arbitrariamente distantes.
 
 ### CATCH-UP
 
-O histórico percorre todos os tópicos configurados.
+O histórico percorre os tópicos configurados, mas **nunca materializa um lote**.
 
-A coleta real é feita em lote enquanto a sessão Telegram está conectada:
+Para cada candidato:
 
 ```
-conectar Telegram
-→ coletar candidatos
-→ materializar todos os originais
-→ liberar conexão
-→ persistir checkpoints
-→ processar sequencialmente
+descobrir 1 candidato
+→ materializar somente esse candidato
+→ fechar/liberar a sessão Sync
+→ Vision
+→ Studio
+→ Hub
+→ confirmação Telegram
+→ cleanup
+→ próximo candidato
 ```
 
-Isso evita o erro de desconectar uma sessão Telethon durante um iterator ainda ativo.
+O próximo vídeo só pode ser baixado depois que o item anterior deixou a etapa Sync e entrou no processamento sequencial. Uma falha de materialização não cria uma fila de downloads: o item permanece persistido/recuperável e o Coordinator pode seguir para o próximo candidato.
 
-A materialização ocorre diretamente no workspace canônico.
+O checkpoint só avança depois que o ORIGINAL do candidato foi materializado de forma durável. O estado de processamento continua no SQLite e permite recovery após restart.
 
 ### LIVE
 
-LIVE usa os mesmos contratos do CATCH-UP:
+LIVE usa exatamente o mesmo contrato de item único:
 
 ```
-conectar
-→ buscar lote novo
-→ materializar todos
-→ desconectar
-→ processar 1 por vez
-→ confirmar processamento
-→ persistir checkpoints
+descobrir 1 candidato
+→ materializar somente esse candidato
+→ liberar Sync
+→ processar
+→ confirmar
+→ cleanup
+→ próxima descoberta
 ```
 
-Os checkpoints ficam em SQLite na estrutura `sync_topics`.
+Não existe batch de materialização no LIVE. A implementação pode limitar a descoberta a um candidato por chamada, mas nunca materializa vários vídeos antes do processamento.
 
-Uma pequena sobreposição é permitida para detectar a relação:
+Os checkpoints ficam em SQLite na estrutura `sync_topics`. Uma pequena sobreposição continua permitida para detectar:
 
 ```
 vídeo sem link
@@ -767,18 +770,9 @@ Isso comprova no laboratório:
 
 # 17. Testes automatizados
 
-Estado documentado da suíte:
+O número de testes deve ser considerado válido somente quando reproduzido no HEAD atual. O README não congela mais um contador histórico como prova de fechamento.
 
-```
-61 passed
-1 skipped
-```
-
-Última execução local registrada:
-
-```
-61 passed, 1 skipped
-```
+A certificação deve registrar a saída real de `python -m pytest -q` do commit testado.
 
 Os testes cobrem, entre outros:
 
@@ -888,8 +882,8 @@ Implementado e coberto por testes:
 - storage canônico;
 - idempotência;
 - runtime lock;
-- CATCH-UP batch;
-- LIVE batch;
+- CATCH-UP sequencial;
+- LIVE sequencial;
 - restart lab;
 - contratos de processamento.
 
@@ -1224,6 +1218,8 @@ Essa é a base da recuperação e da operação contínua.
 **Storage único:** implementado  
 **Coordinator contínuo:** implementado em código, certificação real pendente  
 **E2E contínuo real:** certificação pendente  
+**Processamento sequencial 1-item:** regra operacional corrigida nesta branch  
+**Materialização em lote:** proibida pela arquitetura definitiva  
 **Reset final:** pendente
 
 O próximo trabalho não é mais reconstrução arquitetural.
