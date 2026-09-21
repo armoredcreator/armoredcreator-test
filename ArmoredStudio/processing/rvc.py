@@ -131,7 +131,7 @@ def executar_no_rvc(entrada, saida, voz):
     print("\nExecutando ambiente RVC:")
     print(" ".join(map(str, comando)))
 
-    resultado = subprocess.run(comando, cwd=str(STUDIO_ROOT))
+    resultado = subprocess.run(comando, cwd=str(BASE_DIR))
     if resultado.returncode != 0:
         raise RuntimeError("Falha na conversão RVC.")
     validar_arquivo(saida, "Áudio RVC")
