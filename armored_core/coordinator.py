@@ -292,17 +292,19 @@ class Coordinator:
         if fetch_batch is None:
             return []
 
-        # Discovery is allowed to return several metadata-only candidates, but
-        # materialization and pipeline execution are strictly one item at a
-        # time. The Sync Telegram session is released before Studio/Hub run and
-        # reconnected only for the next candidate.
+        # LIVE has two distinct phases:
+        #   1) materialize the whole discovery batch while the Sync Telegram
+        #      session is connected;
+        #   2) release Sync, then run Vision -> Studio -> Hub sequentially.
+        #
+        # This is the important Windows/Telethon boundary: Hub must never open
+        # the same Telethon SQLite session while Sync still owns it. At the same
+        # time, normal batches must not reconnect between every video.
         messages, checkpoints = await fetch_batch()
-        processed: list[str] = []
-        batch_ok = True
+        materialized_ids: list[str] = []
+        materialization_ok = True
 
         for index, message in enumerate(messages):
-            item_id = None
-            materialized = False
             try:
                 item_id = await self.sync.ingest_message_async(IngestMessage(
                     telegram_message_id=str(message.telegram_message_id),
@@ -313,35 +315,48 @@ class Coordinator:
                     source_path=getattr(message, "source_path", None),
                     materialize=getattr(message, "materialize", None),
                 ))
-                materialized = True
+                marker = getattr(source, "mark_ingested", None)
+                if marker is not None:
+                    marker(str(message.telegram_message_id))
+                materialized_ids.append(str(item_id))
             except Exception as exc:
-                batch_ok = False
+                materialization_ok = False
                 import logging
                 logging.getLogger(__name__).exception(
                     "[COORDINATOR][LIVE] Falha ao materializar %s; "
-                    "item permanece recuperável e o LIVE continuará: %s",
+                    "item permanece RECEIVED e será tentado novamente: %s",
                     getattr(message, "telegram_message_id", "?"),
                     exc,
                 )
-            finally:
-                # A failed Telegram transfer can leave the Telethon transport
-                # in a cancelled state. Always close it before the next item.
+
+                # A timed-out Telegram transfer can leave the current Telethon
+                # connection unusable. Reconnect only for this exceptional path;
+                # normal batches keep one connection for the whole materialization
+                # phase.
                 await self._release_source_connection()
+                if index + 1 < len(messages):
+                    try:
+                        await self._ensure_source_connection()
+                    except Exception as reconnect_exc:
+                        logging.getLogger(__name__).exception(
+                            "[COORDINATOR][LIVE] Falha ao reconectar Sync após "
+                            "falha de materialização: %s",
+                            reconnect_exc,
+                        )
+                        break
 
-            if not materialized:
-                continue
+        # All successfully materialized originals are now durable. Release the
+        # Telegram session before any Studio/Hub work can touch the same session.
+        await self._release_source_connection()
 
-            marker = getattr(source, "mark_ingested", None)
-            if marker is not None:
-                marker(str(message.telegram_message_id))
-            processed.append(str(item_id))
-
+        # Processing failures are isolated per item. The item becomes FAILED (or
+        # RECOVERY/WAITING_VISION according to Pipeline rules), while Coordinator
+        # continues with the remaining materialized items.
+        for item_id in materialized_ids:
             try:
                 if self.db.get(str(item_id)).state != State.FAILED.value:
                     self.run(str(item_id))
             except Exception as exc:
-                # One pipeline item must not terminate continuous LIVE.
-                batch_ok = False
                 import logging
                 logging.getLogger(__name__).exception(
                     "[COORDINATOR][LIVE] Falha no processamento de %s; "
@@ -350,16 +365,16 @@ class Coordinator:
                     exc,
                 )
 
-            # Reconnect only when another candidate from this discovery batch
-            # still needs its canonical original materialized.
-            if index + 1 < len(messages):
-                await self._ensure_source_connection()
-
-        if batch_ok and checkpoints and len(processed) == len(messages):
+        # A LIVE checkpoint represents durable materialization, not successful
+        # publication. Therefore processing failures do not force Telegram
+        # rediscovery. A materialization failure, however, must prevent the
+        # checkpoint from advancing so that the missing original is retried.
+        if materialization_ok and checkpoints and len(materialized_ids) == len(messages):
             commit = getattr(source, "commit_live_checkpoints", None)
             if commit is not None:
                 commit(checkpoints)
-        return processed
+
+        return materialized_ids
 
     def run_live_once(self) -> list[str]:
         import asyncio
