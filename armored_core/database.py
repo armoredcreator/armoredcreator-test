@@ -248,6 +248,18 @@ class Database:
         )
         self.conn.commit()
 
+    def mark_vision_waiting(self, item_id: str, reason: str) -> None:
+        old = self.get(item_id).state
+        self.conn.execute(
+            "UPDATE items SET state=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+            (State.WAITING_VISION.value, reason, item_id),
+        )
+        self.conn.execute(
+            "INSERT INTO state_events (content_id,old_state,new_state,reason) VALUES (?,?,?,?)",
+            (item_id, old.value, State.WAITING_VISION.value, reason),
+        )
+        self.conn.commit()
+
     def set_vision(self, item_id: str, affiliate_name: str, affiliate_url: str) -> None:
         self.conn.execute(
             "UPDATE items SET affiliate_name=?, affiliate_url=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
