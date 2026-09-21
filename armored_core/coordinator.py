@@ -159,6 +159,7 @@ class Coordinator:
         processed: list[str] = []
         checkpoint_blocked = False
         source = self.source
+        bounded_limit = getattr(source, "_historical_limit", None)
         fetch_next = getattr(source, "fetch_next_async", None)
         if fetch_next is None:
             raise RuntimeError("Sync source não implementa fetch_next_async")
@@ -222,6 +223,17 @@ class Coordinator:
             if not materialized:
                 continue
 
+            # In the real certification run, a configured CATCH-UP limit is a
+            # hard execution boundary: after exactly N candidates have crossed
+            # the full pipeline, stop the Coordinator instead of falling
+            # through into an unbounded historical scan or LIVE. This is a
+            # test-run boundary only; it deliberately does not mark historical
+            # sync complete because no full-history checkpoint was established.
+            if bounded_limit is not None and len(processed) >= bounded_limit:
+                bounded_stop_after_current = True
+            else:
+                bounded_stop_after_current = False
+
             # Exactly one item crosses the Sync -> Pipeline boundary.
             try:
                 if self.db.get(item_id).state != State.FAILED:
@@ -250,6 +262,15 @@ class Coordinator:
                     item_id,
                     exc,
                 )
+
+            if bounded_stop_after_current:
+                import logging
+                logging.getLogger(__name__).info(
+                    "[COORDINATOR][CATCH-UP] Limite fechado atingido: %s item(ns). "
+                    "Encerrando o ensaio sem entrar em LIVE.",
+                    len(processed),
+                )
+                return processed
 
         return processed
 
