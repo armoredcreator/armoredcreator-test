@@ -380,7 +380,17 @@ class Coordinator:
         ):
             if self.db.historical_complete() and not self.db.has_sync_checkpoints():
                 self.db.set_sync_mode("CATCH_UP")
-            await self.run_catch_up_async()
+            catch_up_processed = await self.run_catch_up_async()
+
+            # A bounded CATCH-UP run is a certification/ensayo mode: once the
+            # requested number of fully published+cleaned items is reached,
+            # the Coordinator must terminate instead of opening LIVE.
+            bounded_limit = getattr(self.source, "_historical_limit", None)
+            if (
+                bounded_limit is not None
+                and len(catch_up_processed) >= int(bounded_limit)
+            ):
+                return
 
         cycles = 0
         while max_cycles is None or cycles < max_cycles:
