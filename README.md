@@ -495,9 +495,9 @@ Nunca promover um teste antigo para "validado no HEAD atual" sem executá-lo nov
 
 **Branch de trabalho:** refactor/closure-batch
 
-**HEAD atual:** ee4ac0b2847c8429f2778ce56950983505683dfc0
+**HEAD atual:** 34fe92e121d2e18bcf594833b871343caf469737
 
-**Último commit:** chore: remove unused process lab import
+**Último commit:** test: reopen database after coordinator shutdown
 
 Esse commit corrigiu o teste de Recovery de resultado durável para respeitar o contrato real de cleanup:
 - o resultado derivado pode ser removido após publicação confirmada;
@@ -513,10 +513,10 @@ A suíte local foi executada após a correção acima com:
 
 **Resultado confirmado pelo usuário:**
 
-    54 passed, 1 skipped in 19.11s
+    56 passed, 1 skipped
 
 Portanto:
-- 47 testes passaram;
+- 56 testes passaram;
 - 1 teste foi marcado como skip;
 - nenhum teste falhou;
 - a regressão de migração SQLite está coberta;
@@ -820,12 +820,12 @@ Ainda precisamos executar no ambiente real:
 
 ### 16.12 Bot / START_ALL
 
-O laboratório já possui:
+O laboratório possui uma única entrada operacional:
 
     run_coordinator.py
-    START_COORDINATOR.bat
+    START_ALL.bat
 
-O START_COORDINATOR.bat resolve a raiz do projeto de maneira portátil e não depende de caminhos fixos de máquina.
+O START_ALL.bat resolve a raiz do projeto de maneira portátil e não depende de caminhos fixos de máquina.
 
 Entretanto, a **integração final com o Bot histórico e o START_ALL de produção ainda não está certificada**.
 
@@ -985,7 +985,7 @@ Executar:
 
 Validar o processo real que será usado para iniciar a composição completa.
 
-Não considerar START_COORDINATOR.bat isoladamente como substituto da integração final.
+Não considerar START_ALL.bat isoladamente como substituto da integração final.
 
 #### 5. E2E completo real
 
@@ -1135,7 +1135,7 @@ Somente depois dessa sequência a composição poderá ser considerada encerrada
 - ✅ Cleanup pós-publicação.
 - ✅ Preservação do original.
 - ✅ Caso real 557 completo de Recovery até Telegram confirmado.
-- ✅ Suíte automatizada: **47 passed, 1 skipped**.
+- ✅ Suíte automatizada: **56 passed, 1 skipped**.
 
 ### IMPLEMENTADO, MAS AINDA NÃO CERTIFICADO EM OPERAÇÃO CONTÍNUA REAL
 
@@ -1223,7 +1223,7 @@ Se este chat atingir o limite, o próximo chat deve continuar **a partir desta s
     refactor/closure-batch
 
     HEAD REGISTRADO:
-    ee4ac0b2847c8429f2778ce56950983505683dfc0
+    34fe92e121d2e18bcf594833b871343caf469737
 
     REPOSITÓRIO OFICIAL:
     armoredcreator/armoredcreator
@@ -1284,7 +1284,7 @@ Se este chat atingir o limite, o próximo chat deve continuar **a partir desta s
 
 ### Última suíte automatizada
 
-    54 passed, 1 skipped in 19.11s
+    56 passed, 1 skipped
 
 ### Próxima tarefa
 
