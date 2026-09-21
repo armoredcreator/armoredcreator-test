@@ -7,7 +7,7 @@ from pathlib import Path
 
 from armored_core.database import Database
 from armored_core.models import Item, PublicationCheck
-from armored_core.services import PublicationResult
+from armored_core.services import PublicationResult, PublicationUnknownError
 
 
 class ArmoredHub:
@@ -391,7 +391,7 @@ class ArmoredHub:
                 message_id = publication["published_message_id"] if publication else None
                 if message_id:
                     return PublicationResult(True, str(message_id))
-            raise RuntimeError("Telegram publication outcome is UNKNOWN") from exc
+            raise PublicationUnknownError("Telegram publication outcome is UNKNOWN") from exc
 
         message_id = getattr(message, "message_id", None)
         if message_id is None:
