@@ -371,30 +371,57 @@ class TelegramSource:
         return None
 
     async def _candidate_iterator(self, source: str, topics: list[tuple[int, str]]):
+        """Stream historical candidates without building a topic-sized list."""
         for topic_id, topic_name in topics:
-            messages = [message async for message in self._topic_messages(source, topic_id)]
-            ids = [int(getattr(message, "id", 0) or 0) for message in messages]
-            if ids:
-                self._historical_checkpoints[topic_id] = max(ids)
-            for index, message in enumerate(messages):
+            pending_video = None
+            topic_max_id = 0
+
+            async for message in self._topic_messages(source, topic_id):
+                message_id = int(getattr(message, "id", 0) or 0)
+                if message_id > topic_max_id:
+                    topic_max_id = message_id
+                if message_id <= 0:
+                    continue
+
+                # Preserve the backup association rule:
+                # video + Shopee in the same message, or video + Shopee in
+                # the immediately following non-video message.
+                if pending_video is not None:
+                    pending_id, pending_message = pending_video
+                    if not getattr(message, "video", None):
+                        original_url = self._shopee_url(message)
+                        if (
+                            pending_id not in self._seen
+                            and original_url is not None
+                        ):
+                            yield (
+                                pending_id,
+                                int(topic_id),
+                                topic_name,
+                                pending_message,
+                                original_url,
+                            )
+                    pending_video = None
+
                 if not getattr(message, "video", None):
                     continue
 
-                # Preserva exatamente o comportamento do backup:
-                # 1) vídeo + Shopee na mesma mensagem; ou
-                # 2) vídeo + Shopee na mensagem imediatamente seguinte.
                 original_url = self._shopee_url(message)
-
-                if original_url is None and index + 1 < len(messages):
-                    next_message = messages[index + 1]
-                    next_is_video = bool(getattr(next_message, "video", None))
-                    if not next_is_video:
-                        original_url = self._shopee_url(next_message)
-
-                if original_url is None:
+                if original_url is not None:
+                    if message_id not in self._seen:
+                        yield (
+                            message_id,
+                            int(topic_id),
+                            topic_name,
+                            message,
+                            original_url,
+                        )
                     continue
 
-                yield (int(getattr(message, "id", 0) or 0), int(topic_id), topic_name, message, original_url)
+                pending_video = (message_id, message)
+
+            if topic_max_id:
+                self._historical_checkpoints[topic_id] = topic_max_id
 
     async def iter_historical_candidates_async(self):
         """Yield historical candidates as soon as they are discovered.
