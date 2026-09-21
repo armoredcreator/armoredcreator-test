@@ -104,10 +104,48 @@ class TelegramSource:
         self._topics: list[tuple[int, str]] | None = None
         self._historical_complete = False
         self._historical_checkpoints: dict[int, int] = {}
+        self._historical_limit = self._read_historical_limit()
+        self._historical_candidates_emitted = 0
+        self._historical_limit_reached = False
 
     @property
     def mode(self) -> str:
         return self.db.sync_mode() if self.db is not None else ("LIVE" if self._historical_complete else "CATCH_UP")
+
+    @staticmethod
+    def _read_historical_limit() -> int | None:
+        raw = (os.getenv("ARMORED_SYNC_CATCHUP_LIMIT") or "").strip()
+        if not raw:
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            print(f"[SYNC][CATCH-UP] Limite inválido {raw!r}; CATCH-UP completo.")
+            return None
+        if value <= 0:
+            print(f"[SYNC][CATCH-UP] Limite {value} desabilitado; CATCH-UP completo.")
+            return None
+        return value
+
+    @property
+    def historical_limit_reached(self) -> bool:
+        return self._historical_limit_reached
+
+    @property
+    def historical_collection_limited(self) -> bool:
+        return self._historical_limit is not None
+
+    def _catchup_limit_before_candidate(self) -> bool:
+        if self._historical_limit is None:
+            return False
+        if self._historical_candidates_emitted >= self._historical_limit:
+            self._historical_limit_reached = True
+            print(
+                f"[SYNC][CATCH-UP] Limite atingido: "
+                f"{self._historical_candidates_emitted} candidato(s)."
+            )
+            return True
+        return False
 
     def mark_historical_complete(self) -> None:
         if self.db is not None:
@@ -334,11 +372,15 @@ class TelegramSource:
         source_ref = int(source) if str(source).lstrip("-").isdigit() else source
 
         await self.reader.connect()
+        if self._historical_limit is not None:
+            print(f"[SYNC][CATCH-UP] Limite de candidatos: {self._historical_limit}")
         topics = await self._discover_topics(source_ref)
         if not topics:
             raise RuntimeError(f"Nenhum tópico de fórum encontrado na fonte Telegram {source}.")
 
         self._historical_checkpoints.clear()
+        self._historical_candidates_emitted = 0
+        self._historical_limit_reached = False
         try:
             for topic_id, topic_name in topics:
                 pending_video = None
@@ -360,6 +402,9 @@ class TelegramSource:
                                 original_url = self._shopee_url(message)
                             if original_url is not None:
                                 candidate_ids.add(pending_id)
+                                if self._catchup_limit_before_candidate():
+                                    return
+                                self._historical_candidates_emitted += 1
                                 yield SyncMessage(
                                     telegram_message_id=str(pending_id),
                                     source_id=source_id,
@@ -377,6 +422,9 @@ class TelegramSource:
                     if original_url is not None:
                         if message_id not in self._seen and message_id not in candidate_ids:
                             candidate_ids.add(message_id)
+                            if self._catchup_limit_before_candidate():
+                                return
+                            self._historical_candidates_emitted += 1
                             yield SyncMessage(
                                 telegram_message_id=str(message_id),
                                 source_id=source_id,
