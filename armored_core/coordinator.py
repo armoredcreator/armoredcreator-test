@@ -190,14 +190,11 @@ class Coordinator:
                     marker(str(message.telegram_message_id))
                 processed.append(item_id)
 
-                # The checkpoint advances only after the immutable ORIGINAL was
-                # durably materialized. Processing may fail later; SQLite keeps
-                # the item recoverable and startup recovery can finish it.
-                topic_id = getattr(message, "topic_id", None)
-                if topic_id is not None and not checkpoint_blocked:
-                    commit = getattr(source, "commit_live_checkpoints", None)
-                    if commit is not None:
-                        commit({int(topic_id): int(message.telegram_message_id)})
+                # Checkpoint advancement is deliberately deferred until the
+                # entire item has been processed, published, confirmed and cleaned.
+                # A materialized-but-unprocessed item must remain discoverable after
+                # a crash/restart; SQLite + the canonical workspace provide recovery.
+                pass
             except Exception as exc:
                 checkpoint_blocked = True
                 marker = getattr(source, "mark_materialization_failed", None)
@@ -220,11 +217,22 @@ class Coordinator:
             try:
                 if self.db.get(item_id).state != State.FAILED:
                     self.run(item_id)
+                    current = self.db.get(item_id)
+                    if (
+                        current.state == State.PUBLISHED
+                        and current.cleanup_completed
+                        and not checkpoint_blocked
+                    ):
+                        topic_id = getattr(message, "topic_id", None)
+                        commit = getattr(source, "commit_live_checkpoints", None)
+                        if topic_id is not None and commit is not None:
+                            commit({int(topic_id): int(message.telegram_message_id)})
             except Exception as exc:
+                checkpoint_blocked = True
                 import logging
                 logging.getLogger(__name__).exception(
                     "[COORDINATOR][CATCH-UP] Falha no processamento de %s; "
-                    "item permanece persistido para recovery: %s",
+                    "checkpoint permanece no último item confirmado: %s",
                     item_id,
                     exc,
                 )
@@ -297,20 +305,21 @@ class Coordinator:
         if not materialized:
             return []
 
-        # The checkpoint advances only after the immutable ORIGINAL exists.
-        if checkpoints:
-            commit = getattr(source, "commit_live_checkpoints", None)
-            if commit is not None:
-                commit(checkpoints)
-
+        # Materialization alone never advances the source checkpoint.
+        # The item must complete the full pipeline and cleanup first.
         try:
             if self.db.get(str(item_id)).state != State.FAILED:
                 self.run(str(item_id))
+                current = self.db.get(str(item_id))
+                if current.state == State.PUBLISHED and current.cleanup_completed:
+                    commit = getattr(source, "commit_live_checkpoints", None)
+                    if commit is not None and checkpoints:
+                        commit(checkpoints)
         except Exception as exc:
             import logging
             logging.getLogger(__name__).exception(
-                "[COORDINATOR][LIVE] Falha no processamento de %s; item permanece "
-                "persistido para recovery: %s",
+                "[COORDINATOR][LIVE] Falha no processamento de %s; checkpoint "
+                "permanece no último item confirmado: %s",
                 item_id,
                 exc,
             )
