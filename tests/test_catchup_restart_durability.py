@@ -122,10 +122,10 @@ class CatchUpRestartTests(unittest.TestCase):
             # are durable and must not be downloaded again after restart.
             self.assertEqual(source.materializations, 2)
             self.assertEqual(source.checkpoints, {10: 302})
-            self.assertTrue(db.get("301").original_path.is_file())
-            self.assertTrue(db.get("302").original_path.is_file())
-            self.assertEqual(db.get("301").state.value, "FAILED")
             restarted_db = Database(storage.database / "db.sqlite")
+            self.assertTrue(restarted_db.get("301").original_path.is_file())
+            self.assertTrue(restarted_db.get("302").original_path.is_file())
+            self.assertEqual(restarted_db.get("301").state.value, "FAILED")
             restarted_source = _BatchSource(restarted_db, files)
             publisher = _Publisher()
             restarted = Coordinator(
