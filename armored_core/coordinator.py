@@ -177,7 +177,8 @@ class Coordinator:
 
             limited_catchup = bool(getattr(source, "historical_limit_reached", False))
             commit = getattr(source, "commit_live_checkpoints", None)
-            checkpoints = getattr(source, "_historical_checkpoints", None)            if not limited_catchup and commit is not None and checkpoints:
+            checkpoints = getattr(source, "_historical_checkpoints", None)
+            if not limited_catchup and commit is not None and checkpoints:
                 commit(dict(checkpoints))
 
             for item_id in processed:
