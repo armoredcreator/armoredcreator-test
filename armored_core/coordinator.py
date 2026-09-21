@@ -164,7 +164,9 @@ class Coordinator:
         while True:
             message = await fetch_next()
             if message is None:
-                failed = bool(getattr(source, "historical_materialization_failed", False))
+                failed = checkpoint_blocked or bool(
+                    getattr(source, "historical_materialization_failed", False)
+                )
                 if not failed:
                     self.db.complete_historical_sync()
                 break
