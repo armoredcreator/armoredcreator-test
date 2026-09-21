@@ -120,10 +120,11 @@ def run_one(root: Path, source: Item) -> None:
     workspace = storage.workspace(test_id)
 
     source_publication = None
+    source_db = Database(root / "storage" / "database" / "armoredcreator.db")
     try:
-        source_publication = Database(root / "storage" / "database" / "armoredcreator.db").publication(source.content_id)
-    except Exception:
-        source_publication = None
+        source_publication = source_db.publication(source.content_id)
+    finally:
+        source_db.close()
 
     previous_group_id = os.environ.get("ARMORED_CREATOR_GROUP_ID")
     if source_publication and source_publication["destination_chat_id"]:
@@ -132,18 +133,18 @@ def run_one(root: Path, source: Item) -> None:
     try:
         with tempfile.TemporaryDirectory(prefix="armoredcreator-retest-") as temp_dir:
             test_db = Database(Path(temp_dir) / "retest.db")
-            try
-        test_db.create_item(
-            telegram_message_id=test_id,
-            original_path=source.original_path,
-            source_id=source.source_id,
-            topic_id=source.topic_id,
-            topic_name=source.topic_name,
-            original_url=source.original_url,
-        )
-        test_db.set_vision(test_id, source.affiliate_name, source.affiliate_url)
-        test_db.transition(test_id, State.STUDIO, "controlled-studio-retest")
-        item = test_db.get(test_id)
+            try:
+                test_db.create_item(
+                    telegram_message_id=test_id,
+                    original_path=source.original_path,
+                    source_id=source.source_id,
+                    topic_id=source.topic_id,
+                    topic_name=source.topic_name,
+                    original_url=source.original_url,
+                )
+                test_db.set_vision(test_id, source.affiliate_name, source.affiliate_url)
+                test_db.transition(test_id, State.STUDIO, "controlled-studio-retest")
+                item = test_db.get(test_id)
 
                 print(f"\n=== RETESTE REAL {source.content_id} -> {test_id} ===")
                 print(f"ORIGINAL: {source.original_path}")
@@ -187,7 +188,6 @@ def run_one(root: Path, source: Item) -> None:
             print(f"LIMPEZA: workspace temporário {workspace} removido")
         else:
             print(f"LIMPEZA: preservada por ARMORED_RETEST_KEEP_OUTPUT=1")
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(
