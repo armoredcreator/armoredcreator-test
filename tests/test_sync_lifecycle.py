@@ -423,7 +423,7 @@ class DownloadTimeoutTests(unittest.TestCase):
                     return self
 
                 async def __anext__(self):
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(2)
                     return b"x"
 
             class Client:
