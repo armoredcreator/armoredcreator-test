@@ -59,6 +59,76 @@ def test_video_metadata_reads_real_geometry_and_duration(monkeypatch, tmp_path):
     assert ArmoredHub._video_metadata(output) == (1080, 1920, 10)
 
 
+def test_publish_telegram_reconciles_timeout_without_republishing(monkeypatch, tmp_path):
+    class TimeoutBot:
+        def __init__(self, token, request):
+            pass
+
+        async def send_video(self, **kwargs):
+            from telegram.error import TimedOut
+            raise TimedOut("simulated timeout")
+
+        async def shutdown(self):
+            pass
+
+    class FakeRequest:
+        def __init__(self, **kwargs):
+            pass
+
+    fake_telegram = types.ModuleType("telegram")
+    fake_telegram.Bot = TimeoutBot
+
+    class FakeTimedOut(Exception):
+        pass
+
+    class FakeNetworkError(Exception):
+        pass
+
+    fake_error = types.ModuleType("telegram.error")
+    fake_error.NetworkError = FakeNetworkError
+    fake_error.TimedOut = FakeTimedOut
+
+    fake_request = types.ModuleType("telegram.request")
+    fake_request.HTTPXRequest = FakeRequest
+
+    monkeypatch.setitem(sys.modules, "telegram", fake_telegram)
+    monkeypatch.setitem(sys.modules, "telegram.error", fake_error)
+    monkeypatch.setitem(sys.modules, "telegram.request", fake_request)
+
+    output = tmp_path / "550_test.mp4"
+    output.write_bytes(b"mp4")
+    item = _item(output)
+
+    calls = {"started": 0, "checked": 0}
+
+    class DB:
+        def publication_started(self, *args, **kwargs):
+            calls["started"] += 1
+
+        def publication(self, content_id):
+            return {
+                "published_message_id": "1234",
+                "confirmed": 1,
+            }
+
+    hub = ArmoredHub(tmp_path, db=DB())
+    hub._resolve_destination_chat_id = lambda topic_id: "-100123"
+    hub._video_metadata = lambda _output: (1080, 1920, 8)
+
+    def reconcile(_item):
+        calls["checked"] += 1
+        return PublicationCheck.CONFIRMED
+
+    hub.check_publication = reconcile
+
+    result = hub._publish_telegram(item, output)
+
+    assert result.success is True
+    assert result.message_id == "1234"
+    assert calls["started"] == 1
+    assert calls["checked"] == 1
+
+
 def test_publish_telegram_passes_real_video_metadata_to_send_video(monkeypatch, tmp_path):
     captured = {}
 
