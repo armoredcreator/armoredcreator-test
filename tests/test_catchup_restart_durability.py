@@ -155,6 +155,44 @@ class CatchUpRestartTests(unittest.TestCase):
             finally:
                 restarted.close()
 
+    def test_download_failure_does_not_advance_checkpoint_past_failed_candidate(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+
+            files = {}
+            for message_id in ("401", "402"):
+                path = root / f"{message_id}.mp4"
+                path.write_bytes(message_id.encode())
+                files[message_id] = path
+
+            source = _SequentialSource(db, files)
+            original_fetch = source.fetch_next_async
+            attempts = {"401": 0}
+
+            async def fetch():
+                message = await original_fetch()
+                if message and message.telegram_message_id == "401":
+                    attempts["401"] += 1
+                    async def fail(target):
+                        raise TimeoutError("simulated-download-timeout")
+                    message = SimpleNamespace(**message.__dict__, materialize=fail)
+                return message
+
+            source.fetch_next_async = fetch
+            coordinator = Coordinator(db, storage, _Vision(), _Studio(storage), _Publisher(), source)
+            try:
+                processed = coordinator.run_catch_up()
+                self.assertEqual(processed, ["402"])
+                self.assertFalse(db.historical_complete())
+                self.assertEqual(db.sync_topic_checkpoint(10), 0)
+                self.assertTrue(db.get("401").original_path.parent.exists())
+                self.assertFalse(db.get("401").original_path.is_file())
+                self.assertEqual(attempts["401"], 1)
+            finally:
+                coordinator.close()
+
 
 if __name__ == "__main__":
     unittest.main()
