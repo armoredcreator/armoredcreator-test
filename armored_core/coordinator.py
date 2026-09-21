@@ -342,48 +342,58 @@ class Coordinator:
         import asyncio
         return asyncio.run(self.run_live_once_async())
 
+    async def _run_forever_async(
+        self,
+        poll_seconds: float = 2.0,
+        max_cycles: int | None = None,
+    ) -> None:
+        """Run the complete Coordinator lifetime inside one asyncio event loop.
+
+        Telethon binds its client to the event loop used at connection time.
+        The previous implementation called ``asyncio.run()`` for every
+        CATCH-UP/LIVE operation, creating a new loop on every cycle.
+        That is incompatible with a persistent Telethon session and can
+        surface as ``The asyncio event loop must not change after connection``.
+        """
+        self.recover_pending()
+
+        if (
+            not self.db.historical_complete()
+            or not self.db.has_sync_checkpoints()
+        ):
+            if self.db.historical_complete() and not self.db.has_sync_checkpoints():
+                self.db.set_sync_mode("CATCH_UP")
+            await self.run_catch_up_async()
+
+        cycles = 0
+        while max_cycles is None or cycles < max_cycles:
+            self.db.heartbeat_runtime_lock("coordinator")
+            processed = await self.run_live_once_async()
+            cycles += 1
+            if not processed and (max_cycles is None or cycles < max_cycles):
+                await asyncio.sleep(float(poll_seconds))
+
     def run_forever(self, poll_seconds: float = 2.0, max_cycles: int | None = None) -> None:
         """Recover, finish catch-up once, then monitor Telegram continuously.
 
-        ``max_cycles`` is an optional deterministic test/service-run bound. The
-        production default remains ``None`` (run until interrupted).
+        The entire production lifetime is executed under one asyncio loop.
+        This is required by Telethon and also makes LIVE restart behavior
+        deterministic.
         """
         import asyncio
         self.db.acquire_runtime_lock("coordinator")
         self._runtime_lock_held = True
         try:
-            # Do not pre-connect and disconnect Telethon here. Each
-            # asyncio.run() owns a different event loop, while Telethon binds a
-            # client to the loop used by its connection. The Sync adapter now
-            # recreates its disconnected client before reconnecting on a new
-            # loop. Startup recovery can therefore use the shared persistent
-            # session non-interactively, and CATCH-UP/LIVE owns its own Sync
-            # connection lifecycle.
-            self.recover_pending()
-            # SQLite is authoritative for CATCH-UP/LIVE state. This makes a
-            # fresh process restart independent of in-memory Sync state.
-            if (
-                not self.db.historical_complete()
-                or not self.db.has_sync_checkpoints()
-            ):
-                # A stale LIVE flag without checkpoints is not a valid LIVE
-                # state. Rebuild CATCH_UP deterministically; existing items
-                # are deduplicated by Telegram message ID.
-                if self.db.historical_complete() and not self.db.has_sync_checkpoints():
-                    self.db.set_sync_mode("CATCH_UP")
-                self.run_catch_up()
-            cycles = 0
-            while max_cycles is None or cycles < max_cycles:
-                self.db.heartbeat_runtime_lock("coordinator")
-                processed = self.run_live_once()
-                cycles += 1
-                if not processed and (max_cycles is None or cycles < max_cycles):
-                    asyncio.run(asyncio.sleep(float(poll_seconds)))
+            asyncio.run(
+                self._run_forever_async(
+                    poll_seconds=poll_seconds,
+                    max_cycles=max_cycles,
+                )
+            )
         finally:
             if self._runtime_lock_held:
                 self.db.release_runtime_lock("coordinator")
                 self._runtime_lock_held = False
-
     def run(self, item_id: str) -> None:
         self.pipeline.run(item_id)
 
