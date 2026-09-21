@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Awaitable, Callable, Protocol
 from .database import Database
 from .models import Item, PublicationCheck
+
+
+class VisionUnresolvedError(RuntimeError):
+    """Vision V1 could not resolve the product with enough certainty."""
+
 from .storage import Storage
 
 @dataclass(frozen=True)
