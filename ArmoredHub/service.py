@@ -302,6 +302,34 @@ class ArmoredHub:
 
         return self._publish_telegram(item, output)
 
+    @staticmethod
+    def _video_metadata(output: Path) -> tuple[int, int, int]:
+        """Read real video geometry/duration before sending it to Telegram."""
+        try:
+            import cv2
+        except ImportError as exc:
+            raise RuntimeError("Dependência OpenCV ausente para metadados do vídeo") from exc
+
+        capture = cv2.VideoCapture(str(output))
+        try:
+            if not capture.isOpened():
+                raise RuntimeError("Não foi possível abrir o vídeo para leitura de metadados")
+
+            width = int(round(capture.get(cv2.CAP_PROP_FRAME_WIDTH)))
+            height = int(round(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+            frame_count = float(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = float(capture.get(cv2.CAP_PROP_FPS))
+        finally:
+            capture.release()
+
+        if width <= 0 or height <= 0:
+            raise RuntimeError("Vídeo possui dimensões inválidas")
+        if frame_count <= 0 or fps <= 0:
+            raise RuntimeError("Vídeo possui duração inválida")
+
+        duration = max(1, int(round(frame_count / fps)))
+        return width, height, duration
+
     def _publish_telegram(self, item: Item, output: Path) -> PublicationResult:
         token = os.getenv("ARMORED_CREATOR_BOT_TOKEN")
         topic_id = (os.getenv("ARMORED_HUB_TOPIC_ID") or "228").strip()
@@ -310,6 +338,7 @@ class ArmoredHub:
                 "Telegram Hub exige ARMORED_CREATOR_BOT_TOKEN e ARMORED_HUB_TOPIC_ID"
             )
         chat_id = self._resolve_destination_chat_id(topic_id)
+        width, height, duration = self._video_metadata(output)
         self.db.publication_started(
             item.item_id,
             destination_chat_id=chat_id,
@@ -340,6 +369,9 @@ class ArmoredHub:
                         chat_id=int(chat_id),
                         message_thread_id=int(topic_id),
                         video=handle,
+                        duration=duration,
+                        width=width,
+                        height=height,
                         caption=item.affiliate_url or "",
                         supports_streaming=True,
                     )
