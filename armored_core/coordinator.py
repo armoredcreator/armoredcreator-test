@@ -198,8 +198,9 @@ class Coordinator:
                 marker = getattr(source, "mark_ingested", None)
                 if marker is not None:
                     marker(str(message.telegram_message_id))
-                processed.append(item_id)
-
+                # Do not count here. A candidate is counted only after
+                # the complete pipeline reaches PUBLISHED and cleanup succeeds.
+                # This keeps the bounded CATCH-UP limit tied to completed items.
                 # Checkpoint advancement is deliberately deferred until the
                 # entire item has been processed, published, confirmed and cleaned.
                 # A materialized-but-unprocessed item must remain discoverable after
