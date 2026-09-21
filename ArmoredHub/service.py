@@ -381,7 +381,16 @@ class ArmoredHub:
         try:
             message = __import__("asyncio").run(send())
         except (TimedOut, NetworkError) as exc:
-            # publication_started() has already created the unresolved row.
+            # The Bot API timeout is an ambiguous side-effect window: Telegram
+            # may have accepted the upload but the HTTP response may have been
+            # lost. Reconcile through the independent MTProto read-back before
+            # declaring UNKNOWN. Never republish automatically from this path.
+            status = self.check_publication(item)
+            if status == PublicationCheck.CONFIRMED:
+                publication = self._publication(item)
+                message_id = publication["published_message_id"] if publication else None
+                if message_id:
+                    return PublicationResult(True, str(message_id))
             raise RuntimeError("Telegram publication outcome is UNKNOWN") from exc
 
         message_id = getattr(message, "message_id", None)
