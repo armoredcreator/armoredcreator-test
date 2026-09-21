@@ -4,6 +4,11 @@ import argparse
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from armored_core.coordinator import Coordinator
 from armored_core.database import Database
