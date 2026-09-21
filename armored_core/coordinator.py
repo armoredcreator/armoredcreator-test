@@ -229,11 +229,13 @@ class Coordinator:
                     if (
                         current.state == State.PUBLISHED
                         and current.cleanup_completed
+                        and not checkpoint_blocked
                     ):
-                        # Advance only this candidate's checkpoint after the
-                        # full item is durably published and cleaned. A prior
-                        # failed candidate must not block later successful
-                        # candidates from recording their own progress.
+                        # Checkpoints are monotonic and must never jump past
+                        # an earlier candidate whose materialization or
+                        # processing failed. The successful item may finish,
+                        # but its checkpoint remains uncommitted until the
+                        # blocked predecessor is recoverable.
                         topic_id = getattr(message, "topic_id", None)
                         commit = getattr(source, "commit_live_checkpoints", None)
                         if topic_id is not None and commit is not None:
