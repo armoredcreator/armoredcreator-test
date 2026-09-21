@@ -170,6 +170,14 @@ class Database:
         self.conn.commit()
         return item_id
 
+    def repair_original_path(self, item_id: str, path: Path) -> None:
+        """Repair a legacy/incomplete row without changing its pipeline state."""
+        self.conn.execute(
+            "UPDATE items SET original_path=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+            (str(path), str(item_id)),
+        )
+        self.conn.commit()
+
     def finalize_original_path(self, item_id: str, path: Path, sha256: str) -> None:
         self.conn.execute(
             "UPDATE items SET original_path=?, original_sha256=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
