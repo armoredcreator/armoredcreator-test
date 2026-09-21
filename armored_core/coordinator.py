@@ -175,9 +175,10 @@ class Coordinator:
             finally:
                 await self._release_source_connection()
 
+            limited_catchup = bool(getattr(source, "historical_limit_reached", False))
             commit = getattr(source, "commit_live_checkpoints", None)
             checkpoints = getattr(source, "_historical_checkpoints", None)
-            if commit is not None and checkpoints:
+            if not limited_catchup and commit is not None and checkpoints:
                 commit(dict(checkpoints))
 
             for item_id in processed:
@@ -185,7 +186,13 @@ class Coordinator:
                     continue
                 self.run(str(item_id))
 
-            self.db.complete_historical_sync()
+            if limited_catchup:
+                print(
+                    "[COORDINATOR] CATCH-UP limitado concluído; "
+                    "histórico permanece pendente para execução completa futura."
+                )
+            else:
+                self.db.complete_historical_sync()
             return processed
 
         # Compatibility path for sources that still expose the older batch API.
