@@ -323,8 +323,9 @@ DONE
 
 Também existem:
 
+- `WAITING_VISION`;
 - `FAILED`;
-- `RECOVERY`.
+- `RECOVERY`;
 
 `FAILED` não é automaticamente reprocessado em loop. Recovery manual/determinístico pode reconciliar um item explicitamente.
 
@@ -769,14 +770,14 @@ Isso comprova no laboratório:
 Estado documentado da suíte:
 
 ```
-58 passed
+61 passed
 1 skipped
 ```
 
 Última execução local registrada:
 
 ```
-58 passed, 1 skipped in 14.85s
+61 passed, 1 skipped
 ```
 
 Os testes cobrem, entre outros:
@@ -1228,3 +1229,140 @@ Essa é a base da recuperação e da operação contínua.
 O próximo trabalho não é mais reconstrução arquitetural.
 
 É **certificação operacional real e fechamento do laboratório**.
+
+---
+
+# 31. Estratégia futura — ArmoredVision V2
+
+A V2 será uma evolução interna da resolução de identidade, não uma segunda pipeline.
+
+Fluxo futuro:
+
+WAITING_VISION → busca de candidatos Shopee → reconciliação → revalidação → STUDIO
+
+Se nenhum candidato for seguro, o item continua em WAITING_VISION.
+
+## 31.1 Problema que a V2 resolve
+
+A V1 consulta o par exato shop_id + item_id. Se a Shopee deixar de retornar essa oferta, isso significa somente que a V1 não conseguiu resolver a identidade naquele momento. Não devemos interpretar isso como prova de que o produto deixou de existir para sempre.
+
+Possíveis causas incluem indisponibilidade da oferta, produto fora do catálogo de afiliados, relistagem, mudança de identidade ou indisponibilidade transitória da API.
+
+Não assumir que uma futura relistagem reutilizará o mesmo item_id. A V2 precisa conseguir encontrar uma nova identidade candidata.
+
+## 31.2 Capacidade da API Shopee
+
+A investigação realizada encontrou suporte documentado para productOfferV2 com busca por keyword e filtros como shopId, itemId e categoria, além de campos como productName, imageUrl, productLink, offerLink, priceMin, priceMax, sales, ratingStar, commissionRate, shopId e shopName. A fonte consultada é uma documentação pública não oficial baseada na documentação da Shopee; portanto, os contratos finais deverão ser validados contra a documentação/Explorer oficial quando a V2 for implementada. citeturn0search0turn0search1
+
+Isso torna a V2 tecnicamente viável para descoberta de candidatos, mas a API não prova sozinha que um candidato é o mesmo produto do vídeo. A reconciliação de identidade pertence à ArmoredVision.
+
+## 31.3 Regra fundamental: não aceitar o primeiro resultado
+
+A V2 nunca deve fazer keyword → primeiro resultado → publicação. Ela deve gerar candidatos, comparar evidências, eliminar incompatibilidades, revalidar o candidato escolhido por shop_id + item_id e somente então retornar VisionResult.
+
+## 31.4 Evidências de identidade a preservar
+
+Quando disponíveis, devem ser preservados: URL Shopee original; shop_id; item_id; nome; productLink; imagem; categorias; nome da loja; preço observado; sinais de oferta/comissão; timestamp da tentativa; versão da Vision; erro de resolução; e histórico dos candidatos avaliados.
+
+A identidade antiga é evidência histórica. Uma eventual identidade nova é a identidade resolvida pela reconciliação.
+
+## 31.5 Sinais de correspondência
+
+- Nome: normalização, tokens e similaridade textual.
+- Loja: shop_id e shopName são sinais fortes quando disponíveis; mudança de loja exige análise, não aceitação automática.
+- Categoria: compatibilidade aumenta a evidência.
+- Preço: somente evidência auxiliar, nunca identidade.
+- Imagem: comparação visual entre a imagem original e a imagem do candidato.
+- URL/IDs: quando a identidade exata ainda existe, shop_id + item_id continua sendo a confirmação mais forte.
+
+O projeto já possui capacidade CLIP em ArmoredVision. Ela poderá ser usada como sinal visual da V2, mas CLIP sozinho nunca deve autorizar publicação.
+
+## 31.6 Decisão da V2
+
+A V2 deve produzir uma decisão explícita: RESOLVED, UNRESOLVED ou AMBIGUOUS.
+
+RESOLVED: registrar identidade antiga e nova, revalidar a nova identidade, obter/generar affiliate URL e seguir para STUDIO.
+UNRESOLVED: permanecer em WAITING_VISION.
+AMBIGUOUS: permanecer em WAITING_VISION e não escolher arbitrariamente.
+
+## 31.7 Versionamento da resolução
+
+A resolução deve distinguir estratégias como VISION_V1_EXACT e VISION_V2_CANDIDATE. Isso permite auditar qual estratégia resolveu o produto, qual identidade foi usada, quando ocorreu e por quê.
+
+## 31.8 A V2 não altera a pipeline
+
+A V2 entra no mesmo contrato: WAITING_VISION → Vision V2 → STUDIO → PUBLISHING → PUBLISHED → cleanup.
+
+Não criar queue de Vision, processo paralelo, novo banco, novo storage ou nova pipeline. V2 é evolução interna do estágio Vision.
+
+## 31.9 Retry futuro
+
+Não implementar retry infinito. Erros transitórios podem ter retry limitado com backoff. Produto não resolvido deve permanecer em WAITING_VISION. Candidato ambíguo também permanece em WAITING_VISION.
+
+## 31.10 Scheduler futuro
+
+Quando V2 estiver ativa, o Coordinator poderá consultar WAITING_VISION de forma controlada, respeitando intervalo mínimo, limite de tentativas, backoff, rate limit, prioridade e versionamento. Um item preso em Vision nunca pode bloquear os demais.
+
+## 31.11 Persistência futura recomendada
+
+Recomenda-se uma tabela própria vision_resolutions, separada de items, contendo pelo menos: content_id, vision_version, identidade original, identidade candidata, nomes, imagens, categorias, score, decisão, motivo e timestamp.
+
+Isso permite auditar cada tentativa sem transformar items em tabela de histórico.
+
+## 31.12 Testes obrigatórios da V2
+
+1. V1 resolve normalmente.
+2. V1 retorna zero produtos → WAITING_VISION.
+3. WAITING_VISION sobrevive a restart.
+4. Coordinator continua com outros itens.
+5. V2 encontra candidato único.
+6. V2 rejeita nome incompatível.
+7. V2 rejeita categoria incompatível.
+8. V2 considera loja.
+9. V2 usa preço apenas como evidência.
+10. V2 usa similaridade de imagem.
+11. V2 não aceita CLIP sozinho.
+12. V2 rejeita empate/ambiguidade.
+13. V2 revalida shop_id + item_id.
+14. V2 gera affiliate URL válida.
+15. V2 não cria duplicata.
+16. V2 mantém o original.
+17. V2 registra identidade antiga e nova.
+18. V2 respeita rate limit/backoff.
+19. V2 não cria pipeline paralela.
+20. V2 continua compatível com Recovery.
+
+## 31.13 Critério de segurança
+
+A V2 deve errar para o lado da não resolução, nunca para o lado de associar silenciosamente um produto diferente.
+
+Regra: dúvida → WAITING_VISION.
+
+---
+
+# 32. Conclusão da investigação da API
+
+Há base técnica suficiente para desenvolver a Vision V2 porque productOfferV2 oferece descoberta por palavra-chave e dados de produto que permitem construir uma camada própria de reconciliação. Isso não significa que a API forneça prova automática de identidade; essa responsabilidade continua no ArmoredVision. A documentação consultada deve ser tratada como referência de viabilidade, e os campos/limites finais devem ser confirmados contra a fonte oficial no início da implementação. citeturn0search0turn0search1
+
+# 33. Situação da Vision após esta correção
+
+A V1 continua sendo a estratégia ativa. Resolução exata bem-sucedida segue para STUDIO. Falha específica de produto não encontrado agora vai para WAITING_VISION, preserva o original, não chama Studio/Hub e não vira FAILED. Nenhuma V2 é ativada automaticamente neste momento.
+
+# 34. Critérios adicionais de fechamento
+
+- [x] produto não resolvido pela V1 não é descartado;
+- [x] produto não resolvido não segue para Studio;
+- [x] produto não resolvido não segue para Hub;
+- [x] WAITING_VISION persiste no SQLite;
+- [x] erro de resolução fica auditável;
+- [x] Coordinator continua com os demais itens;
+- [x] arquitetura futura da V2 está documentada;
+- [x] V2 não cria pipeline paralela;
+- [x] V2 possui estratégia de reconciliação de identidade;
+- [x] V2 possui estratégia de ambiguidade;
+- [x] V2 possui estratégia de retry limitado;
+- [x] V2 possui plano de persistência de evidências;
+- [x] V2 possui matriz mínima de testes definida;
+- [ ] implementação da V2;
+- [ ] validação da V2 contra a API real;
+- [ ] ativação operacional da V2.
