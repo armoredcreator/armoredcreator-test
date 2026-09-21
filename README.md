@@ -6,7 +6,7 @@ Laboratório isolado da reconstrução do **ArmoredCreator**. Este documento é 
 
 **Branch de trabalho:** `refactor/closure-batch`  
 **Base:** `refactor/single-storage-pipeline`  
-**HEAD atual da branch:** `908ecd9f6da00449019d7473cab762c83bd18b97`
+**HEAD atual da branch:** `fd84af12c5592df13ba2e31b3c2140c3e26aaa37`
 
 ---
 
@@ -65,14 +65,20 @@ próximo item
 
 Existe exatamente **um item ativo no processamento**.
 
-A descoberta de vários itens pelo Sync não cria processamento paralelo:
+O Sync não materializa vários itens antecipadamente. A sequência operacional é estritamente serial:
 
 ```
-1383 → Vision → Studio → Hub → cleanup
-                                  ↓
-1384 → Vision → Studio → Hub → cleanup
-                                  ↓
-1385 → ...
+descobre 1383
+   ↓
+materializa 1383
+   ↓
+Vision → Studio → Hub → confirmação → cleanup
+   ↓
+só então descobre 1384
+   ↓
+materializa 1384
+   ↓
+...
 ```
 
 Não fazem parte da arquitetura final:
@@ -141,7 +147,7 @@ descobrir 1 candidato
 
 O próximo vídeo só pode ser baixado depois que o item anterior deixou a etapa Sync e entrou no processamento sequencial. Uma falha de materialização não cria uma fila de downloads: o item permanece persistido/recuperável e o Coordinator pode seguir para o próximo candidato.
 
-O checkpoint só avança depois que o ORIGINAL do candidato foi materializado de forma durável. O estado de processamento continua no SQLite e permite recovery após restart.
+O checkpoint só avança depois que o item foi tratado corretamente: processamento concluído, publicação confirmada, estado `PUBLISHED` e cleanup concluído. Materializar o ORIGINAL sozinho nunca avança checkpoint. Se houver crash depois da materialização e antes da conclusão, o candidato continua recuperável pelo SQLite + workspace e permanece elegível para reconciliação após restart.
 
 ### LIVE
 
@@ -1209,7 +1215,7 @@ Essa é a base da recuperação e da operação contínua.
 # 30. Estado de fechamento
 
 **Arquitetura reconstruída:** SIM  
-**Testes automatizados:** pendente de execução no HEAD atual após a correção  
+**Testes automatizados:** pendente de execução no HEAD atual `fd84af1`  
 **CI:** pendente de revalidação  
 **Recovery determinístico:** implementado e testado  
 **Publicação real:** comprovada  
@@ -1218,7 +1224,7 @@ Essa é a base da recuperação e da operação contínua.
 **Storage único:** implementado  
 **Coordinator contínuo:** implementado em código, certificação real pendente  
 **E2E contínuo real:** certificação pendente  
-**Processamento sequencial 1-item:** regra operacional corrigida nesta branch  
+**Processamento sequencial 1-item:** regra operacional corrigida e checkpoint pós-conclusão nesta branch  
 **Materialização em lote:** proibida pela arquitetura definitiva  
 **Reset final:** pendente
 
