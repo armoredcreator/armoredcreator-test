@@ -251,7 +251,7 @@ class TelegramSource:
 
         telegram_size = getattr(getattr(message, "document", None), "size", None)
         idle_timeout = max(
-            15,
+            1,
             int(os.getenv("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT", "60")),
         )
         started = asyncio.get_running_loop().time()
