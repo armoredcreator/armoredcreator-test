@@ -38,14 +38,31 @@ class _Publisher:
 
 
 class _OneCandidatePerPoll:
+    class _Reader:
+        def __init__(self, owner):
+            self.owner = owner
+            self.connected = False
+
+        def is_connected(self):
+            return self.connected
+
+        async def connect(self):
+            self.connected = True
+            self.owner.connect_count += 1
+
+        async def disconnect(self):
+            if self.connected:
+                self.connected = False
+                self.owner.disconnect_count += 1
+
     def __init__(self, db):
         self.db = db
         self.index = 0
         self.connect_count = 0
         self.disconnect_count = 0
+        self.reader = self._Reader(self)
 
     async def fetch_live_batch_async(self, limit=None):
-        self.connect_count += 1
         candidates = ["live-1", "live-2"]
         if self.index >= len(candidates):
             return [], {}
@@ -67,9 +84,6 @@ class _OneCandidatePerPoll:
             for value in selected
         ]
         return messages, {228: 100 + self.index}
-
-    async def disconnect(self):
-        self.disconnect_count += 1
 
     def mark_ingested(self, message_id):
         pass
@@ -99,11 +113,11 @@ class LiveReconnectTests(unittest.TestCase):
                 self.assertEqual(source.connect_count, 1)
                 self.assertEqual(source.disconnect_count, 1)
                 self.assertEqual(db.get("live-1").state, State.PUBLISHED)
-                self.assertEqual(db.get("live-2").state, State.RECEIVED)
-            except KeyError:
-                self.assertFalse(db.conn.execute(
-                    "SELECT 1 FROM items WHERE content_id='live-2'"
-                ).fetchone())
+                self.assertIsNone(
+                    db.conn.execute(
+                        "SELECT 1 FROM items WHERE content_id='live-2'"
+                    ).fetchone()
+                )
             finally:
                 coordinator.close()
 
