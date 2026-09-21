@@ -401,10 +401,6 @@ class TelegramSource:
                             pending_id not in self._seen
                             and original_url is not None
                         ):
-                            if self._catchup_limit_before_candidate():
-                                self._historical_scan_exhausted = False
-                                return
-                            self._historical_candidates_emitted += 1
                             yield (
                                 pending_id,
                                 int(topic_id),
@@ -420,10 +416,6 @@ class TelegramSource:
                 original_url = self._shopee_url(message)
                 if original_url is not None:
                     if message_id not in self._seen:
-                        if self._catchup_limit_before_candidate():
-                            self._historical_scan_exhausted = False
-                            return
-                        self._historical_candidates_emitted += 1
                         yield (
                             message_id,
                             int(topic_id),
