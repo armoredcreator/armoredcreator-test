@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil
 from .database import Database
 from .models import PublicationCheck, State
-from .services import Publisher, StudioService, VisionService
+from .services import Publisher, StudioService, VisionService, VisionUnresolvedError
 from .storage import Storage
 
 class Pipeline:
@@ -24,10 +24,16 @@ class Pipeline:
             if item.state in (State.RECEIVED, State.RECOVERY):
                 self.db.transition(item_id, State.VISION, "pipeline-start")
             item = self.db.get(item_id)
+            if item.state == State.WAITING_VISION:
+                return
             if item.state == State.FAILED:
                 raise RuntimeError("FAILED item requires deterministic recovery before pipeline.run")
             if item.state == State.VISION:
-                v = self.vision.identify(item)
+                try:
+                    v = self.vision.identify(item)
+                except VisionUnresolvedError as exc:
+                    self.db.mark_vision_waiting(item_id, str(exc))
+                    return
                 self.db.set_vision(item_id, v.affiliate_name, v.affiliate_url)
                 self.db.transition(item_id, State.STUDIO, "vision-complete")
             item = self.db.get(item_id)
