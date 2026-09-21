@@ -109,7 +109,8 @@ class CoordinatorContinuousTests(unittest.TestCase):
                 self.assertEqual(source.calls, 2)
                 self.assertEqual(publisher.published, ["live-1"])
                 self.assertEqual(db.get("live-1").state, State.PUBLISHED)
-                self.assertEqual(db.sync_topic_checkpoint(101), 102)
+                # Only the processed candidate advances the checkpoint.
+                self.assertEqual(db.sync_topic_checkpoint(101), 101)
                 self.assertIsNone(
                     db.conn.execute(
                         "SELECT 1 FROM runtime_locks WHERE name='coordinator'"
