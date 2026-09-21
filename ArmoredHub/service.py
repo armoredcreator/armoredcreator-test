@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +21,24 @@ class ArmoredHub:
 
     def _publication(self, item: Item):
         return self.db.publication(item.content_id) if self.db is not None else None
+
+    @staticmethod
+    def _run_async(coro):
+        """Run an async Telegram operation without nesting asyncio.run().
+
+        Coordinator keeps one production event loop alive for the whole
+        process. Hub's public API is intentionally synchronous, so Telegram
+        MTProto/Bot coroutines execute in a short-lived worker thread when
+        called from that live loop. This prevents the persistent Coordinator
+        loop from being replaced and avoids creating un-awaited coroutines.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="armored-hub-telegram") as executor:
+            return executor.submit(asyncio.run, coro).result()
 
     def check_publication(self, item: Item) -> PublicationCheck:
         record = self._publication(item)
@@ -147,7 +167,7 @@ class ArmoredHub:
                 if client.is_connected():
                     await client.disconnect()
 
-        return __import__("asyncio").run(discover())
+        return self._run_async(discover())
 
     @staticmethod
     def _topic_id(message) -> int | None:
@@ -251,7 +271,7 @@ class ArmoredHub:
                     await client.disconnect()
 
         try:
-            return __import__("asyncio").run(find())
+            return self._run_async(find())
         except Exception:
             return None
 
@@ -290,7 +310,7 @@ class ArmoredHub:
                     await client.disconnect()
 
         try:
-            return __import__("asyncio").run(verify())
+            return self._run_async(verify())
         except Exception:
             return None
 
@@ -394,7 +414,7 @@ class ArmoredHub:
                 await bot.shutdown()
 
         try:
-            message = __import__("asyncio").run(send())
+            message = self._run_async(send())
         except (TimedOut, NetworkError) as exc:
             # The Bot API timeout is an ambiguous side-effect window: Telegram
             # may have accepted the upload but the HTTP response may have been
