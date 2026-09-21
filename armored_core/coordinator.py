@@ -247,15 +247,15 @@ class Coordinator:
         fetch_batch = getattr(source, "fetch_live_batch_async", None)
         if fetch_batch is None:
             return []
+
+        # Materialize the complete LIVE batch while the Sync Telegram session
+        # is connected. Telethon materializers depend on that live session and
+        # must never run after disconnect. Only durable originals may cross the
+        # Sync -> Hub boundary.
         messages, checkpoints = await fetch_batch()
         processed: list[str] = []
         try:
             for message in messages:
-                # The previous item deliberately disconnected Telegram before
-                # entering Hub. Reconnect here before the next materialization;
-                # otherwise the second LIVE item would try to download through
-                # a closed Telethon client.
-                await self._ensure_source_connection()
                 item_id = await self.sync.ingest_message_async(IngestMessage(
                     telegram_message_id=str(message.telegram_message_id),
                     source_id=getattr(message, "source_id", "telegram"),
@@ -269,20 +269,22 @@ class Coordinator:
                 if marker is not None:
                     marker(str(message.telegram_message_id))
                 processed.append(str(item_id))
-
-                # FAILED is intentionally excluded from automatic retry.
-                # LIVE dedupe may rediscover the same Telegram message.
-                if self.db.get(str(item_id)).state == State.FAILED:
-                    continue
-
-                await self._release_source_connection()
-                self.run(str(item_id))
         finally:
-            if checkpoints and (not messages or len(processed) == len(messages)):
-                commit = getattr(source, "commit_live_checkpoints", None)
-                if commit is not None:
-                    commit(checkpoints)
+            # Never leave the Sync Telethon session open while Hub/Studio run.
+            # If materialization failed, checkpoints are intentionally not
+            # committed and the interrupted items remain recoverable.
             await self._release_source_connection()
+
+        # All originals are now durable. Process exactly one item at a time.
+        for item_id in processed:
+            if self.db.get(str(item_id)).state == State.FAILED.value:
+                continue
+            self.run(str(item_id))
+
+        if checkpoints and len(processed) == len(messages):
+            commit = getattr(source, "commit_live_checkpoints", None)
+            if commit is not None:
+                commit(checkpoints)
         return processed
 
     def run_live_once(self) -> list[str]:
