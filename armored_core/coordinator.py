@@ -252,7 +252,12 @@ class Coordinator:
                     exc,
                 )
 
-            if bounded_stop_after_current:
+            # Count only a fully published and cleaned item.
+            current = self.db.get(item_id)
+            if current.state == State.PUBLISHED and current.cleanup_completed:
+                processed.append(item_id)
+
+            if bounded_limit is not None and len(processed) >= bounded_limit:
                 import logging
                 logging.getLogger(__name__).info(
                     "[COORDINATOR][CATCH-UP] Limite fechado atingido: %s item(ns). "
