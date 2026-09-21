@@ -147,132 +147,78 @@ class Coordinator:
         return item_id
 
     async def run_catch_up_async(self) -> list[str]:
-        """Process historical candidates incrementally, one item at a time."""
+        """Discover, materialize, release Sync, and process exactly one item at a time.
+
+        CATCH-UP deliberately does not collect a materialized batch. The Sync
+        source only exposes the next eligible candidate; that candidate is
+        materialized into its canonical workspace, the Telegram session is
+        released, and only then does Vision/Studio/Hub run.
+        """
         processed: list[str] = []
         source = self.source
-
-        # Stream real Telegram candidates while the Sync connection remains open.
-        # Originals are materialized immediately, avoiding a full-history
-        # in-memory batch and restoring the legacy Sync's early-download behavior.
-        iter_historical = getattr(source, "iter_historical_candidates_async", None)
-        if iter_historical is not None:
-            processed: list[str] = []
-            try:
-                async for message in iter_historical():
-                    item_id = await self.sync.ingest_message_async(IngestMessage(
-                        telegram_message_id=str(message.telegram_message_id),
-                        source_id=getattr(message, "source_id", "telegram"),
-                        topic_id=getattr(message, "topic_id", None),
-                        topic_name=getattr(message, "topic_name", None),
-                        original_url=getattr(message, "original_url", None),
-                        source_path=getattr(message, "source_path", None),
-                        materialize=getattr(message, "materialize", None),
-                    ))
-                    marker = getattr(source, "mark_ingested", None)
-                    if marker is not None:
-                        marker(str(message.telegram_message_id))
-                    processed.append(str(item_id))
-            finally:
-                await self._release_source_connection()
-
-            limited_catchup = bool(getattr(source, "historical_limit_reached", False))
-            commit = getattr(source, "commit_live_checkpoints", None)
-            checkpoints = getattr(source, "_historical_checkpoints", None)
-            if not limited_catchup and commit is not None and checkpoints:
-                commit(dict(checkpoints))
-
-            for item_id in processed:
-                if self.db.get(str(item_id)).state == State.FAILED:
-                    continue
-                self.run(str(item_id))
-
-            if limited_catchup:
-                print(
-                    "[COORDINATOR] CATCH-UP limitado concluído; "
-                    "histórico permanece pendente para execução completa futura."
-                )
-            else:
-                self.db.complete_historical_sync()
-            return processed
-
-        # Compatibility path for sources that still expose the older batch API.
-        collect_batch = getattr(source, "collect_historical_batch_async", None)
-        if collect_batch is not None:
-            processed = []
-            messages, checkpoints = await collect_batch()
-            try:
-                for message in messages:
-                    item_id = await self.sync.ingest_message_async(IngestMessage(
-                        telegram_message_id=str(message.telegram_message_id),
-                        source_id=getattr(message, "source_id", "telegram"),
-                        topic_id=getattr(message, "topic_id", None),
-                        topic_name=getattr(message, "topic_name", None),
-                        original_url=getattr(message, "original_url", None),
-                        source_path=getattr(message, "source_path", None),
-                        materialize=getattr(message, "materialize", None),
-                    ))
-                    marker = getattr(source, "mark_ingested", None)
-                    if marker is not None:
-                        marker(str(message.telegram_message_id))
-                    processed.append(str(item_id))
-            finally:
-                await self._release_source_connection()
-
-            commit = getattr(source, "commit_live_checkpoints", None)
-            if commit is not None:
-                commit(checkpoints)
-
-            for item_id in processed:
-                if self.db.get(str(item_id)).state == State.FAILED:
-                    continue
-                self.run(str(item_id))
-
-            self.db.complete_historical_sync()
-            return processed
-
-        fetch_async = getattr(source, "fetch_next_async", None)
-
-        if fetch_async is None:
-            while True:
-                item_id = await self.ingest_once_async()
-                if item_id is None:
-                    break
-                processed.append(str(item_id))
-                self.run(item_id)
-            self.db.complete_historical_sync()
-            return processed
+        fetch_next = getattr(source, "fetch_next_async", None)
+        if fetch_next is None:
+            raise RuntimeError("Sync source não implementa fetch_next_async")
 
         while True:
-            message = await fetch_async()
+            message = await fetch_next()
             if message is None:
                 self.db.complete_historical_sync()
                 break
 
-            item_id = await self.sync.ingest_message_async(IngestMessage(
-                telegram_message_id=str(message.telegram_message_id),
-                source_id=getattr(message, "source_id", "telegram"),
-                topic_id=getattr(message, "topic_id", None),
-                topic_name=getattr(message, "topic_name", None),
-                original_url=getattr(message, "original_url", None),
-                source_path=getattr(message, "source_path", None),
-                materialize=getattr(message, "materialize", None),
-            ))
-            marker = getattr(source, "mark_ingested", None)
-            if marker is not None:
-                marker(str(message.telegram_message_id))
-            processed.append(str(item_id))
+            item_id = str(message.telegram_message_id)
+            materialized = False
+            try:
+                await self._ensure_source_connection()
+                item_id = str(await self.sync.ingest_message_async(IngestMessage(
+                    telegram_message_id=item_id,
+                    source_id=getattr(message, "source_id", "telegram"),
+                    topic_id=getattr(message, "topic_id", None),
+                    topic_name=getattr(message, "topic_name", None),
+                    original_url=getattr(message, "original_url", None),
+                    source_path=getattr(message, "source_path", None),
+                    materialize=getattr(message, "materialize", None),
+                )))
+                materialized = True
+                marker = getattr(source, "mark_ingested", None)
+                if marker is not None:
+                    marker(str(message.telegram_message_id))
+                processed.append(item_id)
 
-            # FAILED is a durable terminal/manual-retry state. If Sync
-            # rediscovers its Telegram message during CATCH-UP, dedupe returns
-            # the same item ID; never feed that FAILED item back into pipeline.
-            if self.db.get(str(item_id)).state == State.FAILED:
+                # The checkpoint advances only after the immutable ORIGINAL was
+                # durably materialized. Processing may fail later; SQLite keeps
+                # the item recoverable and startup recovery can finish it.
+                topic_id = getattr(message, "topic_id", None)
+                if topic_id is not None:
+                    commit = getattr(source, "commit_live_checkpoints", None)
+                    if commit is not None:
+                        commit({int(topic_id): int(message.telegram_message_id)})
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "[COORDINATOR][CATCH-UP] Falha ao materializar %s; "
+                    "checkpoint não avança e o próximo candidato poderá continuar: %s",
+                    getattr(message, "telegram_message_id", "?"),
+                    exc,
+                )
+            finally:
+                await self._release_source_connection()
+
+            if not materialized:
                 continue
 
-            # Release Telegram before Hub opens the same Telethon session.
-            # The source iterator is already materialized per topic and can
-            # reconnect on the next fetch.
-            await self._release_source_connection()
-            self.run(str(item_id))
+            # Exactly one item crosses the Sync -> Pipeline boundary.
+            try:
+                if self.db.get(item_id).state != State.FAILED:
+                    self.run(item_id)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "[COORDINATOR][CATCH-UP] Falha no processamento de %s; "
+                    "item permanece persistido para recovery: %s",
+                    item_id,
+                    exc,
+                )
 
         return processed
 
