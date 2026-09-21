@@ -80,6 +80,27 @@ class VisionWaitingTests(unittest.TestCase):
             finally:
                 db.close()
 
+    def test_real_armored_vision_unresolved_flows_through_pipeline_to_waiting(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            item_id = self._item(db, storage, "vision-real-contract-1")
+            studio = _Studio()
+            publisher = _Publisher()
+            vision = ArmoredVision(api=_NotFoundAPI())
+            resolved = type("Resolved", (), {"shop_id": "123", "item_id": "456"})()
+            from unittest.mock import patch
+            try:
+                with patch("ArmoredVision.service.resolve_short_url", return_value=resolved):
+                    Pipeline(db, storage, vision, studio, publisher).run(item_id)
+                self.assertEqual(db.get(item_id).state, State.WAITING_VISION)
+                self.assertEqual(studio.calls, 0)
+                self.assertEqual(publisher.calls, 0)
+                self.assertTrue(db.get(item_id).original_path.is_file())
+            finally:
+                db.close()
+
     def test_waiting_vision_survives_restart_and_is_not_reprocessed_automatically(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
