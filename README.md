@@ -6,7 +6,7 @@ Laboratório isolado da reconstrução do **ArmoredCreator**. Este documento é 
 
 **Branch de trabalho:** `refactor/closure-batch`  
 **Base:** `refactor/single-storage-pipeline`  
-**HEAD atual da branch:** `fd84af12c5592df13ba2e31b3c2140c3e26aaa37`
+**HEAD atual da branch:** `463154ba24f2efccf7dfac9ffa858d953c1a4657`
 
 ---
 
