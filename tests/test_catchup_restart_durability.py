@@ -41,8 +41,7 @@ class _Publisher:
 
 
 class _CrashAfterFirst:
-    def __init__(self, publisher):
-        self.publisher = publisher
+    def __init__(self):
         self.calls = 0
 
     def check_publication(self, item):
@@ -50,7 +49,6 @@ class _CrashAfterFirst:
 
     def publish(self, item):
         self.calls += 1
-        self.publisher.published.append(item.content_id)
         if self.calls == 1:
             raise RuntimeError("simulated-process-crash")
         return PublicationResult(True, "pub-" + item.content_id)
@@ -108,36 +106,39 @@ class CatchUpRestartTests(unittest.TestCase):
                 files[message_id] = path
 
             source = _BatchSource(db, files)
-            publisher = _Publisher()
             crashing = Coordinator(
-                db, storage, _Vision(), _Studio(storage), _CrashAfterFirst(publisher), source
+                db, storage, _Vision(), _Studio(storage), _CrashAfterFirst(), source
             )
 
             with self.assertRaises(RuntimeError):
                 crashing.run_catch_up()
 
-            # The whole historical candidate set was materialized before Hub
-            # processing. Checkpoints may already be persisted, but the second
-            # process must not download the originals again: SQLite + canonical
-            # storage are already durable and SyncService is idempotent.
+            # All historical originals were materialized before processing.
+            # Checkpoints may already be persisted, but the canonical originals
+            # are durable and must not be downloaded again after restart.
             self.assertEqual(source.materializations, 2)
             self.assertEqual(source.checkpoints, {10: 302})
             self.assertTrue(db.get("301").original_path.is_file())
             self.assertTrue(db.get("302").original_path.is_file())
+            self.assertEqual(db.get("301").state.value, "FAILED")
             crashing.close()
 
             restarted_db = Database(storage.database / "db.sqlite")
             restarted_source = _BatchSource(restarted_db, files)
-            restarted_publisher = _Publisher()
+            publisher = _Publisher()
             restarted = Coordinator(
                 restarted_db,
                 storage,
                 _Vision(),
                 _Studio(storage),
-                restarted_publisher,
+                publisher,
                 restarted_source,
             )
 
+            # FAILED is deliberately manual-recovery state. Recover the item
+            # explicitly, then let the same CATCH-UP continue with the remaining
+            # durable item. Neither path may redownload an existing original.
+            restarted.recover("301")
             processed = restarted.run_catch_up()
 
             self.assertEqual(processed, ["301", "302"])
@@ -147,6 +148,7 @@ class CatchUpRestartTests(unittest.TestCase):
                 [restarted_db.get(item).state.value for item in ("301", "302")],
                 ["PUBLISHED", "PUBLISHED"],
             )
+            self.assertEqual(publisher.published, ["301"])
             restarted.close()
 
 
