@@ -4,8 +4,15 @@ import argparse
 import asyncio
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
+
+# Running this file directly from scripts/ puts scripts/ on sys.path.
+# Project packages live one level above, at the repository root.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import load_dotenv
 
@@ -59,7 +66,7 @@ async def inspect_telegram(root: Path, chat_id: str, message_id: str) -> None:
     if not api_id or not api_hash:
         raise RuntimeError("TELEGRAM_API_ID/TELEGRAM_API_HASH ausentes")
 
-    session = root / "credentials" / "telegram" / "session" / "armoredsync"
+    session = root / "storage" / "credentials" / "telegram" / "session" / "armoredsync"
     client = TelegramClient(str(session), int(api_id), api_hash, request_retries=0, connection_retries=0)
     try:
         await client.start()
@@ -93,7 +100,7 @@ async def inspect_telegram(root: Path, chat_id: str, message_id: str) -> None:
             await client.disconnect()
 
 
-def run_one(root: Path, source_db: Database, source: Item) -> None:
+def run_one(root: Path, source: Item) -> None:
     if not source.original_path.is_file():
         raise FileNotFoundError(f"ORIGINAL ausente para {source.content_id}: {source.original_path}")
     if not source.affiliate_name or not source.affiliate_url:
@@ -102,7 +109,6 @@ def run_one(root: Path, source_db: Database, source: Item) -> None:
             "não é possível reproduzir o envio com a mesma identidade."
         )
 
-    # Never let this diagnostic path silently turn into Studio test-copy mode.
     if os.getenv("ARMORED_STUDIO_FORCE_COPY") == "1":
         raise RuntimeError(
             "ARMORED_STUDIO_FORCE_COPY=1 está ativo. Desative-o para que este reteste "
@@ -115,7 +121,6 @@ def run_one(root: Path, source_db: Database, source: Item) -> None:
 
     with tempfile.TemporaryDirectory(prefix="armoredcreator-retest-") as temp_dir:
         test_db = Database(Path(temp_dir) / "retest.db")
-        item = make_retest_item(source, test_id, workspace)
         test_db.create_item(
             telegram_message_id=test_id,
             original_path=source.original_path,
@@ -184,7 +189,7 @@ def main() -> int:
     try:
         for item_id in args.items:
             source = source_db.get(str(item_id))
-            run_one(root, source_db, source)
+            run_one(root, source)
     finally:
         source_db.close()
 
