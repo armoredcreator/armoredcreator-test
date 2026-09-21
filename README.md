@@ -6,7 +6,7 @@ Laboratório isolado da reconstrução do **ArmoredCreator**. Este documento é 
 
 **Branch de trabalho:** `refactor/closure-batch`  
 **Base:** `refactor/single-storage-pipeline`  
-**HEAD atual da branch:** `d365e167e8b45e9a84e2ab0ad0bbe670bd91598d`
+**HEAD atual da branch:** `07dfc020c336972dbbe9282dc26347d3e29eb3e7`
 
 ---
 
@@ -792,7 +792,7 @@ Os testes cobrem, entre outros:
 - contratos da arquitetura;
 - launcher único.
 
-O CI do HEAD documentado também foi aprovado.
+O CI do HEAD ainda precisa ser executado/revalidado após as correções desta rodada; não declarar a suíte verde até reproduzir o resultado no HEAD atual.
 
 ---
 
@@ -806,10 +806,10 @@ Principais correções consolidadas durante a reconstrução:
 - Coordinator contínuo com runtime lock;
 - liberação do lock após falha operacional;
 - detecção correta da conexão Telethon através do client;
-- CATCH-UP em lote;
+- CATCH-UP sequencial de um candidato por vez;
 - lifecycle correto da sessão Telegram durante CATCH-UP;
 - release explícito da conexão direta de batch;
-- LIVE em lote antes do processamento;
+- LIVE sequencial de um candidato por vez;
 - persistência de checkpoints;
 - process restart lab;
 - remoção de launcher duplicado;
@@ -1209,8 +1209,8 @@ Essa é a base da recuperação e da operação contínua.
 # 30. Estado de fechamento
 
 **Arquitetura reconstruída:** SIM  
-**Testes automatizados:** executar no HEAD atual antes de declarar fechamento  
-**CI:** aprovado  
+**Testes automatizados:** pendente de execução no HEAD atual após a correção  
+**CI:** pendente de revalidação  
 **Recovery determinístico:** implementado e testado  
 **Publicação real:** comprovada  
 **Confirmação Telegram real:** comprovada  
