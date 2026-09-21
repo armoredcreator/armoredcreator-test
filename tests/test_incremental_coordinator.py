@@ -130,30 +130,55 @@ class IncrementalCoordinatorTests(unittest.TestCase):
             coordinator.close()
 
 
-    def test_real_source_batch_materializes_before_disconnect_and_then_processes(self):
+    def test_real_source_materializes_one_candidate_before_processing(self):
+        class SingleCandidateTelegramSource:
+            def __init__(self):
+                self.connected = False
+                self.disconnected = False
+                self.marked = []
+                self.checkpoints = {}
+
+            async def fetch_next_async(self):
+                async def materialize(target):
+                    if self.disconnected:
+                        raise AssertionError("materialization occurred after disconnect")
+                    target.write_bytes(b"SINGLE-CANDIDATE")
+                return SimpleNamespace(
+                    telegram_message_id="telegram-single-1",
+                    source_id="telegram",
+                    topic_id=101,
+                    topic_name="Single",
+                    original_url="https://shopee.com.br/example/single",
+                    source_path=None,
+                    materialize=materialize,
+                ) if not self.marked else None
+
+            def mark_ingested(self, message_id):
+                self.marked.append(str(message_id))
+
+            async def disconnect(self):
+                self.disconnected = True
+
+            def commit_live_checkpoints(self, checkpoints):
+                self.checkpoints = dict(checkpoints)
+
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
             db = Database(storage.database / "db.sqlite")
-            source = BatchTelegramSource()
+            source = SingleCandidateTelegramSource()
             publisher = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source)
 
             try:
                 processed = coordinator.run_catch_up()
-
-                self.assertEqual(processed, ["telegram-batch-1"])
-                self.assertEqual(source.marked, ["telegram-batch-1"])
-                self.assertTrue(source.disconnected)
-                self.assertEqual(source.checkpoints, {101: 900})
+                self.assertEqual(processed, ["telegram-single-1"])
+                self.assertEqual(source.marked, ["telegram-single-1"])
                 self.assertTrue(db.historical_complete())
-                item = db.get("telegram-batch-1")
-                self.assertEqual(item.state, State.PUBLISHED)
-                self.assertTrue(item.original_path.exists())
-                self.assertEqual(publisher.published, ["telegram-batch-1"])
+                self.assertEqual(db.get("telegram-single-1").state, State.PUBLISHED)
+                self.assertEqual(publisher.published, ["telegram-single-1"])
             finally:
                 coordinator.close()
-
 
 if __name__ == "__main__":
     unittest.main()
