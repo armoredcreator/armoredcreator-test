@@ -192,7 +192,7 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertEqual(db.get("102").telegram_message_id, "102")
             coordinator.close()
 
-    def test_live_reconnects_before_each_materialization(self):
+    def test_live_batch_materializes_before_disconnect_then_processes_sequentially(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
@@ -226,6 +226,7 @@ class SyncLifecycleTests(unittest.TestCase):
 
                 async def fetch_live_batch_async(self):
                     self.live_called = True
+                    await reader.connect()
                     messages = []
                     for message_id in ("201", "202"):
                         async def materialize(target, message_id=message_id):
@@ -244,13 +245,15 @@ class SyncLifecycleTests(unittest.TestCase):
             publisher = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source)
 
-            live = coordinator.run_live_once()
+            try:
+                live = coordinator.run_live_once()
 
-            self.assertEqual(live, ["201", "202"])
-            self.assertEqual(publisher.published, ["201", "202"])
-            self.assertGreaterEqual(reader.connects, 2)
-            self.assertGreaterEqual(reader.disconnects, 2)
-            coordinator.close()
+                self.assertEqual(live, ["201", "202"])
+                self.assertEqual(publisher.published, ["201", "202"])
+                self.assertEqual(reader.connects, 1)
+                self.assertEqual(reader.disconnects, 1)
+            finally:
+                coordinator.close()
 
     def test_live_checkpoint_survives_processing_failure_without_startup_retry(self):
         with tempfile.TemporaryDirectory() as td:
