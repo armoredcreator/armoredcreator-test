@@ -12,6 +12,15 @@ from .models import Item, PublicationCheck
 class VisionUnresolvedError(RuntimeError):
     """Vision V1 could not resolve the product with enough certainty."""
 
+
+class PublicationUnknownError(RuntimeError):
+    """Telegram publication outcome is unresolved and must enter recovery.
+
+    This is deliberately distinct from a normal pipeline failure: a timeout
+    can happen after Telegram has accepted the upload, so the item must remain
+    recoverable and must never be treated as a terminal FAILED item.
+    """
+
 from .storage import Storage
 
 @dataclass(frozen=True)
