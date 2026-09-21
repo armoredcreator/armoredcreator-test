@@ -609,6 +609,13 @@ class TelegramSource:
             await self.reader.disconnect()
             raise
 
+    async def fetch_live_candidate_async(self) -> tuple[SyncMessage | None, dict[int, int]]:
+        """Discover exactly one LIVE candidate; never materialize it here."""
+        messages, checkpoints = await self.fetch_live_batch_async(limit=1)
+        if not messages:
+            return None, {}
+        return messages[0], checkpoints
+
     def commit_live_checkpoints(self, checkpoints: dict[int, int]) -> None:
         if self.db is None:
             return
