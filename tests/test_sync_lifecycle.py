@@ -193,12 +193,13 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertEqual(db.get("102").telegram_message_id, "102")
             coordinator.close()
 
-    def test_live_batch_materializes_before_disconnect_then_processes_sequentially(self):
+    def test_live_materializes_only_one_candidate_per_poll(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
             db = Database(storage.database / "db.sqlite")
             db.complete_historical_sync()
+            db.set_sync_topic_checkpoint(228, "topic", 99)
 
             class Reader:
                 def __init__(self):
@@ -224,37 +225,47 @@ class SyncLifecycleTests(unittest.TestCase):
                     super().__init__()
                     self.reader = reader
                     self.completed = True
+                    self.index = 0
 
-                async def fetch_live_batch_async(self):
-                    self.live_called = True
+                async def fetch_live_batch_async(self, limit=None):
                     await reader.connect()
-                    messages = []
-                    for message_id in ("201", "202"):
-                        async def materialize(target, message_id=message_id):
-                            if not reader.connected:
-                                raise RuntimeError("telegram-client-not-connected")
-                            target.write_bytes(message_id.encode())
-                        messages.append(SyncMessage(
-                            message_id,
-                            source_id="telegram",
-                            original_url="https://shopee.com.br/x/live",
-                            materialize=materialize,
-                        ))
-                    return messages, {10: 202}
+                    values = ["201", "202"]
+                    if self.index >= len(values):
+                        return [], {}
+                    value = values[self.index]
+                    self.index += 1
+
+                    async def materialize(target):
+                        if not reader.connected:
+                            raise RuntimeError("telegram-client-not-connected")
+                        target.write_bytes(value.encode())
+
+                    return [SyncMessage(
+                        value, source_id="telegram", topic_id=228,
+                        topic_name="topic",
+                        original_url="https://shopee.com.br/x/live",
+                        materialize=materialize,
+                    )], {228: 99 + self.index}
+
+                async def disconnect(self):
+                    await reader.disconnect()
 
             source = LiveSource()
             publisher = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source)
 
             try:
-                live = coordinator.run_live_once()
-
-                self.assertEqual(live, ["201", "202"])
-                self.assertEqual(publisher.published, ["201", "202"])
+                self.assertEqual(coordinator.run_live_once(), ["201"])
+                self.assertEqual(publisher.published, ["201"])
                 self.assertEqual(reader.connects, 1)
                 self.assertEqual(reader.disconnects, 1)
+                self.assertEqual(coordinator.run_live_once(), ["202"])
+                self.assertEqual(publisher.published, ["201", "202"])
+                self.assertEqual(reader.connects, 2)
+                self.assertEqual(reader.disconnects, 2)
             finally:
                 coordinator.close()
+
 
     def test_live_checkpoint_survives_processing_failure_without_startup_retry(self):
         with tempfile.TemporaryDirectory() as td:
@@ -301,7 +312,7 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertEqual(restarted_source.live, [])
             second.close()
 
-    def test_run_forever_catches_up_then_processes_live_in_one_sequential_cycle(self):
+    def test_run_forever_catches_up_then_processes_one_live_candidate_per_cycle(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
@@ -329,16 +340,20 @@ class SyncLifecycleTests(unittest.TestCase):
             publisher = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source)
 
-            coordinator.run_forever(max_cycles=1)
+            coordinator.run_forever(max_cycles=1, poll_seconds=0)
 
             self.assertTrue(db.historical_complete())
             self.assertTrue(source.live_called)
-            self.assertEqual(publisher.published, ["100", "101", "102", "103"])
+            self.assertEqual(publisher.published, ["100", "101", "102"])
             self.assertEqual(
-                [db.get(item_id).state.value for item_id in ("100", "101", "102", "103")],
-                ["PUBLISHED", "PUBLISHED", "PUBLISHED", "PUBLISHED"],
+                [db.get(item_id).state.value for item_id in ("100", "101", "102")],
+                ["PUBLISHED", "PUBLISHED", "PUBLISHED"],
             )
+            self.assertFalse(db.conn.execute(
+                "SELECT 1 FROM items WHERE content_id='103'"
+            ).fetchone())
             coordinator.close()
+
 
     def test_history_and_live_same_id_is_idempotent(self):
         with tempfile.TemporaryDirectory() as td:
