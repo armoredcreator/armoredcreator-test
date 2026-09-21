@@ -162,13 +162,14 @@ class ContinuousCoordinatorTests(unittest.TestCase):
 
             try:
                 coordinator.run_forever(max_cycles=1, poll_seconds=0)
-                # Sync materializes the discovery batch while its Telegram
-                # session is connected. Only after that session is released does
-                # the Coordinator enter the single-item processing phase.
+                # LIVE is strictly serialized: each candidate is
+                # materialized, the Sync session is released, and that single
+                # item completes the pipeline before the next candidate is
+                # materialized.
                 self.assertEqual(events, [
                     "materialize:live-1",
-                    "materialize:live-2",
                     "pipeline:live-1",
+                    "materialize:live-2",
                     "pipeline:live-2",
                 ])
                 self.assertEqual(publisher.published, ["live-1", "live-2"])
