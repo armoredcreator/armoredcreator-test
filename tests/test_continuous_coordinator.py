@@ -129,7 +129,9 @@ class _LiveSourceSerialized(_LiveSource):
                 materialize=materialize,
             ))
         return messages, {228: 102}
-\n\n
+
+
+
 
 
 class _RecordingCoordinator(Coordinator):
@@ -140,7 +142,9 @@ class _RecordingCoordinator(Coordinator):
     def run(self, item_id: str) -> None:
         self._events.append("pipeline:" + str(item_id))
         super().run(item_id)
-\n\nclass ContinuousCoordinatorTests(unittest.TestCase):
+
+
+class ContinuousCoordinatorTests(unittest.TestCase):
     def test_live_materializes_and_processes_strictly_one_at_a_time(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -170,7 +174,9 @@ class _RecordingCoordinator(Coordinator):
                 self.assertEqual(source.checkpoints_committed, {228: 102})
             finally:
                 coordinator.close()
-\n\n    def test_run_forever_processes_live_then_restarts_without_duplicate(self):
+
+
+    def test_run_forever_processes_live_then_restarts_without_duplicate(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
