@@ -55,11 +55,25 @@ class TelegramReader:
             from telethon import TelegramClient
         except ImportError as exc:
             raise RuntimeError("Dependência Telethon ausente; instale as dependências do Sync.") from exc
-        session = Path(root) / "credentials" / "telegram" / "session" / "armoredsync"
-        session.parent.mkdir(parents=True, exist_ok=True)
-        self.client = TelegramClient(str(session), api_id, api_hash)
+
+        self._session = Path(root) / "credentials" / "telegram" / "session" / "armoredsync"
+        self._api_id = api_id
+        self._api_hash = api_hash
+        self._TelegramClient = TelegramClient
+        self._build_client()
+
+    def _build_client(self) -> None:
+        self._session.parent.mkdir(parents=True, exist_ok=True)
+        self.client = self._TelegramClient(str(self._session), self._api_id, self._api_hash)
 
     async def connect(self):
+        # Telethon binds a client to the event loop used by its first
+        # connection. Coordinator intentionally runs bounded async operations
+        # with separate asyncio.run() calls, so a disconnected client must be
+        # recreated before reconnecting on a new loop.
+        if self.client.is_connected():
+            return
+        self._build_client()
         await self.client.start()
 
     async def disconnect(self):
