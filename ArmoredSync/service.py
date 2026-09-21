@@ -340,41 +340,46 @@ class TelegramSource:
             checkpoints: dict[int, int] = {}
 
             for topic_id, topic_name in topics:
-                # Process pages incrementally instead of first materializing the
-                # entire topic history into a Python list. Keep only the prior
-                # message needed for the exact "video -> immediately next
-                # message with Shopee" association rule.
-                previous_message = None
+                # Telethon returns this history newest-first. The legacy
+                # collector associated a video with the immediately following
+                # element in that returned sequence, so keep one look-ahead
+                # message while streaming pages.
+                pending_video = None
                 topic_max_id = 0
+                candidate_ids: set[int] = set()
+
                 async for message in self._topic_messages(source_ref, topic_id):
                     message_id = int(getattr(message, "id", 0) or 0)
                     if message_id > topic_max_id:
                         topic_max_id = message_id
-                    if message_id <= 0 or message_id in self._seen:
-                        previous_message = message
+                    if message_id <= 0:
                         continue
 
-                    if previous_message is not None:
-                        previous_id = int(getattr(previous_message, "id", 0) or 0)
-                        if getattr(previous_message, "video", None):
-                            original_url = self._shopee_url(previous_message)
+                    if pending_video is not None:
+                        pending_id, pending_message = pending_video
+                        if pending_id not in self._seen and pending_id not in candidate_ids:
+                            original_url = self._shopee_url(pending_message)
                             if original_url is None and not getattr(message, "video", None):
                                 original_url = self._shopee_url(message)
-                            if original_url is not None and previous_id not in self._seen:
+                            if original_url is not None:
                                 candidates.append(SyncMessage(
-                                    telegram_message_id=str(previous_id),
+                                    telegram_message_id=str(pending_id),
                                     source_id=source_id,
                                     topic_id=topic_id,
                                     topic_name=topic_name,
                                     original_url=original_url,
-                                    materialize=lambda target, m=previous_message: self._download_to(m, target),
+                                    materialize=lambda target, m=pending_message: self._download_to(m, target),
                                 ))
-                                self._seen.add(previous_id)
+                                candidate_ids.add(pending_id)
+                        pending_video = None
 
-                    # A video with its own Shopee link is immediately eligible.
-                    if getattr(message, "video", None):
-                        original_url = self._shopee_url(message)
-                        if original_url is not None and message_id not in self._seen:
+                    if not getattr(message, "video", None):
+                        continue
+
+                    # Same-message video + Shopee has priority.
+                    original_url = self._shopee_url(message)
+                    if original_url is not None:
+                        if message_id not in self._seen and message_id not in candidate_ids:
                             candidates.append(SyncMessage(
                                 telegram_message_id=str(message_id),
                                 source_id=source_id,
@@ -383,13 +388,15 @@ class TelegramSource:
                                 original_url=original_url,
                                 materialize=lambda target, m=message: self._download_to(m, target),
                             ))
-                            self._seen.add(message_id)
+                            candidate_ids.add(message_id)
+                        continue
 
-                    previous_message = message
+                    # Otherwise wait for exactly the next message in the
+                    # Telegram result sequence, matching the BACKUP behavior.
+                    pending_video = (message_id, message)
 
                 if topic_max_id:
                     checkpoints[topic_id] = topic_max_id
-
             return candidates, checkpoints
         except Exception:
             await self.reader.disconnect()
