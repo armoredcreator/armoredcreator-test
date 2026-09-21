@@ -51,9 +51,8 @@ class Publisher:
 
 
 class Source:
-    def __init__(self, root):
-        self.root = root
-        self.db = Database(Storage(root).database / "armoredcreator.db")
+    def __init__(self, db):
+        self.db = db
         self.sent = False
         self.connected = False
 
@@ -102,7 +101,7 @@ def main() -> int:
     storage = Storage(root)
     storage.database.mkdir(parents=True, exist_ok=True)
     db = Database(storage.database / "armoredcreator.db")
-    source = Source(root)
+    source = Source(db)
     publisher = Publisher(storage)
     coordinator = Coordinator(
         db,
@@ -124,7 +123,6 @@ def main() -> int:
         return 0 if item.state == State.PUBLISHED else 1
     finally:
         coordinator.close()
-        source.close()
 
 
 if __name__ == "__main__":
