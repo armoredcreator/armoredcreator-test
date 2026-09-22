@@ -12,6 +12,11 @@ class Pipeline:
         self.db, self.storage = db, storage
         self.vision, self.studio, self.publisher = vision, studio, publisher
         self.log = logging.getLogger(__name__)
+        self._shutdown_checker = lambda: False
+
+    def set_shutdown_checker(self, checker) -> None:
+        """Attach the Coordinator shutdown signal without coupling layers."""
+        self._shutdown_checker = checker
 
     def run(self, item_id: str) -> None:
         item = self.db.get(item_id)
@@ -128,6 +133,15 @@ class Pipeline:
             current = self.db.get(item_id)
             if current.state == State.PUBLISHED:
                 raise
+            if self._shutdown_checker():
+                # Ctrl+C may interrupt a child process and surface as a normal
+                # RuntimeError. Preserve the durable in-flight state instead of
+                # converting an operator interruption into terminal FAILED.
+                self.log.warning(
+                    "[PIPELINE][ITEM %s] shutdown solicitado; preservando state=%s para recovery: %s",
+                    item_id, current.state.value, exc,
+                )
+                raise KeyboardInterrupt from exc
             self.db.fail(item_id, f"{type(exc).__name__}: {exc}")
             self.log.error("[PIPELINE][ITEM %s] ERRO state=%s: %s", item_id, current.state.value, exc)
             raise
