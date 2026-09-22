@@ -129,7 +129,6 @@ def executar_no_rvc(entrada, saida, voz, item_id=None):
         str(item_id or ""),
     ]
     print(f"{prefix} Executando ambiente RVC")
-    print(" ".join(map(str, comando)))
 
     resultado = subprocess.run(comando, cwd=str(BASE_DIR))
     if resultado.returncode != 0:
