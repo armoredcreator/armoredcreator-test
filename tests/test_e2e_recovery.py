@@ -82,6 +82,40 @@ class EndToEndRecoveryTests(unittest.TestCase):
         finally:
             os.environ.pop("ARMORED_STUDIO_ALLOW_COPY",None); os.environ.pop("ARMORED_STUDIO_FORCE_COPY",None)
 
+    def test_startup_recovery_reprocesses_failed_item_after_restart(self):
+        os.environ["ARMORED_STUDIO_ALLOW_COPY"]="1"
+        os.environ["ARMORED_STUDIO_FORCE_COPY"]="1"
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                root=Path(td); input_dir=root/"input"; input_dir.mkdir()
+                source=input_dir/"e2e-250.mp4"; original=b"RESTART-FAILED-ITEM"; source.write_bytes(original)
+                publisher=PersistentPublisher()
+                first=Coordinator.build(root, Bindings(Source(source),Vision(),CrashStudio(ArmoredStudio(root)),publisher))
+                item_id=first.ingest_once()
+                with self.assertRaises(RuntimeError): first.run(item_id)
+                self.assertEqual(first.db.get(item_id).state,State.FAILED)
+                first.close()
+
+                second=Coordinator.build(root, Bindings(Source(source),Vision(),ArmoredStudio(root),publisher))
+                recovered=second.recover_pending()
+                self.assertEqual(recovered,[item_id])
+                row=second.db.get(item_id)
+                self.assertEqual(row.state,State.PUBLISHED)
+                self.assertTrue(row.cleanup_completed)
+                self.assertEqual(publisher.count,1)
+                self.assertEqual(row.original_path.read_bytes(),original)
+                self.assertEqual([p.name for p in row.workspace.iterdir()],[row.original_path.name])
+                events=[r["new_state"] for r in second.db.conn.execute("SELECT new_state FROM state_events WHERE content_id=? ORDER BY id",(item_id,)).fetchall()]
+                self.assertIn(State.FAILED.value,events)
+                self.assertIn(State.RECOVERY.value,events)
+                self.assertIn(State.VISION.value,events)
+                self.assertIn(State.STUDIO.value,events)
+                self.assertIn(State.PUBLISHING.value,events)
+                self.assertIn(State.PUBLISHED.value,events)
+                second.close()
+        finally:
+            os.environ.pop("ARMORED_STUDIO_ALLOW_COPY",None); os.environ.pop("ARMORED_STUDIO_FORCE_COPY",None)
+
     def test_recovery_after_external_publication_does_not_duplicate(self):
         os.environ["ARMORED_STUDIO_ALLOW_COPY"]="1"
         os.environ["ARMORED_STUDIO_FORCE_COPY"]="1"
