@@ -157,6 +157,7 @@ class Coordinator:
         released, and only then does Vision/Studio/Hub run.
         """
         processed: list[str] = []
+        completed_count = 0
         checkpoint_blocked = False
         source = self.source
         bounded_limit = getattr(source, "_historical_limit", None)
@@ -274,15 +275,19 @@ class Coordinator:
 
             # Count only a fully published and cleaned item.
             current = self.db.get(item_id)
+            # "processed" means a candidate completed its pipeline attempt and
+            # is retained for lifecycle diagnostics/tests. Certification limits
+            # are intentionally based only on fully published + cleaned items.
+            processed.append(item_id)
             if current.state == State.PUBLISHED and current.cleanup_completed:
-                processed.append(item_id)
+                completed_count += 1
 
-            if bounded_limit is not None and len(processed) >= bounded_limit:
+            if bounded_limit is not None and completed_count >= bounded_limit:
                 import logging
                 logging.getLogger(__name__).info(
                     "[COORDINATOR][CATCH-UP] Limite fechado atingido: %s item(ns). "
                     "Encerrando o ensaio sem entrar em LIVE.",
-                    len(processed),
+                    completed_count,
                 )
                 return processed
 
