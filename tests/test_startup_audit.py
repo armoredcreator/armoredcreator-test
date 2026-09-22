@@ -17,6 +17,17 @@ class _Publisher:
         raise AssertionError("confirmed publication should not be queried")
 
 
+class _ReconcilerPublisher:
+    def __init__(self, db):
+        self.db = db
+        self.checked = []
+
+    def check_publication(self, item):
+        self.checked.append(item.content_id)
+        self.db.publication_confirmed(item.content_id, "823")
+        return "CONFIRMED"
+
+
 class StartupAuditTests(unittest.TestCase):
     def test_startup_audit_reports_inventory_and_does_not_touch_confirmed_publication(self):
         with tempfile.TemporaryDirectory() as td:
@@ -50,6 +61,36 @@ class StartupAuditTests(unittest.TestCase):
             self.assertEqual(summary["publication_confirmed"], 1)
             self.assertEqual(summary["orphans"], ["orphan-999"])
             self.assertEqual(publisher.checked, [])
+
+            db.close()
+
+    def test_startup_audit_refreshes_publication_state_after_reconciliation(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            original = storage.original("542", original_url="https://shopee.com.br/542")
+            original.write_bytes(b"ORIGINAL")
+
+            db = Database(storage.database / "armoredcreator.db")
+            item_id = db.create_item(
+                "542",
+                original,
+                topic_id=228,
+                topic_name="topic",
+                original_url="https://shopee.com.br/542",
+            )
+            db.set_result(item_id, storage.result("542", "https://shopee.com.br/542", "produto"))
+            db.publication_started(item_id, destination_chat_id="-100", destination_topic_id=228)
+
+            publisher = _ReconcilerPublisher(db)
+            summary = StartupReconciler(db, storage, publisher).run()
+
+            publication = db.publication(item_id)
+            self.assertEqual(publisher.checked, ["542"])
+            self.assertEqual(publication["published_message_id"], "823")
+            self.assertEqual(publication["confirmed"], 1)
+            self.assertEqual(summary["publication_confirmed"], 1)
+            self.assertEqual(summary["publication_ambiguous"], 0)
 
             db.close()
 
