@@ -375,6 +375,43 @@ class SyncLifecycleTests(unittest.TestCase):
             db.close()
 
 
+    def test_shutdown_during_studio_preserves_inflight_state_for_restart(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            source_file = root / "300.mp4"
+            source_file.write_bytes(b"300")
+
+            class InterruptingVision:
+                def identify(self, item):
+                    return VisionResult("affiliate", "https://example.invalid/affiliate")
+
+            class InterruptingStudio:
+                def process(self, item):
+                    raise RuntimeError("rvc-child-interrupted")
+
+            source = LifecycleSource()
+            source.completed = True
+            source.live = [SyncMessage(
+                "300", source_id="local", source_path=source_file,
+                original_url="https://shopee.com.br/x/interrupted",
+            )]
+            publisher = Publisher()
+            coordinator = Coordinator(
+                db, storage, InterruptingVision(), InterruptingStudio(), publisher, source
+            )
+            coordinator.pipeline.set_shutdown_checker(lambda: True)
+
+            with self.assertRaises(KeyboardInterrupt):
+                coordinator.run_live_once()
+
+            self.assertEqual(db.get("300").state.value, "STUDIO")
+            self.assertFalse(db.get("300").cleanup_completed)
+            self.assertIsNone(db.publication("300"))
+            coordinator.close()
+
+
 class DownloadTimeoutTests(unittest.TestCase):
     def test_telegram_download_allows_slow_but_progressing_transfer(self):
         with tempfile.TemporaryDirectory() as td:
