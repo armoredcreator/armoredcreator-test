@@ -286,6 +286,66 @@ A camada estará fechada quando:
 - restart real reconcilie PUBLISHING/RECOVERY;
 - E2E real confirme uma sequência de itens sem duplicação.
 
+
+## Auditoria de startup
+
+Antes de o Sync abrir a rotina CATCH-UP/LIVE, o Coordinator executa uma varredura determinística com `StartupReconciler`.
+
+A auditoria registra, por identidade `content_id`:
+
+- estado SQLite;
+- arquivos físicos em `storage/videos/{content_id}`;
+- existência/estado da publicação;
+- `published_message_id` quando confirmado;
+- cleanup pendente ou concluído;
+- workspaces órfãos no storage sem registro SQLite.
+
+Para publicações existentes mas ainda não confirmadas, o Hub pode consultar o Telegram durante esta fase. A auditoria nunca publica e nunca baixa vídeo.
+
+Depois da auditoria, o fluxo normal começa:
+
+```
+START
+  ↓
+STARTUP AUDIT / RECONCILIATION
+  ↓
+RECOVERY PENDENTE
+  ↓
+CATCH-UP
+  ↓
+LIVE
+```
+
+O objetivo é iniciar cada execução com uma fotografia clara da realidade, em vez de depender somente do estado deixado pelo processo anterior.
+
+## Laboratório limpo de certificação
+
+O teste final deve começar com banco e artefatos de processamento limpos. O script:
+
+```
+scripts/reset_certification_lab.ps1
+```
+
+remove o estado de laboratório e pastas legadas conhecidas, preservando código, assets e credenciais/sessão Telegram.
+
+Depois do reset, usar uma coleta curta, por exemplo:
+
+```powershell
+$env:ARMORED_SYNC_CATCHUP_LIMIT="3"
+$env:ARMORED_REAL_TELEGRAM="1"
+$env:ARMORED_HUB_DRY_RUN="0"
+.\START_ALL.bat
+```
+
+A auditoria e os logs passam a permitir reconstruir claramente, por identidade, o que foi:
+
+```
+COLETADO → PROCESSADO → PUBLICADO → CONFIRMADO → LIMPO
+```
+
+ou exatamente em qual etapa e com qual erro o item parou.
+
+
 ## Implementação atual
 
 A implementação já contém:
