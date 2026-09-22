@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import logging
 import shutil
 from .database import Database
 from .models import PublicationCheck, State
@@ -10,9 +11,11 @@ class Pipeline:
     def __init__(self, db: Database, storage: Storage, vision: VisionService, studio: StudioService, publisher: Publisher):
         self.db, self.storage = db, storage
         self.vision, self.studio, self.publisher = vision, studio, publisher
+        self.log = logging.getLogger(__name__)
 
     def run(self, item_id: str) -> None:
         item = self.db.get(item_id)
+        self.log.info("[PIPELINE][ITEM %s] início state=%s", item.content_id, item.state.value)
         if item.state == State.PUBLISHED:
             if not item.cleanup_completed:
                 self.cleanup(item_id)
@@ -29,15 +32,18 @@ class Pipeline:
             if item.state == State.FAILED:
                 raise RuntimeError("FAILED item requires deterministic recovery before pipeline.run")
             if item.state == State.VISION:
+                self.log.info("[PIPELINE][ITEM %s] VISION iniciando", item.content_id)
                 try:
                     v = self.vision.identify(item)
                 except VisionUnresolvedError as exc:
                     self.db.mark_vision_waiting(item_id, str(exc))
                     return
                 self.db.set_vision(item_id, v.affiliate_name, v.affiliate_url)
+                self.log.info("[PIPELINE][ITEM %s] VISION concluída", item_id)
                 self.db.transition(item_id, State.STUDIO, "vision-complete")
             item = self.db.get(item_id)
             if item.state == State.STUDIO:
+                self.log.info("[PIPELINE][ITEM %s] STUDIO/RVC iniciando", item.content_id)
                 if not item.affiliate_name:
                     raise RuntimeError("studio-requires-affiliate-metadata")
                 studio = self.studio.process(item)
@@ -48,9 +54,11 @@ class Pipeline:
                 if not studio.result_path.is_file():
                     raise FileNotFoundError("studio-result-file-missing")
                 self.db.set_result(item_id, studio.result_path)
+                self.log.info("[PIPELINE][ITEM %s] STUDIO/RVC concluído result=%s", item_id, studio.result_path)
                 self.db.transition(item_id, State.PUBLISHING, "studio-complete")
             item = self.db.get(item_id)
             if item.state == State.PUBLISHING:
+                self.log.info("[PIPELINE][ITEM %s] HUB/PUBLICAÇÃO iniciando", item.content_id)
                 if not item.result_path or not item.result_path.is_file():
                     raise FileNotFoundError("publication-result-missing")
 
@@ -113,12 +121,15 @@ class Pipeline:
                         self.db.publication_confirmed(item_id, str(message_id))
 
                 self.db.transition(item_id, State.PUBLISHED, "publication-confirmed")
+                self.log.info("[PIPELINE][ITEM %s] PUBLICADO confirmado; cleanup iniciando", item_id)
                 self.cleanup(item_id)
+                self.log.info("[PIPELINE][ITEM %s] FINALIZADO PUBLISHED+cleanup", item_id)
         except Exception as exc:
             current = self.db.get(item_id)
             if current.state == State.PUBLISHED:
                 raise
             self.db.fail(item_id, f"{type(exc).__name__}: {exc}")
+            self.log.error("[PIPELINE][ITEM %s] ERRO state=%s: %s", item_id, current.state.value, exc)
             raise
 
     def cleanup(self, item_id: int) -> None:
