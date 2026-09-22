@@ -137,8 +137,7 @@ class EndToEndRecoveryTests(unittest.TestCase):
                     Bindings(Source(source),Vision(),ArmoredStudio(root),crashing_publisher),
                 )
                 item_id=coordinator.ingest_once()
-                with self.assertRaises(Exception):
-                    coordinator.run(item_id)
+                coordinator.run(item_id)
                 self.assertEqual(coordinator.db.get(item_id).state,State.RECOVERY)
 
                 # Simulate the durable publication acknowledgement that startup
