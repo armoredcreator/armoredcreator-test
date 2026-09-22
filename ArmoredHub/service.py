@@ -258,18 +258,9 @@ class ArmoredHub:
         if not getattr(message, "video", None) and not getattr(message, "document", None):
             return False
 
-        # If Telegram exposes a filename, validate it when it is available.
-        expected_name = Path(item.result_path or "").name
-        if expected_name:
-            document = getattr(message, "document", None)
-            if document is not None:
-                filename = None
-                for attribute in getattr(document, "attributes", []) or []:
-                    filename = getattr(attribute, "file_name", None)
-                    if filename:
-                        break
-                if filename and filename != expected_name:
-                    return False
+        # Telegram may rewrite or omit uploaded filenames. Filename is
+        # auxiliary metadata only and must never invalidate an otherwise
+        # exact publication match (topic + caption + media).
         return True
 
     def _find_telegram_publications(self, item: Item) -> list[str] | None:
