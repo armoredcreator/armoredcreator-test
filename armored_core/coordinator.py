@@ -476,12 +476,21 @@ class Coordinator:
     def recover_pending(self):
         states = (
             State.RECEIVED.value, State.VISION.value, State.STUDIO.value,
-            State.PUBLISHING.value, State.RECOVERY.value, State.FAILED.value,
+            State.PUBLISHING.value, State.RECOVERY.value,
         )
         placeholders = ",".join("?" for _ in states)
         rows = self.db.conn.execute(
             f"SELECT content_id, state FROM items WHERE state IN ({placeholders}) ORDER BY created_at, content_id", states
         ).fetchall()
+        # FAILED is not globally retryable: permanent/business failures must
+        # remain terminal. Operational failures raised by Pipeline are marked
+        # explicitly as retryable and are recovered through the normal path.
+        retryable_failed = self.db.conn.execute(
+            "SELECT content_id, state FROM items WHERE state=? AND retryable_failure=1 "
+            "ORDER BY created_at, content_id",
+            (State.FAILED.value,),
+        ).fetchall()
+        rows.extend(retryable_failed)
         recovered = []
         for row in rows:
             item_id = str(row["content_id"])
