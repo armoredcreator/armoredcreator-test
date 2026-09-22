@@ -45,15 +45,23 @@ class StartupReconciler:
                 summary["pending"] += 1
 
             publication = self.db.publication(item_id)
-            pub_state = "NO_RECORD"
             if publication:
                 if publication["confirmed"] and publication["published_message_id"]:
                     pub_state = f"CONFIRMED#{publication['published_message_id']}"
+                else:
+                    self._reconcile_publication(item_id)
+                    publication = self.db.publication(item_id)
+                    if publication and publication["confirmed"] and publication["published_message_id"]:
+                        pub_state = f"CONFIRMED#{publication['published_message_id']}"
+                    else:
+                        pub_state = "AMBIGUOUS"
+
+                if pub_state.startswith("CONFIRMED#"):
                     summary["publication_confirmed"] += 1
                 else:
-                    pub_state = "AMBIGUOUS"
                     summary["publication_ambiguous"] += 1
-                    self._reconcile_publication(item_id)
+            else:
+                pub_state = "NO_RECORD"
 
             self.log.info(
                 "[STARTUP][ITEM] id=%s state=%s publication=%s cleanup=%s files=%s",
@@ -108,3 +116,4 @@ class StartupReconciler:
             self.log.info("[STARTUP][PUBLICATION] id=%s ABSENT", item_id)
         else:
             self.log.warning("[STARTUP][PUBLICATION] id=%s UNKNOWN", item_id)
+    
