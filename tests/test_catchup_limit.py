@@ -63,7 +63,7 @@ def test_historical_catchup_limit_is_optional(monkeypatch, tmp_path):
     assert source.historical_limit_reached is False
 
 
-def test_historical_catchup_limit_applies_to_fetch_next_path(monkeypatch, tmp_path):
+def test_historical_catchup_limit_does_not_stop_fetch_next_path(monkeypatch, tmp_path):
     monkeypatch.setenv("ARMORED_SYNC_CATCHUP_LIMIT", "2")
 
     reader = _Reader()
@@ -94,9 +94,9 @@ def test_historical_catchup_limit_applies_to_fetch_next_path(monkeypatch, tmp_pa
 
     first, second, third = asyncio.run(collect())
 
-    assert [first.telegram_message_id, second.telegram_message_id] == ["201", "202"]
-    assert third is None
-    assert source.historical_limit_reached is True
+    # Certification limits belong to Coordinator; Sync discovery behaves like production.
+    assert [first.telegram_message_id, second.telegram_message_id, third.telegram_message_id] == ["201", "202", "203"]
+    assert source.historical_limit_reached is False
     assert source.historical_scan_exhausted is False
     assert reader.connected is True
 
