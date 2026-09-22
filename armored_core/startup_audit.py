@@ -36,13 +36,6 @@ class StartupReconciler:
 
             if workspace.is_dir():
                 summary["storage_workspaces"] += 1
-            if state == State.PUBLISHED.value and bool(row["cleanup_completed"]):
-                summary["published"] += 1
-                summary["clean"] += 1
-            elif state == State.FAILED.value:
-                summary["failed"] += 1
-            else:
-                summary["pending"] += 1
 
             publication = self.db.publication(item_id)
             if publication:
@@ -62,6 +55,42 @@ class StartupReconciler:
                     summary["publication_ambiguous"] += 1
             else:
                 pub_state = "NO_RECORD"
+
+            current = self.db.get(item_id)
+            if (
+                current.state == State.FAILED
+                and publication is not None
+                and not publication["confirmed"]
+                and pub_state == "AMBIGUOUS"
+            ):
+                result = current.result_path
+                if not result and current.affiliate_url:
+                    result = self.storage.result(
+                        item_id,
+                        current.affiliate_url,
+                        current.affiliate_name,
+                    )
+                if result is not None and result.is_file():
+                    self.db.transition(
+                        item_id,
+                        State.RECOVERY,
+                        "startup-recover-failed-absent-durable-result",
+                    )
+                    current = self.db.get(item_id)
+                    self.log.info(
+                        "[STARTUP][RECOVERY] id=%s FAILED -> RECOVERY "
+                        "(publication ABSENT + durable result)",
+                        item_id,
+                    )
+
+            state = current.state.value
+            if state == State.PUBLISHED and bool(current.cleanup_completed):
+                summary["published"] += 1
+                summary["clean"] += 1
+            elif state == State.FAILED.value:
+                summary["failed"] += 1
+            else:
+                summary["pending"] += 1
 
             self.log.info(
                 "[STARTUP][ITEM] id=%s state=%s publication=%s cleanup=%s files=%s",
