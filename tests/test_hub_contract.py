@@ -77,5 +77,56 @@ class HubContractTests(unittest.TestCase):
             pass
 
 
+    def test_publish_once_refuses_unknown_and_never_sends(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            try:
+                item = self._item(db, storage)
+                hub = ArmoredHub(root, db)
+                calls = {"publish": 0}
+                hub.check_publication = lambda current: PublicationCheck.UNKNOWN
+                def forbidden_publish(current):
+                    calls["publish"] += 1
+                    raise AssertionError("publish must not run for UNKNOWN")
+                hub.publish = forbidden_publish
+
+                from armored_core.services import PublicationUnknownError
+                with self.assertRaises(PublicationUnknownError):
+                    hub.publish_once(item)
+
+                self.assertEqual(calls["publish"], 0)
+                row = db.publication(item.item_id)
+                self.assertIsNotNone(row)
+                self.assertEqual(row["idempotency_key"], f"armoredcreator:content:{item.item_id}")
+                self.assertEqual(row["confirmed"], 0)
+            finally:
+                db.close()
+
+    def test_publish_once_uses_existing_confirmation_without_sending(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            try:
+                item = self._item(db, storage)
+                hub = ArmoredHub(root, db)
+                db.publication_started(item.item_id)
+                db.publication_message_sent(item.item_id, "telegram-123")
+                db.publication_confirmed(item.item_id, "telegram-123")
+
+                calls = {"publish": 0}
+                hub.publish = lambda current: calls.__setitem__("publish", calls["publish"] + 1)
+                hub.check_publication = lambda current: PublicationCheck.CONFIRMED
+                result = hub.publish_once(item)
+
+                self.assertTrue(result.confirmed)
+                self.assertEqual(result.message_id, "telegram-123")
+                self.assertEqual(calls["publish"], 0)
+            finally:
+                db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
