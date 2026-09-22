@@ -19,6 +19,7 @@ class ArmoredHub:
     def __init__(self, root: Path, db: Database | None = None):
         self.root = Path(root)
         self.db = db
+        self._destination_chat_id: str | None = None
 
     def _publication(self, item: Item):
         return self.db.publication(item.content_id) if self.db is not None else None
@@ -105,8 +106,12 @@ class ArmoredHub:
         if self.db is None:
             raise RuntimeError("ArmoredHub exige Database para publicação idempotente")
 
+        # A brand-new publication intent has no prior external attempt to
+        # reconcile, so go directly to the Bot API. Existing intents still
+        # require the full Telegram reconciliation path.
+        existing = self._publication(item)
         self.db.publication_started(item.item_id)
-        check = self.check_publication(item)
+        check = PublicationCheck.ABSENT if existing is None else self.check_publication(item)
 
         if check == PublicationCheck.CONFIRMED:
             record = self._publication(item)
@@ -136,7 +141,11 @@ class ArmoredHub:
         """
         configured = (os.getenv("ARMORED_CREATOR_GROUP_ID") or "").strip()
         if configured:
+            self._destination_chat_id = configured
             return configured
+
+        if self._destination_chat_id:
+            return self._destination_chat_id
 
         topic_value = str(topic_id or (os.getenv("ARMORED_HUB_TOPIC_ID") or "228")).strip()
         if not topic_value or not topic_value.lstrip("-").isdigit():
@@ -206,6 +215,7 @@ class ArmoredHub:
 
                 unique_matches = sorted(set(matches))
                 if len(unique_matches) == 1:
+                    self._destination_chat_id = unique_matches[0]
                     return unique_matches[0]
                 if not unique_matches:
                     raise RuntimeError(
