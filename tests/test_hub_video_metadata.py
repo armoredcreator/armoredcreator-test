@@ -247,6 +247,7 @@ def test_publish_telegram_passes_real_video_metadata_to_send_video(monkeypatch, 
     hub = ArmoredHub(tmp_path, db=types.SimpleNamespace(
         publication_started=lambda *args, **kwargs: None,
         publication_message_sent=lambda *args, **kwargs: None,
+        publication_confirmed=lambda *args, **kwargs: None,
     ))
     hub._resolve_destination_chat_id = lambda topic_id: "-100123"
     hub.check_publication = lambda item: PublicationCheck.CONFIRMED
