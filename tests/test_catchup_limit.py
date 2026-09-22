@@ -101,3 +101,13 @@ def test_historical_catchup_limit_does_not_stop_fetch_next_path(monkeypatch, tmp
     assert reader.connected is True
 
     asyncio.run(reader.disconnect())
+
+
+def test_zero_catchup_limit_means_unlimited(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARMORED_SYNC_CATCHUP_LIMIT", "0")
+
+    source = TelegramSource(tmp_path, _Reader())
+
+    assert source.historical_collection_limited is False
+    assert source.historical_limit_reached is False
+    assert source._historical_limit is None
