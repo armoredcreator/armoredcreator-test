@@ -468,6 +468,12 @@ class Coordinator:
             ):
                 return
 
+        import logging
+        logging.getLogger(__name__).info(
+            "[COORDINATOR][LIVE] CATCH-UP concluído; Coordinator entrou em modo LIVE "
+            "(monitoramento contínuo iniciado)"
+        )
+
         cycles = 0
         while max_cycles is None or cycles < max_cycles:
             self.db.heartbeat_runtime_lock("coordinator")
