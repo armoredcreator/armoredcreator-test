@@ -45,7 +45,9 @@ class HubContractTests(unittest.TestCase):
                 db.conn.execute("DELETE FROM publications WHERE content_id=?", (item.item_id,))
                 db.conn.commit()
                 item = db.get(item.item_id)
-                self.assertEqual(hub.check_publication(item), PublicationCheck.ABSENT)
+                # Without Telegram credentials/configuration, absence cannot be
+                # proven. The safe result is UNKNOWN, never ABSENT.
+                self.assertEqual(hub.check_publication(item), PublicationCheck.UNKNOWN)
                 with self.assertRaises(RuntimeError):
                     hub.publish(item)
                 self.assertEqual(db.publication(item.item_id)["confirmed"], 0)
