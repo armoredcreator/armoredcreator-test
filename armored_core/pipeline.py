@@ -54,24 +54,18 @@ class Pipeline:
                 if not item.result_path or not item.result_path.is_file():
                     raise FileNotFoundError("publication-result-missing")
 
-                check = self.publisher.check_publication(item)
-
-                # UNKNOWN is an external side-effect uncertainty. It is never a
-                # normal failure and must never become FAILED, because recovery
-                # must be able to reconcile it after a restart.
-                if check == PublicationCheck.UNKNOWN:
-                    self.db.transition(
-                        item_id,
-                        State.RECOVERY,
-                        "publication-check-uncertain-refusing-to-publish",
-                    )
-                    return
-
+                # Create the durable publication intent BEFORE any Telegram
+                # reconciliation. A missing DB row is never evidence of
+                # absence in the external system.
                 self.db.publication_started(item_id)
 
-                if check == PublicationCheck.ABSENT:
+                # Production ArmoredHub owns the complete idempotent decision
+                # through publish_once(). Test publishers keep the legacy
+                # contract so existing deterministic tests remain valid.
+                publish_once = getattr(self.publisher, "publish_once", None)
+                if callable(publish_once):
                     try:
-                        result = self.publisher.publish(item)
+                        result = publish_once(item)
                     except PublicationUnknownError as exc:
                         self.db.transition(item_id, State.RECOVERY, str(exc))
                         return
@@ -82,24 +76,48 @@ class Pipeline:
                         raise RuntimeError("confirmed-publication-without-message-id")
                     self.db.publication_confirmed(item_id, str(result.message_id))
                 else:
-                    # check_publication(CONFIRMED) must have persisted the real
-                    # Telegram message ID. Never synthesize IDs such as
-                    # "existing-<item>" because that destroys the external
-                    # identity required for deterministic future verification.
-                    pub = self.db.publication(item_id)
-                    message_id = pub["published_message_id"] if pub else None
-                    if not message_id:
+                    check = self.publisher.check_publication(item)
+
+                    # UNKNOWN is an external side-effect uncertainty. It is
+                    # never FAILED and never permits blind republishing.
+                    if check == PublicationCheck.UNKNOWN:
                         self.db.transition(
                             item_id,
                             State.RECOVERY,
-                            "confirmed-publication-without-real-message-id",
+                            "publication-check-uncertain-refusing-to-publish",
                         )
                         return
-                    self.db.publication_confirmed(item_id, str(message_id))
+
+                    if check == PublicationCheck.ABSENT:
+                        try:
+                            result = self.publisher.publish(item)
+                        except PublicationUnknownError as exc:
+                            self.db.transition(item_id, State.RECOVERY, str(exc))
+                            return
+
+                        if not result.confirmed:
+                            raise RuntimeError("publication-not-confirmed")
+                        if not result.message_id:
+                            raise RuntimeError("confirmed-publication-without-message-id")
+                        self.db.publication_confirmed(item_id, str(result.message_id))
+                    else:
+                        pub = self.db.publication(item_id)
+                        message_id = pub["published_message_id"] if pub else None
+                        if not message_id:
+                            self.db.transition(
+                                item_id,
+                                State.RECOVERY,
+                                "confirmed-publication-without-real-message-id",
+                            )
+                            return
+                        self.db.publication_confirmed(item_id, str(message_id))
 
                 self.db.transition(item_id, State.PUBLISHED, "publication-confirmed")
                 self.cleanup(item_id)
         except Exception as exc:
+            current = self.db.get(item_id)
+            if current.state == State.PUBLISHED:
+                raise
             self.db.fail(item_id, f"{type(exc).__name__}: {exc}")
             raise
 
