@@ -33,10 +33,15 @@ def save_config(config: dict[str, Any]) -> None:
 
 
 def load_environment() -> None:
-    # O StudioEdit usa apenas as credenciais do ambiente; IDs Telegram são próprios
-    # e ficam no config.json do StudioEdit.
-    project_root = Path(__file__).resolve().parent.parent
-    load_dotenv(project_root / ".env")
+    # Credenciais exclusivas do ArmoredStudioEdit.
+    # IDs Telegram continuam no config.json do StudioEdit.
+    edit_root = Path(__file__).resolve().parent
+    env_path = edit_root / ".env"
+    if not env_path.is_file():
+        raise RuntimeError(
+            f"Arquivo de ambiente do ArmoredStudioEdit não encontrado: {env_path}"
+        )
+    load_dotenv(env_path, override=True)
 
 
 def telegram_config(config: dict[str, Any]) -> tuple[int, int]:
