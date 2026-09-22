@@ -32,6 +32,7 @@ class Database:
             recovery_count INTEGER NOT NULL DEFAULT 0,
             cleanup_completed INTEGER NOT NULL DEFAULT 0,
             last_error TEXT,
+            retryable_failure INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
@@ -87,6 +88,7 @@ class Database:
                 ("attempts", "ALTER TABLE items ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"),
                 ("recovery_count", "ALTER TABLE items ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0"),
                 ("cleanup_completed", "ALTER TABLE items ADD COLUMN cleanup_completed INTEGER NOT NULL DEFAULT 0"),
+                ("retryable_failure", "ALTER TABLE items ADD COLUMN retryable_failure INTEGER NOT NULL DEFAULT 0"),
             ],
             "publications": [
                 ("verification_status", "ALTER TABLE publications ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'PENDING'"),
@@ -289,10 +291,10 @@ class Database:
         )
         self.conn.commit()
 
-    def fail(self, item_id: str, error: str) -> None:
+    def fail(self, item_id: str, error: str, retryable: bool = False) -> None:
         self.conn.execute(
-            "UPDATE items SET state=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
-            (State.FAILED.value, error, item_id),
+            "UPDATE items SET state=?, last_error=?, retryable_failure=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+            (State.FAILED.value, error, int(bool(retryable)), item_id),
         )
         self.conn.execute(
             "INSERT INTO state_events (content_id,new_state,reason) VALUES (?,?,?)",
