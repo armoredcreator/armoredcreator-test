@@ -33,20 +33,22 @@ def save_config(config: dict[str, Any]) -> None:
 
 
 def load_environment() -> None:
-    # Procura o .env na raiz do checkout, sem depender do diretório atual.
+    # O StudioEdit usa apenas as credenciais do ambiente; IDs Telegram são próprios
+    # e ficam no config.json do StudioEdit.
     project_root = Path(__file__).resolve().parent.parent
     load_dotenv(project_root / ".env")
 
 
 def telegram_config(config: dict[str, Any]) -> tuple[int, int]:
     tg = config["telegram"]
-    chat_id = os.getenv(tg["chat_id_env"], "").strip()
-    topic_id = os.getenv(tg["topic_id_env"], "").strip()
-    if not chat_id:
-        raise RuntimeError(f"Variável de ambiente ausente: {tg['chat_id_env']}")
-    if not topic_id:
-        raise RuntimeError(f"Variável de ambiente ausente: {tg['topic_id_env']}")
-    return int(chat_id), int(topic_id)
+    try:
+        chat_id = int(tg["chat_id"])
+        topic_id = int(tg["topic_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "Configuração Telegram inválida no ArmoredStudioEdit/config/config.json."
+        ) from exc
+    return chat_id, topic_id
 
 
 def topic_command(message: Any) -> str | None:
@@ -133,6 +135,7 @@ async def main_async() -> None:
     try:
         print("ArmoredStudioEdit LIVE")
         print(
+            f"Telegram chat_id={chat_id} | topic_id={topic_id} | "
             f"RVC={'ON' if config['rvc']['enabled'] else 'OFF'} "
             f"| voz={config['rvc']['voice']}"
         )
