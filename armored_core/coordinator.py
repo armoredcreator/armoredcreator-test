@@ -26,6 +26,7 @@ class Coordinator:
         self.recovery = Recovery(db, storage, vision, studio, publisher)
         self.source = source
         self._runtime_lock_held = False
+        self._last_catch_up_completed_count = 0
 
     @classmethod
     def build(cls, root: Path | None = None, bindings: Any | None = None):
@@ -289,8 +290,10 @@ class Coordinator:
                     "Encerrando o ensaio sem entrar em LIVE.",
                     completed_count,
                 )
+                self._last_catch_up_completed_count = completed_count
                 return processed
 
+        self._last_catch_up_completed_count = completed_count
         return processed
 
     def run_catch_up(self) -> list[str]:
@@ -412,7 +415,7 @@ class Coordinator:
             bounded_limit = getattr(self.source, "_historical_limit", None)
             if (
                 bounded_limit is not None
-                and len(catch_up_processed) >= int(bounded_limit)
+                and self._last_catch_up_completed_count >= int(bounded_limit)
             ):
                 return
 
