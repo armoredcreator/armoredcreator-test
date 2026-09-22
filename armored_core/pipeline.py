@@ -29,8 +29,29 @@ class Pipeline:
             self.db.record_attempt(item_id)
             if not item.original_path.is_file():
                 raise FileNotFoundError(f"immutable-original-missing: {item.original_path}")
-            if item.state in (State.RECEIVED, State.RECOVERY):
+            if item.state == State.RECEIVED:
                 self.db.transition(item_id, State.VISION, "pipeline-start")
+            elif item.state == State.RECOVERY:
+                # RECOVERY may be entered after Telegram publication becomes
+                # ambiguous. If a durable result already exists, publication
+                # recovery must NEVER rebuild Vision/Studio/RVC.
+                result = item.result_path
+                if not result and item.affiliate_url:
+                    result = self.storage.result(
+                        item_id,
+                        item.affiliate_url,
+                        item.affiliate_name,
+                    )
+                if result and result.is_file():
+                    if item.result_path is None:
+                        self.db.set_result(item_id, result)
+                    self.db.transition(item_id, State.PUBLISHING, "recovery-resume-publication")
+                elif item.working_path and item.working_path.is_file() and item.affiliate_name:
+                    self.db.transition(item_id, State.STUDIO, "recovery-resume-studio")
+                elif item.affiliate_name:
+                    self.db.transition(item_id, State.STUDIO, "recovery-rebuild-working")
+                else:
+                    self.db.transition(item_id, State.VISION, "recovery-rebuild-vision")
             item = self.db.get(item_id)
             if item.state == State.WAITING_VISION:
                 return
