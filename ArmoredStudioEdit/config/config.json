@@ -1,0 +1,6 @@
+{
+  "telegram": {"enabled": false, "chat_id": null, "topic_id": null},
+  "processing": {"remove_black_bars": true, "veo": true, "gemini": true, "rvc": false},
+  "rvc": {"enabled": false, "voice": null},
+  "storage": {"root": "storage/ArmoredStudioEdit"}
+}
