@@ -1,8 +1,8 @@
 {
   "telegram": {
     "enabled": true,
-    "chat_id_env": "ARMORED_CREATOR_GROUP_ID",
-    "topic_id_env": "ARMORED_STUDIO_THREAD_ID",
+    "chat_id": -1004341972306,
+    "topic_id": 4,
     "session_env": "TELEGRAM_SESSION",
     "api_id_env": "TELEGRAM_API_ID",
     "api_hash_env": "TELEGRAM_API_HASH"
