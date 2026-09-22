@@ -176,6 +176,103 @@ class EndToEndRecoveryTests(unittest.TestCase):
             os.environ.pop("ARMORED_STUDIO_ALLOW_COPY",None)
             os.environ.pop("ARMORED_STUDIO_FORCE_COPY",None)
 
+    def test_recovery_with_existing_result_does_not_rerun_studio(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            input_dir = root / "input"
+            input_dir.mkdir()
+            source = input_dir / "e2e-600.mp4"
+            source.write_bytes(b"RECOVERY-RESULT")
+
+            class CountingVision:
+                def __init__(self):
+                    self.count = 0
+                def identify(self, item):
+                    self.count += 1
+                    return VisionResult("product-600", "https://example.invalid/affiliate-600")
+
+            class CountingStudio:
+                def __init__(self):
+                    self.count = 0
+                def process(self, item):
+                    self.count += 1
+                    raise AssertionError("Studio não pode rodar quando o resultado já existe")
+
+            vision = CountingVision()
+            studio = CountingStudio()
+            publisher = PersistentPublisher()
+            coordinator = Coordinator.build(
+                root,
+                Bindings(Source(source), vision, studio, publisher),
+            )
+            item_id = coordinator.ingest_once()
+            item = coordinator.db.get(item_id)
+            coordinator.db.set_vision(
+                item_id,
+                "product-600",
+                "https://example.invalid/affiliate-600",
+            )
+
+            result = item.workspace / "600_result.mp4"
+            result.write_bytes(b"READY-RESULT")
+            coordinator.db.set_result(item_id, result)
+            coordinator.db.transition(item_id, State.RECOVERY, "test-publication-unknown")
+
+            coordinator.run(item_id)
+
+            row = coordinator.db.get(item_id)
+            self.assertEqual(row.state, State.PUBLISHED)
+            self.assertEqual(studio.count, 0)
+            self.assertEqual(vision.count, 0)
+            self.assertEqual(publisher.count, 1)
+            self.assertTrue(row.original_path.exists())
+            self.assertEqual([p.name for p in row.workspace.iterdir()], [row.original_path.name])
+            coordinator.close()
+
+    def test_recovery_without_result_rebuilds_from_original(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            input_dir = root / "input"
+            input_dir.mkdir()
+            source = input_dir / "e2e-601.mp4"
+            source.write_bytes(b"RECOVERY-REBUILD")
+
+            class CountingStudio:
+                def __init__(self):
+                    self.count = 0
+                def process(self, item):
+                    self.count += 1
+                    result = item.workspace / "601_result.mp4"
+                    result.write_bytes(b"REBUILT")
+                    return type("StudioResult", (), {
+                        "working_path": None,
+                        "result_path": result,
+                    })()
+
+            publisher = PersistentPublisher()
+            studio = CountingStudio()
+            coordinator = Coordinator.build(
+                root,
+                Bindings(Source(source), Vision(), studio, publisher),
+            )
+            item_id = coordinator.ingest_once()
+            coordinator.db.set_vision(
+                item_id,
+                "product-601",
+                "https://example.invalid/affiliate-601",
+            )
+            coordinator.db.transition(item_id, State.RECOVERY, "test-missing-result")
+
+            coordinator.run(item_id)
+
+            row = coordinator.db.get(item_id)
+            self.assertEqual(row.state, State.PUBLISHED)
+            self.assertEqual(studio.count, 1)
+            self.assertEqual(publisher.count, 1)
+            self.assertTrue(row.original_path.exists())
+            self.assertEqual([p.name for p in row.workspace.iterdir()], [row.original_path.name])
+            coordinator.close()
+
     def test_catch_up_blocks_next_candidate_when_recovery_remains_unknown(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
