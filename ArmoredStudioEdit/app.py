@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from telethon import events
 
 from .pipeline.orchestrator import ArmoredStudioEditPipeline
@@ -31,9 +32,21 @@ def save_config(config: dict[str, Any]) -> None:
     )
 
 
+def load_environment() -> None:
+    # Procura o .env na raiz do checkout, sem depender do diretório atual.
+    project_root = Path(__file__).resolve().parent.parent
+    load_dotenv(project_root / ".env")
+
+
 def telegram_config(config: dict[str, Any]) -> tuple[int, int]:
     tg = config["telegram"]
-    return int(os.environ[tg["chat_id_env"]]), int(os.environ[tg["topic_id_env"]])
+    chat_id = os.getenv(tg["chat_id_env"], "").strip()
+    topic_id = os.getenv(tg["topic_id_env"], "").strip()
+    if not chat_id:
+        raise RuntimeError(f"Variável de ambiente ausente: {tg['chat_id_env']}")
+    if not topic_id:
+        raise RuntimeError(f"Variável de ambiente ausente: {tg['topic_id_env']}")
+    return int(chat_id), int(topic_id)
 
 
 def topic_command(message: Any) -> str | None:
@@ -42,7 +55,7 @@ def topic_command(message: Any) -> str | None:
     return text if text.startswith("/") else None
 
 
-def apply_command(config: dict[str, Any], command: str) -> str:
+def apply_command(config: dict[str, Any], command: str) -> str | None:
     parts = command.split()
     name = parts[0].lower()
 
@@ -67,30 +80,30 @@ def apply_command(config: dict[str, Any], command: str) -> str:
 
 
 async def main_async() -> None:
+    load_environment()
     config = load_config()
     chat_id, topic_id = telegram_config(config)
     listener = TelegramListener(chat_id, topic_id)
     publisher = TelegramPublisher(chat_id, topic_id, client=listener.client)
-    pipeline = ArmoredStudioEditPipeline(config)
-    queue: asyncio.Queue[Any] = asyncio.Queue()
+    queue: asyncio.Queue[tuple[Any, dict[str, Any]]] = asyncio.Queue()
 
     async def enqueue(message: Any) -> None:
-        await queue.put(message)
+        # Captura no momento em que o vídeo entra na fila.
+        # Alterações de /rvc passam a valer somente para o próximo vídeo recebido.
+        job_config = json.loads(json.dumps(config))
+        await queue.put((message, job_config))
 
     listener.register_video_handler(enqueue)
     await listener.connect()
 
     async def process_queue() -> None:
         while True:
-            message = await queue.get()
+            message, job_config = await queue.get()
             workspace = Path(tempfile.mkdtemp(prefix="armoredstudioedit-"))
             try:
                 source = workspace / "input.mp4"
                 await listener.download_video(message, source)
 
-                # Configuração é capturada para este trabalho; alterações
-                # por comando valem para o próximo vídeo.
-                job_config = json.loads(json.dumps(config))
                 job_pipeline = ArmoredStudioEditPipeline(job_config)
                 report = await asyncio.to_thread(
                     job_pipeline.run, source, workspace
@@ -131,7 +144,11 @@ async def main_async() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="ArmoredStudioEdit")
-    parser.add_argument("--telegram", action="store_true", help="Inicia o worker Telegram contínuo")
+    parser.add_argument(
+        "--telegram",
+        action="store_true",
+        help="Inicia o worker Telegram contínuo",
+    )
     args = parser.parse_args()
 
     if not args.telegram:
