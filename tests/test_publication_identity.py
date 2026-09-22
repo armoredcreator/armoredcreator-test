@@ -82,7 +82,10 @@ class PublicationIdentityTests(unittest.TestCase):
         row = self.db.get(self.item)
         self.assertEqual(row.state, State.RECOVERY)
         self.assertNotEqual(row.state, State.FAILED)
-        self.assertIsNone(self.db.publication(self.item))
+        publication = self.db.publication(self.item)
+        self.assertIsNotNone(publication)
+        self.assertEqual(publication["idempotency_key"], f"armoredcreator:content:{self.item}")
+        self.assertEqual(publication["confirmed"], 0)
 
     def test_confirmed_publication_without_real_id_never_becomes_published(self):
         self._prepare_publishing()
