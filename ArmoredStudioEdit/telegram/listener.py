@@ -1,11 +1,11 @@
-"""Listener Telegram isolado do ArmoredStudioEdit."""
+"""Listener Telegram contínuo e efêmero do ArmoredStudioEdit."""
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
-from telethon import TelegramClient
+from telethon import TelegramClient, events
 
 
 def _env(name: str) -> str:
@@ -19,13 +19,12 @@ def resolve_session() -> str:
     explicit = os.getenv("TELEGRAM_SESSION", "").strip()
     if explicit:
         return explicit
-    candidates = [
+    for path in (
         Path("credentials/telegram/session/armoredcreator.session"),
         Path("credentials/telegram/session/armoredsync.session"),
         Path("armoredcreator.session"),
         Path("armoredsync.session"),
-    ]
-    for path in candidates:
+    ):
         if path.exists():
             return str(path)
     raise RuntimeError(
@@ -50,6 +49,21 @@ class TelegramListener:
     async def disconnect(self) -> None:
         await self.client.disconnect()
 
+    @staticmethod
+    def is_video(message: Any) -> bool:
+        return bool(getattr(message, "video", None))
+
+    def is_topic_message(self, message: Any) -> bool:
+        if int(getattr(message, "id", 0) or 0) == self.topic_id:
+            return True
+        reply = getattr(message, "reply_to", None)
+        if reply is None:
+            return False
+        return (
+            int(getattr(reply, "reply_to_top_id", 0) or 0) == self.topic_id
+            or int(getattr(reply, "reply_to_msg_id", 0) or 0) == self.topic_id
+        )
+
     async def download_video(self, message: Any, destination: Path) -> Path:
         destination.parent.mkdir(parents=True, exist_ok=True)
         result = await self.client.download_media(message, file=str(destination))
@@ -57,11 +71,12 @@ class TelegramListener:
             raise RuntimeError("Telegram não retornou arquivo de mídia.")
         return Path(result)
 
-    async def iter_videos(self, limit: int | None = None):
-        async for message in self.client.iter_messages(
-            self.chat_id,
-            limit=limit,
-            reply_to=self.topic_id,
-        ):
-            if getattr(message, "video", None):
-                yield message
+    def register_video_handler(self, callback) -> None:
+        @self.client.on(events.NewMessage(chats=self.chat_id))
+        async def _handler(event):
+            message = event.message
+            if self.is_topic_message(message) and self.is_video(message):
+                await callback(message)
+
+    async def run_forever(self) -> None:
+        await self.client.run_until_disconnected()
