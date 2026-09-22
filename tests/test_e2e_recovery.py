@@ -118,5 +118,64 @@ class EndToEndRecoveryTests(unittest.TestCase):
         finally:
             os.environ.pop("ARMORED_STUDIO_ALLOW_COPY",None); os.environ.pop("ARMORED_STUDIO_FORCE_COPY",None)
 
+
+    def test_recover_pending_finalizes_confirmed_recovery_and_cleans_up(self):
+        os.environ["ARMORED_STUDIO_ALLOW_COPY"]="1"
+        os.environ["ARMORED_STUDIO_FORCE_COPY"]="1"
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                root=Path(td); input_dir=root/"input"; input_dir.mkdir()
+                source=input_dir/"e2e-400.mp4"; source.write_bytes(b"RECOVERY-PENDING-FINALIZE")
+                published=set()
+
+                crashing_publisher=PersistentPublisher(
+                    published,
+                    crash_after_publish=True,
+                )
+                coordinator=Coordinator.build(
+                    root,
+                    Bindings(Source(source),Vision(),ArmoredStudio(root),crashing_publisher),
+                )
+                item_id=coordinator.ingest_once()
+                with self.assertRaises(Exception):
+                    coordinator.run(item_id)
+                self.assertEqual(coordinator.db.get(item_id).state,State.RECOVERY)
+
+                # Simulate the durable publication acknowledgement that startup
+                # reconciliation receives from Telegram, without republishing.
+                coordinator.db.publication_message_sent(
+                    item_id,
+                    f"e2e-message-{item_id}",
+                )
+                coordinator.close()
+
+                recovered_publisher=PersistentPublisher(
+                    published,
+                    crash_after_publish=False,
+                )
+                coordinator=Coordinator.build(
+                    root,
+                    Bindings(Source(source),Vision(),ArmoredStudio(root),recovered_publisher),
+                )
+                recovered=coordinator.recover_pending()
+
+                row=coordinator.db.get(item_id)
+                self.assertEqual(recovered,[str(item_id)])
+                self.assertEqual(row.state,State.PUBLISHED)
+                self.assertTrue(row.cleanup_completed)
+                self.assertEqual(recovered_publisher.count,0)
+                self.assertTrue(row.original_path.exists())
+                self.assertEqual(
+                    [p.name for p in row.workspace.iterdir()],
+                    [row.original_path.name],
+                )
+                pub=coordinator.db.publication(item_id)
+                self.assertEqual(pub["published_message_id"],f"e2e-message-{item_id}")
+                self.assertTrue(pub["confirmed"])
+                coordinator.close()
+        finally:
+            os.environ.pop("ARMORED_STUDIO_ALLOW_COPY",None)
+            os.environ.pop("ARMORED_STUDIO_FORCE_COPY",None)
+
 if __name__=="__main__":
     unittest.main()
