@@ -91,7 +91,7 @@ def apply_command(config: dict[str, Any], command: str) -> str | None:
     if name == "/rvc" and len(parts) == 2 and parts[1].lower() in {"on", "off"}:
         config["rvc"]["enabled"] = parts[1].lower() == "on"
         save_config(config)
-        return f"RVC {'ATIVADO' if config['rvc']['enabled'] else 'DESATIVADO'}.")
+        return f"RVC {'ATIVADO' if config['rvc']['enabled'] else 'DESATIVADO'}."
 
     if name == "/rvc" and len(parts) == 3 and parts[1].lower() == "voice":
         voice = parts[2].strip().lower()
