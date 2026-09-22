@@ -17,7 +17,28 @@ def main() -> int:
     logging.basicConfig(
         level=os.getenv("ARMORED_LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s | %(levelname)s | %(message)s",
+        force=True,
     )
+    # Console is the operator/certification surface. Keep noisy third-party
+    # internals out of it without hiding application warnings/errors.
+    for logger_name in (
+        "telethon",
+        "telethon.network",
+        "telethon.network.mtprotosender",
+        "httpx",
+        "httpcore",
+        "asyncio",
+        "fairseq",
+        "rvc_python",
+        "torch",
+        "transformers",
+    ):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+    import sys
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
     coordinator = Coordinator.build(root=root)
     try:
