@@ -124,8 +124,11 @@ class TelegramSource:
         except ValueError:
             print(f"[SYNC][CATCH-UP] Limite inválido {raw!r}; CATCH-UP completo.")
             return None
-        if value <= 0:
-            print(f"[SYNC][CATCH-UP] Limite {value} desabilitado; CATCH-UP completo.")
+        if value < 0:
+            print(f"[SYNC][CATCH-UP] Limite {value} inválido; use 0 para ilimitado ou um inteiro positivo.")
+            return None
+        if value == 0:
+            print("[SYNC][CATCH-UP] Limite 0 = CATCH-UP ilimitado.")
             return None
         return value
 
