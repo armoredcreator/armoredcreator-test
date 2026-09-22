@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,8 @@ class Coordinator:
         self.source = source
         self._runtime_lock_held = False
         self._last_catch_up_completed_count = 0
+        self._shutdown_requested = False
+        self.pipeline.set_shutdown_checker(lambda: self._shutdown_requested)
 
     @classmethod
     def build(cls, root: Path | None = None, bindings: Any | None = None):
@@ -443,6 +446,15 @@ class Coordinator:
         import asyncio
         self.db.acquire_runtime_lock("coordinator")
         self._runtime_lock_held = True
+        self._shutdown_requested = False
+        previous_sigint = signal.getsignal(signal.SIGINT)
+
+        def _request_shutdown(signum, frame):
+            # Mark shutdown before an interrupted blocking call returns. Child
+            # tools such as RVC/FFmpeg may turn Ctrl+C into a non-zero exit code.
+            self._shutdown_requested = True
+
+        signal.signal(signal.SIGINT, _request_shutdown)
         try:
             asyncio.run(
                 self._run_forever_async(
@@ -451,6 +463,7 @@ class Coordinator:
                 )
             )
         finally:
+            signal.signal(signal.SIGINT, previous_sigint)
             if self._runtime_lock_held:
                 self.db.release_runtime_lock("coordinator")
                 self._runtime_lock_held = False
