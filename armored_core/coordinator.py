@@ -505,6 +505,23 @@ class Coordinator:
             if str(row["state"]) == State.RECEIVED.value:
                 item = self.db.get(item_id)
                 if not item.original_path.is_file():
+                    # An interrupted download leaves only the transactional
+                    # .part artifact. Sync always restarts materialization
+                    # from Telegram, so never treat the partial as a usable
+                    # original. Remove it before rediscovery to keep the
+                    # canonical workspace deterministic.
+                    partial = item.original_path.with_suffix(
+                        item.original_path.suffix + ".part"
+                    )
+                    if partial.exists():
+                        try:
+                            partial.unlink()
+                        except OSError as exc:
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                "[STARTUP][DOWNLOAD] id=%s não foi possível remover .part: %s",
+                                item_id, exc,
+                            )
                     continue
             try:
                 self.recover(item_id)
