@@ -60,6 +60,14 @@ class TelegramPublicationIdentityTests(unittest.TestCase):
             self.assertFalse(
                 hub._telegram_publication_matches(self._message(video=False), item, 228)
             )
+
+            # Telegram may expose a different filename (or omit it) after upload;
+            # that metadata must not invalidate an exact publication match.
+            message = self._message()
+            message.document = SimpleNamespace(
+                attributes=[SimpleNamespace(file_name="telegram-renamed.mp4")]
+            )
+            self.assertTrue(hub._telegram_publication_matches(message, item, 228))
             db.close()
 
     def test_message_id_is_stored_unconfirmed(self):
