@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import logging
 import os
 import shutil
 import subprocess
@@ -98,7 +100,12 @@ class UnifiedStudio:
             self._test_copy(source, output)
             return output, {"mode": "test-copy", "plan": None}
 
-        analysis = self.analysis.analyze(source)
+        if os.getenv("ARMORED_CONSOLE_VERBOSE", "0") == "1":
+            analysis = self.analysis.analyze(source)
+        else:
+            with open(os.devnull, "w", encoding="utf-8") as quiet:
+                with contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                    analysis = self.analysis.analyze(source)
 
         # Real Studio resources are explicit/configurable; never use another
         # checkout or machine-specific path.
@@ -128,8 +135,17 @@ class UnifiedStudio:
         )
 
         voice = os.getenv("ARMORED_STUDIO_RVC_VOICE", "melody")
+        logging.getLogger(__name__).info(
+            "[STUDIO][ITEM %s] RVC iniciando voz=%s",
+            item.content_id,
+            voice,
+        )
         from .processing.rvc import converter_voz
         converter_voz(audio_original, audio_rvc, voice, item_id=item.content_id)
+        logging.getLogger(__name__).info(
+            "[STUDIO][ITEM %s] RVC concluído",
+            item.content_id,
+        )
 
         from .processing.finalizer import finalizar
         finalizar(source, audio_rvc, music, banner, output, position=os.getenv("ARMORED_STUDIO_INTRO_POSITION", "final"), intro=os.getenv("ARMORED_STUDIO_INTRO", "1") != "0", plan=analysis.plan)
