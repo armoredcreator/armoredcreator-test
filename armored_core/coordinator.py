@@ -255,6 +255,29 @@ class Coordinator:
                 if self.db.get(item_id).state != State.FAILED:
                     self.run(item_id)
                     current = self.db.get(item_id)
+
+                    # RECOVERY is an active unresolved state. Never allow
+                    # CATCH-UP to advance to another Telegram candidate while
+                    # publication reality is still ambiguous. Reconcile the
+                    # current item immediately; if Telegram remains UNKNOWN,
+                    # stop this run and require deterministic recovery/restart.
+                    if current.state == State.RECOVERY:
+                        try:
+                            self.recover(item_id)
+                        except Exception as recovery_exc:
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                "[COORDINATOR][CATCH-UP] Item %s permanece em RECOVERY; "
+                                "não avançará para o próximo candidato: %s",
+                                item_id,
+                                recovery_exc,
+                            )
+                        current = self.db.get(item_id)
+                        if current.state == State.RECOVERY:
+                            processed.append(item_id)
+                            self._last_catch_up_completed_count = completed_count
+                            return processed
+
                     if (
                         current.state == State.PUBLISHED
                         and current.cleanup_completed
@@ -373,6 +396,23 @@ class Coordinator:
             if self.db.get(str(item_id)).state != State.FAILED:
                 self.run(str(item_id))
                 current = self.db.get(str(item_id))
+
+                # An unresolved RECOVERY item blocks the next LIVE polling
+                # cycle. Reconcile once now; UNKNOWN remains durable and must
+                # never be followed by another publication candidate.
+                if current.state == State.RECOVERY:
+                    try:
+                        self.recover(str(item_id))
+                    except Exception as recovery_exc:
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "[COORDINATOR][LIVE] Item %s permanece em RECOVERY; "
+                            "próximo ciclo será bloqueado: %s",
+                            item_id,
+                            recovery_exc,
+                        )
+                    current = self.db.get(str(item_id))
+
                 if current.state == State.PUBLISHED and current.cleanup_completed:
                     commit = getattr(source, "commit_live_checkpoints", None)
                     if commit is not None and checkpoints:
