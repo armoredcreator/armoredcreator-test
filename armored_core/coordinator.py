@@ -12,6 +12,7 @@ from .models import State
 from .pipeline import Pipeline
 from .recovery import Recovery
 from .services import IngestMessage, SyncService
+from .startup_audit import StartupReconciler
 from .storage import Storage
 
 
@@ -24,6 +25,7 @@ class Coordinator:
         self.sync = SyncService(db, storage)
         self.pipeline = Pipeline(db, storage, vision, studio, publisher)
         self.recovery = Recovery(db, storage, vision, studio, publisher)
+        self.startup_reconciler = StartupReconciler(db, storage, publisher)
         self.source = source
         self._runtime_lock_held = False
         self._last_catch_up_completed_count = 0
@@ -399,6 +401,10 @@ class Coordinator:
         That is incompatible with a persistent Telethon session and can
         surface as ``The asyncio event loop must not change after connection``.
         """
+        # Startup is a separate reconciliation phase. It inventories SQLite +
+        # canonical storage and reconciles ambiguous publications before Sync
+        # opens its Telegram session. It never downloads or publishes.
+        self.startup_reconciler.run()
         self.recover_pending()
 
         if (
