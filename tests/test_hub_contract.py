@@ -79,7 +79,7 @@ class HubContractTests(unittest.TestCase):
             pass
 
 
-    def test_publish_once_refuses_unknown_and_never_sends(self):
+    def test_publish_once_does_not_preflight_fresh_publication(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
@@ -87,18 +87,26 @@ class HubContractTests(unittest.TestCase):
             try:
                 item = self._item(db, storage)
                 hub = ArmoredHub(root, db)
-                calls = {"publish": 0}
-                hub.check_publication = lambda current: PublicationCheck.UNKNOWN
-                def forbidden_publish(current):
+                calls = {"check": 0, "publish": 0}
+
+                def forbidden_check(current):
+                    calls["check"] += 1
+                    raise AssertionError("fresh publication must not run Telegram preflight")
+
+                def fake_publish(current):
                     calls["publish"] += 1
-                    raise AssertionError("publish must not run for UNKNOWN")
-                hub.publish = forbidden_publish
+                    return type("Result", (), {"confirmed": True, "message_id": "telegram-456"})()
 
-                from armored_core.services import PublicationUnknownError
-                with self.assertRaises(PublicationUnknownError):
-                    hub.publish_once(item)
+                hub.check_publication = forbidden_check
+                hub.publish = fake_publish
 
-                self.assertEqual(calls["publish"], 0)
+                result = hub.publish_once(item)
+
+                self.assertTrue(result.confirmed)
+                self.assertEqual(result.message_id, "telegram-456")
+                self.assertEqual(calls["check"], 0)
+                self.assertEqual(calls["publish"], 1)
+
                 row = db.publication(item.item_id)
                 self.assertIsNotNone(row)
                 self.assertEqual(row["idempotency_key"], f"armoredcreator:content:{item.item_id}")
