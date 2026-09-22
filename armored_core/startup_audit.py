@@ -42,7 +42,7 @@ class StartupReconciler:
                 if publication["confirmed"] and publication["published_message_id"]:
                     pub_state = f"CONFIRMED#{publication['published_message_id']}"
                 else:
-                    self._reconcile_publication(item_id)
+                    publication_check = self._reconcile_publication(item_id)
                     publication = self.db.publication(item_id)
                     if publication and publication["confirmed"] and publication["published_message_id"]:
                         pub_state = f"CONFIRMED#{publication['published_message_id']}"
@@ -55,6 +55,7 @@ class StartupReconciler:
                     summary["publication_ambiguous"] += 1
             else:
                 pub_state = "NO_RECORD"
+                publication_check = None
 
             current = self.db.get(item_id)
             if (
@@ -62,6 +63,7 @@ class StartupReconciler:
                 and publication is not None
                 and not publication["confirmed"]
                 and pub_state == "AMBIGUOUS"
+                and locals().get("publication_check") == "ABSENT"
             ):
                 result = current.result_path
                 if not result and current.affiliate_url:
@@ -118,9 +120,9 @@ class StartupReconciler:
         )
         return summary
 
-    def _reconcile_publication(self, item_id: str) -> None:
+    def _reconcile_publication(self, item_id: str) -> str | None:
         if self.publisher is None:
-            return
+            return None
         item = self.db.get(item_id)
         try:
             result = self.publisher.check_publication(item)
@@ -129,7 +131,7 @@ class StartupReconciler:
                 "[STARTUP][PUBLICATION] id=%s erro ao verificar: %s",
                 item_id, exc,
             )
-            return
+            return None
 
         value = getattr(result, "value", str(result))
         if value == "CONFIRMED":
@@ -145,4 +147,5 @@ class StartupReconciler:
             self.log.info("[STARTUP][PUBLICATION] id=%s ABSENT", item_id)
         else:
             self.log.warning("[STARTUP][PUBLICATION] id=%s UNKNOWN", item_id)
+        return value
     
