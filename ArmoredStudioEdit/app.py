@@ -10,6 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from telethon import events
+
 from .pipeline.orchestrator import ArmoredStudioEditPipeline
 from .telegram.listener import TelegramListener
 from .telegram.publisher import TelegramPublisher
@@ -103,7 +105,7 @@ async def main_async() -> None:
 
     worker = asyncio.create_task(process_queue())
 
-    @listener.client.on(__import__("telethon").events.NewMessage(chats=chat_id))
+    @listener.client.on(events.NewMessage(chats=chat_id))
     async def _commands(event):
         message = event.message
         if not listener.is_topic_message(message):
