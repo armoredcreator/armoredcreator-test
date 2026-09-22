@@ -62,6 +62,28 @@ def topic_command(message: Any) -> str | None:
     return text if text.startswith("/") else None
 
 
+RVC_VOICE_ALIASES = {
+    "/rebecca": "becca",
+}
+
+
+def available_rvc_voices() -> set[str]:
+    models_dir = (
+        Path(__file__).resolve().parents[1]
+        / "ArmoredStudio"
+        / "runtime"
+        / "rvc"
+        / "models"
+    )
+    voices: set[str] = set()
+    if not models_dir.is_dir():
+        return voices
+    for directory in models_dir.iterdir():
+        if directory.is_dir() and any(directory.glob("*.pth")):
+            voices.add(directory.name.lower())
+    return voices
+
+
 def apply_command(config: dict[str, Any], command: str) -> str | None:
     parts = command.split()
     name = parts[0].lower()
@@ -69,19 +91,28 @@ def apply_command(config: dict[str, Any], command: str) -> str | None:
     if name == "/rvc" and len(parts) == 2 and parts[1].lower() in {"on", "off"}:
         config["rvc"]["enabled"] = parts[1].lower() == "on"
         save_config(config)
-        return f"RVC {'ATIVADO' if config['rvc']['enabled'] else 'DESATIVADO'}."
+        return f"RVC {"ATIVADO" if config["rvc"]["enabled"] else "DESATIVADO"}."
 
     if name == "/rvc" and len(parts) == 3 and parts[1].lower() == "voice":
-        voice = parts[2].strip()
+        voice = parts[2].strip().lower()
         if not voice:
             return "Voz inválida."
+        if voice not in available_rvc_voices():
+            return f"Voz não encontrada: {voice}."
         config["rvc"]["voice"] = voice
         save_config(config)
         return f"Voz RVC alterada para: {voice}."
 
     if name == "/rvc" and len(parts) == 1:
         state = "ON" if config["rvc"]["enabled"] else "OFF"
-        return f"RVC={state} | voz={config['rvc']['voice']}"
+        return f"RVC={state} | voz={config["rvc"]["voice"]}"
+
+    voice = RVC_VOICE_ALIASES.get(name, name[1:] if name.startswith("/") else "")
+    if voice in available_rvc_voices() and len(parts) == 1:
+        config["rvc"]["voice"] = voice
+        config["rvc"]["enabled"] = True
+        save_config(config)
+        return f"Voz RVC alterada para: {voice}. RVC ATIVADO."
 
     return None
 
