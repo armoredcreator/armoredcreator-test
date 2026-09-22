@@ -7,20 +7,11 @@
     "api_id_env": "TELEGRAM_API_ID",
     "api_hash_env": "TELEGRAM_API_HASH"
   },
-  "processing": {
-    "remove_black_bars": true,
-    "veo": true,
-    "gemini": true,
-    "rvc": false
-  },
   "rvc": {
     "enabled": false,
     "voice": "melody"
   },
   "ffmpeg": {
     "binary": "ffmpeg"
-  },
-  "storage": {
-    "root": "storage/ArmoredStudioEdit"
   }
 }
