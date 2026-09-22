@@ -17,6 +17,15 @@ class _Publisher:
         raise AssertionError("confirmed publication should not be queried")
 
 
+class _AbsentPublisher:
+    def __init__(self):
+        self.checked = []
+
+    def check_publication(self, item):
+        self.checked.append(item.content_id)
+        return "ABSENT"
+
+
 class _ReconcilerPublisher:
     def __init__(self, db):
         self.db = db
@@ -61,6 +70,40 @@ class StartupAuditTests(unittest.TestCase):
             self.assertEqual(summary["publication_confirmed"], 1)
             self.assertEqual(summary["orphans"], ["orphan-999"])
             self.assertEqual(publisher.checked, [])
+
+            db.close()
+
+    def test_startup_audit_recovers_failed_absent_item_with_durable_result(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            original = storage.original("823", original_url="https://shopee.com.br/823")
+            original.write_bytes(b"ORIGINAL")
+
+            db = Database(storage.database / "armoredcreator.db")
+            item_id = db.create_item(
+                "823",
+                original,
+                topic_id=228,
+                topic_name="topic",
+                original_url="https://shopee.com.br/823",
+            )
+            result = storage.result("823", "https://shopee.com.br/823", "produto")
+            result.write_bytes(b"FINAL-RESULT")
+            db.set_vision(item_id, "produto", "https://shopee.com.br/823")
+            db.set_result(item_id, result)
+            db.publication_started(item_id, destination_chat_id="-100", destination_topic_id=228)
+            db.fail(item_id, "RuntimeError: ARMORED_HUB_DRY_RUN=1: publicação real bloqueada")
+
+            publisher = _AbsentPublisher()
+            summary = StartupReconciler(db, storage, publisher).run()
+
+            self.assertEqual(publisher.checked, ["823"])
+            self.assertEqual(db.get(item_id).state, State.RECOVERY)
+            self.assertEqual(summary["failed"], 0)
+            self.assertEqual(summary["pending"], 1)
+            self.assertEqual(summary["publication_ambiguous"], 1)
+            self.assertTrue(result.is_file())
 
             db.close()
 
