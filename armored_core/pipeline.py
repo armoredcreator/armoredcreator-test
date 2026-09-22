@@ -128,7 +128,7 @@ class Pipeline:
             current = self.db.get(item_id)
             if current.state == State.PUBLISHED:
                 raise
-            self.db.fail(item_id, f"{type(exc).__name__}: {exc}")
+            self.db.fail(item_id, f"{type(exc).__name__}: {exc}", retryable=True)
             self.log.error("[PIPELINE][ITEM %s] ERRO state=%s: %s", item_id, current.state.value, exc)
             raise
 
