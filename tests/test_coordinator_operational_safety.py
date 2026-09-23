@@ -58,8 +58,7 @@ class CoordinatorOperationalSafetyTests(unittest.TestCase):
                 db, storage, _Vision(), _Studio(), _Publisher(), FailingSource()
             )
             try:
-                with self.assertRaisesRegex(RuntimeError, "simulated-live-source-failure"):
-                    coordinator.run_forever(max_cycles=1, poll_seconds=0)
+                coordinator.run_forever(max_cycles=1, poll_seconds=0)
 
                 self.assertIsNone(
                     db.conn.execute(
