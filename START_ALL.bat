@@ -22,13 +22,14 @@ if not defined ARMORED_PYTHON (
 )
 
 echo ================================================================
-echo ARMORED CREATOR - COORDINATOR REAL
-echo CATCH-UP -^> LIVE -^> VISION -^> STUDIO -^> HUB -^> TELEGRAM
+echo ARMORED CREATOR - START ALL
+echo SYNC -^> SQLITE -^> COORDINATOR -^> VISION -^> STUDIO -^> HUB -^> TELEGRAM
 echo ================================================================
 echo Python: %ARMORED_PYTHON%
 echo Root:   %ARMORED_ROOT%
 echo.
-echo Iniciando processo continuo...
+echo Coordinator e a unica raiz de composicao da pipeline.
+echo CATCH-UP -^> LIVE -^> processamento sequencial.
 echo Para shutdown controlado: CTRL+C
 echo.
 
@@ -36,5 +37,5 @@ echo.
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo.
-echo Coordinator encerrou. Codigo: %EXIT_CODE%
+echo ArmoredCreator encerrou. Codigo: %EXIT_CODE%
 exit /b %EXIT_CODE%

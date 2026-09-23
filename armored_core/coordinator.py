@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import signal
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,7 @@ from .models import State
 from .pipeline import Pipeline
 from .recovery import Recovery
 from .services import IngestMessage, SyncService
+from .startup_audit import StartupReconciler
 from .storage import Storage
 
 
@@ -23,8 +26,12 @@ class Coordinator:
         self.sync = SyncService(db, storage)
         self.pipeline = Pipeline(db, storage, vision, studio, publisher)
         self.recovery = Recovery(db, storage, vision, studio, publisher)
+        self.startup_reconciler = StartupReconciler(db, storage, publisher)
         self.source = source
         self._runtime_lock_held = False
+        self._last_catch_up_completed_count = 0
+        self._shutdown_requested = False
+        self.pipeline.set_shutdown_checker(lambda: self._shutdown_requested)
 
     @classmethod
     def build(cls, root: Path | None = None, bindings: Any | None = None):
@@ -67,8 +74,14 @@ class Coordinator:
         connect = getattr(reader, "connect", None)
         if connect is not None:
             is_connected = getattr(reader, "is_connected", None)
-            if callable(is_connected) and is_connected():
-                return
+            if callable(is_connected):
+                if is_connected():
+                    return
+            else:
+                client = getattr(reader, "client", None)
+                client_is_connected = getattr(client, "is_connected", None)
+                if callable(client_is_connected) and client_is_connected():
+                    return
             await connect()
 
     async def _release_source_connection(self) -> None:
@@ -85,9 +98,10 @@ class Coordinator:
         if disconnect is not None:
             await disconnect()
             return
-        disconnect = getattr(source, "disconnect", None)
-        if disconnect is not None:
-            await disconnect()
+        # Non-Telegram lab sources may expose a convenience disconnect()
+        # method without owning a real Sync session. Do not call it blindly:
+        # the Coordinator must release only the connection it actually manages.
+        # Real Telegram ownership is represented by source.reader above.
 
     async def ingest_once_async(self):
         if self.source is None:
@@ -141,69 +155,214 @@ class Coordinator:
         return item_id
 
     async def run_catch_up_async(self) -> list[str]:
-        """Process historical candidates incrementally, one item at a time."""
-        processed: list[str] = []
-        source = self.source
+        """Discover, materialize, release Sync, and process exactly one item at a time.
 
-        # The real Telegram source exposes a batch collector. It must keep the
-        # Sync Telethon session open while materializing every historical video,
-        # then release that session before Hub opens the same SQLite-backed
-        # Telethon session. This avoids both the Windows session-lock race and
-        # the invalid state of resuming an async topic iterator after disconnect.
-        collect_batch = getattr(source, "collect_historical_batch_async", None)
-        if collect_batch is not None:
-            messages, checkpoints = await collect_batch()
+        CATCH-UP deliberately does not collect a materialized batch. The Sync
+        source only exposes the next eligible candidate; that candidate is
+        materialized into its canonical workspace, the Telegram session is
+        released, and only then does Vision/Studio/Hub run.
+        """
+        processed: list[str] = []
+        completed_count = 0
+        checkpoint_blocked = False
+        source = self.source
+        bounded_limit = getattr(source, "_historical_limit", None)
+        fetch_next = getattr(source, "fetch_next_async", None)
+        if fetch_next is None:
+            raise RuntimeError("Sync source não implementa fetch_next_async")
+
+        while True:
+            message = await fetch_next()
+            if message is None:
+                failed = checkpoint_blocked or bool(
+                    getattr(source, "historical_materialization_failed", False)
+                )
+                scan_complete = bool(
+                    getattr(source, "historical_scan_exhausted", True)
+                )
+                if scan_complete and not failed:
+                    complete = getattr(source, "complete_historical_sync", None)
+                    if complete is not None:
+                        complete()
+                    else:
+                        self.db.complete_historical_sync()
+                break
+
+            item_id = str(message.telegram_message_id)
+
+            # A historical candidate can be rediscovered when the persisted
+            # checkpoint is still behind it (for example after an interrupted
+            # certification run). A previously completed item must never be
+            # counted as part of the current bounded certification.
             try:
-                for message in messages:
-                    item_id = await self.sync.ingest_message_async(IngestMessage(
-                        telegram_message_id=str(message.telegram_message_id),
-                        source_id=getattr(message, "source_id", "telegram"),
-                        topic_id=getattr(message, "topic_id", None),
-                        topic_name=getattr(message, "topic_name", None),
-                        original_url=getattr(message, "original_url", None),
-                        source_path=getattr(message, "source_path", None),
-                        materialize=getattr(message, "materialize", None),
-                    ))
-                    marker = getattr(source, "mark_ingested", None)
-                    if marker is not None:
-                        marker(str(message.telegram_message_id))
-                    processed.append(str(item_id))
+                existing = self.db.get(item_id)
+            except KeyError:
+                existing = None
+            if (
+                existing is not None
+                and existing.state == State.PUBLISHED
+                and existing.cleanup_completed
+            ):
+                marker = getattr(source, "mark_ingested", None)
+                if marker is not None:
+                    marker(item_id)
+                continue
+
+            materialized = False
+            try:
+                await self._ensure_source_connection()
+                item_id = str(await self.sync.ingest_message_async(IngestMessage(
+                    telegram_message_id=item_id,
+                    source_id=getattr(message, "source_id", "telegram"),
+                    topic_id=getattr(message, "topic_id", None),
+                    topic_name=getattr(message, "topic_name", None),
+                    original_url=getattr(message, "original_url", None),
+                    source_path=getattr(message, "source_path", None),
+                    materialize=getattr(message, "materialize", None),
+                )))
+                materialized = True
+                marker = getattr(source, "mark_ingested", None)
+                if marker is not None:
+                    marker(str(message.telegram_message_id))
+                # Do not count here. A candidate is counted only after
+                # the complete pipeline reaches PUBLISHED and cleanup succeeds.
+                # This keeps the bounded CATCH-UP limit tied to completed items.
+                # Checkpoint advancement is deliberately deferred until the
+                # entire item has been processed, published, confirmed and cleaned.
+                # A materialized-but-unprocessed item must remain discoverable after
+                # a crash/restart; SQLite + the canonical workspace provide recovery.
+                pass
+            except Exception as exc:
+                checkpoint_blocked = True
+                marker = getattr(source, "mark_materialization_failed", None)
+                if marker is not None:
+                    marker()
+                import logging
+                logging.getLogger(__name__).exception(
+                    "[COORDINATOR][CATCH-UP] Falha ao materializar %s; "
+                    "checkpoint não avança e o próximo candidato poderá continuar: %s",
+                    getattr(message, "telegram_message_id", "?"),
+                    exc,
+                )
             finally:
                 await self._release_source_connection()
 
-            commit = getattr(source, "commit_live_checkpoints", None)
-            if commit is not None:
-                commit(checkpoints)
+            if not materialized:
+                continue
 
-            # All candidates are now durable in SQLite/filesystem. Processing
-            # remains strictly sequential and can safely use Hub's independent
-            # Telegram connection.
-            for item_id in processed:
-                if self.db.get(str(item_id)).state == State.FAILED:
-                    continue
-                self.run(str(item_id))
+            # Exactly one item crosses the Sync -> Pipeline boundary.
+            try:
+                if self.db.get(item_id).state != State.FAILED:
+                    self.run(item_id)
+                    current = self.db.get(item_id)
 
-            self.db.complete_historical_sync()
-            return processed
+                    # RECOVERY is an active unresolved state. Never allow
+                    # CATCH-UP to advance to another Telegram candidate while
+                    # publication reality is still ambiguous. Reconcile the
+                    # current item immediately; if Telegram remains UNKNOWN,
+                    # stop this run and require deterministic recovery/restart.
+                    if current.state == State.RECOVERY:
+                        try:
+                            self.recover(item_id)
+                        except Exception as recovery_exc:
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                "[COORDINATOR][CATCH-UP] Item %s permanece em RECOVERY; "
+                                "não avançará para o próximo candidato: %s",
+                                item_id,
+                                recovery_exc,
+                            )
+                        current = self.db.get(item_id)
+                        if current.state == State.RECOVERY:
+                            processed.append(item_id)
+                            self._last_catch_up_completed_count = completed_count
+                            return processed
 
-        fetch_async = getattr(source, "fetch_next_async", None)
+                    if (
+                        current.state == State.PUBLISHED
+                        and current.cleanup_completed
+                        and not checkpoint_blocked
+                    ):
+                        # Checkpoints are monotonic and must never jump past
+                        # an earlier candidate whose materialization or
+                        # processing failed. The successful item may finish,
+                        # but its checkpoint remains uncommitted until the
+                        # blocked predecessor is recoverable.
+                        topic_id = getattr(message, "topic_id", None)
+                        commit = getattr(source, "commit_live_checkpoints", None)
+                        if topic_id is not None and commit is not None:
+                            commit({int(topic_id): int(message.telegram_message_id)})
+            except Exception as exc:
+                checkpoint_blocked = True
+                import logging
+                logging.getLogger(__name__).exception(
+                    "[COORDINATOR][CATCH-UP] Falha no processamento de %s; "
+                    "checkpoint permanece no último item confirmado: %s",
+                    item_id,
+                    exc,
+                )
 
-        if fetch_async is None:
-            while True:
-                item_id = await self.ingest_once_async()
-                if item_id is None:
-                    break
-                processed.append(str(item_id))
-                self.run(item_id)
-            self.db.complete_historical_sync()
-            return processed
+            # Count only a fully published and cleaned item.
+            current = self.db.get(item_id)
+            # "processed" means a candidate completed its pipeline attempt and
+            # is retained for lifecycle diagnostics/tests. Certification limits
+            # are intentionally based only on fully published + cleaned items.
+            processed.append(item_id)
+            if current.state == State.PUBLISHED and current.cleanup_completed:
+                completed_count += 1
 
-        while True:
-            message = await fetch_async()
-            if message is None:
-                self.db.complete_historical_sync()
-                break
+            if bounded_limit is not None and completed_count >= bounded_limit:
+                import logging
+                logging.getLogger(__name__).info(
+                    "[COORDINATOR][CATCH-UP] Limite fechado atingido: %s item(ns). "
+                    "Encerrando o ensaio sem entrar em LIVE.",
+                    completed_count,
+                )
+                self._last_catch_up_completed_count = completed_count
+                return processed
 
+        self._last_catch_up_completed_count = completed_count
+        return processed
+
+    def run_catch_up(self) -> list[str]:
+        import asyncio
+        processed = asyncio.run(self.run_catch_up_async())
+        # Never force LIVE here. The async runner is the authority: a
+        # materialization failure deliberately leaves historical sync open so
+        # the failed candidate remains recoverable and the next restart can
+        # resume from the persisted checkpoint.
+        return processed
+
+    async def run_live_once_async(self) -> list[str]:
+        """Discover, materialize, release Sync, and process exactly one LIVE item."""
+        source = self.source
+        fetch_candidate = getattr(source, "fetch_live_candidate_async", None)
+
+        if fetch_candidate is not None:
+            message, checkpoints = await fetch_candidate()
+            messages = [] if message is None else [message]
+        else:
+            # Compatibility for lab sources that still expose the old method.
+            fetch_batch = getattr(source, "fetch_live_batch_async", None)
+            if fetch_batch is None:
+                return []
+            try:
+                messages, checkpoints = await fetch_batch(limit=1)
+            except TypeError as exc:
+                if "limit" not in str(exc):
+                    raise
+                messages, checkpoints = await fetch_batch()
+                messages = messages[:1]
+                checkpoints = dict(checkpoints) if messages else {}
+
+        if not messages:
+            return []
+
+        message = messages[0]
+        item_id = None
+        materialized = False
+        try:
+            await self._ensure_source_connection()
             item_id = await self.sync.ingest_message_async(IngestMessage(
                 telegram_message_id=str(message.telegram_message_id),
                 source_id=getattr(message, "source_id", "telegram"),
@@ -213,117 +372,147 @@ class Coordinator:
                 source_path=getattr(message, "source_path", None),
                 materialize=getattr(message, "materialize", None),
             ))
+            materialized = True
             marker = getattr(source, "mark_ingested", None)
             if marker is not None:
                 marker(str(message.telegram_message_id))
-            processed.append(str(item_id))
-
-            # FAILED is a durable terminal/manual-retry state. If Sync
-            # rediscovers its Telegram message during CATCH-UP, dedupe returns
-            # the same item ID; never feed that FAILED item back into pipeline.
-            if self.db.get(str(item_id)).state == State.FAILED:
-                continue
-
-            # Release Telegram before Hub opens the same Telethon session.
-            # The source iterator is already materialized per topic and can
-            # reconnect on the next fetch.
-            await self._release_source_connection()
-            self.run(str(item_id))
-
-        return processed
-
-    def run_catch_up(self) -> list[str]:
-        import asyncio
-        processed = asyncio.run(self.run_catch_up_async())
-        # Adapters that expose the legacy synchronous/one-at-a-time source
-        # contract do not own a Telegram checkpoint table. Their exhaustion
-        # is itself the durable end-of-history signal.
-        if not self.db.historical_complete():
-            self.db.complete_historical_sync()
-        return processed
-
-    async def run_live_once_async(self) -> list[str]:
-        source = self.source
-        fetch_batch = getattr(source, "fetch_live_batch_async", None)
-        if fetch_batch is None:
-            return []
-        messages, checkpoints = await fetch_batch()
-        processed: list[str] = []
-        try:
-            for message in messages:
-                # The previous item deliberately disconnected Telegram before
-                # entering Hub. Reconnect here before the next materialization;
-                # otherwise the second LIVE item would try to download through
-                # a closed Telethon client.
-                await self._ensure_source_connection()
-                item_id = await self.sync.ingest_message_async(IngestMessage(
-                    telegram_message_id=str(message.telegram_message_id),
-                    source_id=getattr(message, "source_id", "telegram"),
-                    topic_id=getattr(message, "topic_id", None),
-                    topic_name=getattr(message, "topic_name", None),
-                    original_url=getattr(message, "original_url", None),
-                    source_path=getattr(message, "source_path", None),
-                    materialize=getattr(message, "materialize", None),
-                ))
-                marker = getattr(source, "mark_ingested", None)
-                if marker is not None:
-                    marker(str(message.telegram_message_id))
-                processed.append(str(item_id))
-
-                # FAILED is intentionally excluded from automatic retry.
-                # LIVE dedupe may rediscover the same Telegram message.
-                if self.db.get(str(item_id)).state == State.FAILED:
-                    continue
-
-                await self._release_source_connection()
-                self.run(str(item_id))
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception(
+                "[COORDINATOR][LIVE] Falha ao materializar %s; "
+                "checkpoint não avança: %s",
+                getattr(message, "telegram_message_id", "?"),
+                exc,
+            )
         finally:
-            if not messages or len(processed) == len(messages):
-                commit = getattr(source, "commit_live_checkpoints", None)
-                if commit is not None:
-                    commit(checkpoints)
             await self._release_source_connection()
-        return processed
+
+        if not materialized:
+            return []
+
+        # Materialization alone never advances the source checkpoint.
+        # The item must complete the full pipeline and cleanup first.
+        try:
+            if self.db.get(str(item_id)).state != State.FAILED:
+                self.run(str(item_id))
+                current = self.db.get(str(item_id))
+
+                # An unresolved RECOVERY item blocks the next LIVE polling
+                # cycle. Reconcile once now; UNKNOWN remains durable and must
+                # never be followed by another publication candidate.
+                if current.state == State.RECOVERY:
+                    try:
+                        self.recover(str(item_id))
+                    except Exception as recovery_exc:
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "[COORDINATOR][LIVE] Item %s permanece em RECOVERY; "
+                            "próximo ciclo será bloqueado: %s",
+                            item_id,
+                            recovery_exc,
+                        )
+                    current = self.db.get(str(item_id))
+
+                if current.state == State.PUBLISHED and current.cleanup_completed:
+                    commit = getattr(source, "commit_live_checkpoints", None)
+                    if commit is not None and checkpoints:
+                        commit(checkpoints)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception(
+                "[COORDINATOR][LIVE] Falha no processamento de %s; checkpoint "
+                "permanece no último item confirmado: %s",
+                item_id,
+                exc,
+            )
+        return [str(item_id)]
 
     def run_live_once(self) -> list[str]:
         import asyncio
         return asyncio.run(self.run_live_once_async())
 
+    async def _run_forever_async(
+        self,
+        poll_seconds: float = 2.0,
+        max_cycles: int | None = None,
+    ) -> None:
+        """Run the complete Coordinator lifetime inside one asyncio event loop.
+
+        Telethon binds its client to the event loop used at connection time.
+        The previous implementation called ``asyncio.run()`` for every
+        CATCH-UP/LIVE operation, creating a new loop on every cycle.
+        That is incompatible with a persistent Telethon session and can
+        surface as ``The asyncio event loop must not change after connection``.
+        """
+        # Startup is a separate reconciliation phase. It inventories SQLite +
+        # canonical storage and reconciles ambiguous publications before Sync
+        # opens its Telegram session. It never downloads or publishes.
+        self.startup_reconciler.run()
+        self.recover_pending()
+
+        if (
+            not self.db.historical_complete()
+            or not self.db.has_sync_checkpoints()
+        ):
+            if self.db.historical_complete() and not self.db.has_sync_checkpoints():
+                self.db.set_sync_mode("CATCH_UP")
+            catch_up_processed = await self.run_catch_up_async()
+
+            # A bounded CATCH-UP run is a certification/ensayo mode: once the
+            # requested number of fully published+cleaned items is reached,
+            # the Coordinator must terminate instead of opening LIVE.
+            bounded_limit = getattr(self.source, "_historical_limit", None)
+            if (
+                bounded_limit is not None
+                and self._last_catch_up_completed_count >= int(bounded_limit)
+            ):
+                return
+
+        import logging
+        logging.getLogger(__name__).info(
+            "[COORDINATOR][LIVE] CATCH-UP concluído; Coordinator entrou em modo LIVE "
+            "(monitoramento contínuo iniciado)"
+        )
+
+        cycles = 0
+        while max_cycles is None or cycles < max_cycles:
+            self.db.heartbeat_runtime_lock("coordinator")
+            processed = await self.run_live_once_async()
+            cycles += 1
+            if not processed and (max_cycles is None or cycles < max_cycles):
+                await asyncio.sleep(float(poll_seconds))
+
     def run_forever(self, poll_seconds: float = 2.0, max_cycles: int | None = None) -> None:
         """Recover, finish catch-up once, then monitor Telegram continuously.
 
-        ``max_cycles`` is an optional deterministic test/service-run bound. The
-        production default remains ``None`` (run until interrupted).
+        The entire production lifetime is executed under one asyncio loop.
+        This is required by Telethon and also makes LIVE restart behavior
+        deterministic.
         """
         import asyncio
         self.db.acquire_runtime_lock("coordinator")
         self._runtime_lock_held = True
+        self._shutdown_requested = False
+        previous_sigint = signal.getsignal(signal.SIGINT)
+
+        def _request_shutdown(signum, frame):
+            # Mark shutdown before an interrupted blocking call returns. Child
+            # tools such as RVC/FFmpeg may turn Ctrl+C into a non-zero exit code.
+            self._shutdown_requested = True
+
+        signal.signal(signal.SIGINT, _request_shutdown)
         try:
-            self.recover_pending()
-            # SQLite is authoritative for CATCH-UP/LIVE state. This makes a
-            # fresh process restart independent of in-memory Sync state.
-            if (
-                not self.db.historical_complete()
-                or not self.db.has_sync_checkpoints()
-            ):
-                # A stale LIVE flag without checkpoints is not a valid LIVE
-                # state. Rebuild CATCH_UP deterministically; existing items
-                # are deduplicated by Telegram message ID.
-                if self.db.historical_complete() and not self.db.has_sync_checkpoints():
-                    self.db.set_sync_mode("CATCH_UP")
-                self.run_catch_up()
-            cycles = 0
-            while max_cycles is None or cycles < max_cycles:
-                self.db.heartbeat_runtime_lock("coordinator")
-                processed = self.run_live_once()
-                cycles += 1
-                if not processed and (max_cycles is None or cycles < max_cycles):
-                    asyncio.run(asyncio.sleep(float(poll_seconds)))
+            asyncio.run(
+                self._run_forever_async(
+                    poll_seconds=poll_seconds,
+                    max_cycles=max_cycles,
+                )
+            )
         finally:
+            signal.signal(signal.SIGINT, previous_sigint)
             if self._runtime_lock_held:
                 self.db.release_runtime_lock("coordinator")
                 self._runtime_lock_held = False
-
     def run(self, item_id: str) -> None:
         self.pipeline.run(item_id)
 
@@ -362,6 +551,23 @@ class Coordinator:
             if str(row["state"]) == State.RECEIVED.value:
                 item = self.db.get(item_id)
                 if not item.original_path.is_file():
+                    # An interrupted download leaves only the transactional
+                    # .part artifact. Sync always restarts materialization
+                    # from Telegram, so never treat the partial as a usable
+                    # original. Remove it before rediscovery to keep the
+                    # canonical workspace deterministic.
+                    partial = item.original_path.with_suffix(
+                        item.original_path.suffix + ".part"
+                    )
+                    if partial.exists():
+                        try:
+                            partial.unlink()
+                        except OSError as exc:
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                "[STARTUP][DOWNLOAD] id=%s não foi possível remover .part: %s",
+                                item_id, exc,
+                            )
                     continue
             try:
                 self.recover(item_id)

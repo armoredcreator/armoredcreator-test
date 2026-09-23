@@ -6,6 +6,7 @@ from pathlib import Path
 class State(StrEnum):
     RECEIVED = "RECEIVED"
     VISION = "VISION"
+    WAITING_VISION = "WAITING_VISION"
     STUDIO = "STUDIO"
     PUBLISHING = "PUBLISHING"
     PUBLISHED = "PUBLISHED"

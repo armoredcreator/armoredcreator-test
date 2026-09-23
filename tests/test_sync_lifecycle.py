@@ -1,3 +1,5 @@
+import asyncio
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -192,12 +194,13 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertEqual(db.get("102").telegram_message_id, "102")
             coordinator.close()
 
-    def test_live_reconnects_before_each_materialization(self):
+    def test_live_materializes_only_one_candidate_per_poll(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
             db = Database(storage.database / "db.sqlite")
             db.complete_historical_sync()
+            db.set_sync_topic_checkpoint(228, "topic", 99)
 
             class Reader:
                 def __init__(self):
@@ -223,34 +226,47 @@ class SyncLifecycleTests(unittest.TestCase):
                     super().__init__()
                     self.reader = reader
                     self.completed = True
+                    self.index = 0
 
-                async def fetch_live_batch_async(self):
-                    self.live_called = True
-                    messages = []
-                    for message_id in ("201", "202"):
-                        async def materialize(target, message_id=message_id):
-                            if not reader.connected:
-                                raise RuntimeError("telegram-client-not-connected")
-                            target.write_bytes(message_id.encode())
-                        messages.append(SyncMessage(
-                            message_id,
-                            source_id="telegram",
-                            original_url="https://shopee.com.br/x/live",
-                            materialize=materialize,
-                        ))
-                    return messages, {10: 202}
+                async def fetch_live_batch_async(self, limit=None):
+                    await reader.connect()
+                    values = ["201", "202"]
+                    if self.index >= len(values):
+                        return [], {}
+                    value = values[self.index]
+                    self.index += 1
+
+                    async def materialize(target):
+                        if not reader.connected:
+                            raise RuntimeError("telegram-client-not-connected")
+                        target.write_bytes(value.encode())
+
+                    return [SyncMessage(
+                        value, source_id="telegram", topic_id=228,
+                        topic_name="topic",
+                        original_url="https://shopee.com.br/x/live",
+                        materialize=materialize,
+                    )], {228: 99 + self.index}
+
+                async def disconnect(self):
+                    await reader.disconnect()
 
             source = LiveSource()
             publisher = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source)
 
-            live = coordinator.run_live_once()
+            try:
+                self.assertEqual(coordinator.run_live_once(), ["201"])
+                self.assertEqual(publisher.published, ["201"])
+                self.assertEqual(reader.connects, 1)
+                self.assertEqual(reader.disconnects, 1)
+                self.assertEqual(coordinator.run_live_once(), ["202"])
+                self.assertEqual(publisher.published, ["201", "202"])
+                self.assertEqual(reader.connects, 2)
+                self.assertEqual(reader.disconnects, 2)
+            finally:
+                coordinator.close()
 
-            self.assertEqual(live, ["201", "202"])
-            self.assertEqual(publisher.published, ["201", "202"])
-            self.assertGreaterEqual(reader.connects, 2)
-            self.assertGreaterEqual(reader.disconnects, 2)
-            coordinator.close()
 
     def test_live_checkpoint_survives_processing_failure_without_startup_retry(self):
         with tempfile.TemporaryDirectory() as td:
@@ -272,14 +288,16 @@ class SyncLifecycleTests(unittest.TestCase):
                 db, storage, FailOnceVision(), Studio(storage), publisher, source
             )
 
-            with self.assertRaises(RuntimeError):
-                first.run_live_once()
-
+            # Processing failures are isolated by the continuous Coordinator:
+            # the item is durably FAILED, but the LIVE loop itself does not raise.
+            live = first.run_live_once()
+            self.assertEqual(live, ["200"])
             self.assertEqual(db.get("200").state.value, "FAILED")
             first.close()
 
-            # The Telegram checkpoint was already committed after durable ingest;
-            # restart must recover the DB item instead of needing a second message.
+            # FAILED is an explicit/manual-retry state. Startup recovery only
+            # resumes deterministic in-flight states; it must not blindly retry
+            # arbitrary failures after a process restart.
             restarted_source = LifecycleSource()
             restarted_source.completed = True
             restarted_source.live = []
@@ -289,16 +307,13 @@ class SyncLifecycleTests(unittest.TestCase):
             )
             recovered = second.recover_pending()
 
-            # FAILED is an explicit/manual-retry state. Startup recovery only
-            # resumes deterministic in-flight states; it must not blindly retry
-            # arbitrary failures after a process restart.
             self.assertEqual(recovered, [])
             self.assertEqual(second.db.get("200").state.value, "FAILED")
             self.assertEqual(publisher.published, [])
             self.assertEqual(restarted_source.live, [])
             second.close()
 
-    def test_run_forever_catches_up_then_processes_live_in_one_sequential_cycle(self):
+    def test_run_forever_catches_up_then_processes_one_live_candidate_per_cycle(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
@@ -326,16 +341,20 @@ class SyncLifecycleTests(unittest.TestCase):
             publisher = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source)
 
-            coordinator.run_forever(max_cycles=1)
+            coordinator.run_forever(max_cycles=1, poll_seconds=0)
 
             self.assertTrue(db.historical_complete())
             self.assertTrue(source.live_called)
-            self.assertEqual(publisher.published, ["100", "101", "102", "103"])
+            self.assertEqual(publisher.published, ["100", "101", "102"])
             self.assertEqual(
-                [db.get(item_id).state.value for item_id in ("100", "101", "102", "103")],
-                ["PUBLISHED", "PUBLISHED", "PUBLISHED", "PUBLISHED"],
+                [db.get(item_id).state.value for item_id in ("100", "101", "102")],
+                ["PUBLISHED", "PUBLISHED", "PUBLISHED"],
             )
+            self.assertFalse(db.conn.execute(
+                "SELECT 1 FROM items WHERE content_id='103'"
+            ).fetchone())
             coordinator.close()
+
 
     def test_history_and_live_same_id_is_idempotent(self):
         with tempfile.TemporaryDirectory() as td:
@@ -354,6 +373,130 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(len(db.conn.execute("SELECT * FROM items").fetchall()), 1)
             db.close()
+
+
+    def test_shutdown_during_studio_preserves_inflight_state_for_restart(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            source_file = root / "300.mp4"
+            source_file.write_bytes(b"300")
+
+            class InterruptingVision:
+                def identify(self, item):
+                    return VisionResult("affiliate", "https://example.invalid/affiliate")
+
+            class InterruptingStudio:
+                def process(self, item):
+                    raise RuntimeError("rvc-child-interrupted")
+
+            source = LifecycleSource()
+            source.completed = True
+            source.live = [SyncMessage(
+                "300", source_id="local", source_path=source_file,
+                original_url="https://shopee.com.br/x/interrupted",
+            )]
+            publisher = Publisher()
+            coordinator = Coordinator(
+                db, storage, InterruptingVision(), InterruptingStudio(), publisher, source
+            )
+            coordinator.pipeline.set_shutdown_checker(lambda: True)
+
+            with self.assertRaises(KeyboardInterrupt):
+                coordinator.run_live_once()
+
+            self.assertEqual(db.get("300").state.value, "STUDIO")
+            self.assertFalse(db.get("300").cleanup_completed)
+            self.assertIsNone(db.publication("300"))
+            coordinator.close()
+
+
+class DownloadTimeoutTests(unittest.TestCase):
+    def test_telegram_download_allows_slow_but_progressing_transfer(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "slow.mp4"
+
+            class Document:
+                size = 3
+
+            class Message:
+                id = 999
+                document = Document()
+
+            class SlowIterator:
+                def __init__(self):
+                    self.chunks = [b"a", b"b", b"c"]
+                    self.index = 0
+
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    if self.index >= len(self.chunks):
+                        raise StopAsyncIteration
+                    await asyncio.sleep(0.05)
+                    value = self.chunks[self.index]
+                    self.index += 1
+                    return value
+
+            class Client:
+                def iter_download(self, message, request_size):
+                    return SlowIterator()
+
+            class Reader:
+                client = Client()
+
+            source = TelegramSource(Path(td), Reader())
+            old_idle = os.environ.get("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT")
+            os.environ["ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT"] = "1"
+            try:
+                asyncio.run(source._download_to(Message(), target))
+            finally:
+                if old_idle is None:
+                    os.environ.pop("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT", None)
+                else:
+                    os.environ["ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT"] = old_idle
+
+            self.assertEqual(target.read_bytes(), b"abc")
+
+    def test_telegram_download_stall_is_bounded_by_inactivity_timeout(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "stalled.mp4"
+
+            class Document:
+                size = 1
+
+            class Message:
+                id = 1000
+                document = Document()
+
+            class StalledIterator:
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    await asyncio.sleep(2)
+                    return b"x"
+
+            class Client:
+                def iter_download(self, message, request_size):
+                    return StalledIterator()
+
+            class Reader:
+                client = Client()
+
+            source = TelegramSource(Path(td), Reader())
+            old_idle = os.environ.get("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT")
+            os.environ["ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT"] = "0"
+            try:
+                with self.assertRaises(TimeoutError):
+                    asyncio.run(source._download_to(Message(), target))
+            finally:
+                if old_idle is None:
+                    os.environ.pop("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT", None)
+                else:
+                    os.environ["ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT"] = old_idle
 
 
 if __name__ == "__main__":

@@ -29,6 +29,12 @@ class Recovery:
         pub = self.db.publication(item_id)
         if pub:
             if pub["confirmed"]:
+                # A confirmed publication is only terminal if its external
+                # identity is also durable. Without the real Telegram ID we
+                # cannot safely verify it later.
+                message_id = pub["published_message_id"]
+                if not message_id:
+                    raise RuntimeError("confirmed-publication-without-real-message-id")
                 self.db.transition(item_id, State.PUBLISHED, "db-publication-already-confirmed")
                 self.pipeline.cleanup(item_id)
                 return
@@ -37,10 +43,11 @@ class Recovery:
             if check == PublicationCheck.UNKNOWN:
                 raise RuntimeError("publication-check-uncertain-recovery-stopped")
             if check == PublicationCheck.CONFIRMED:
-                self.db.publication_confirmed(
-                    item_id,
-                    pub["published_message_id"] or f"existing-{item_id}",
-                )
+                refreshed = self.db.publication(item_id)
+                message_id = refreshed["published_message_id"] if refreshed else None
+                if not message_id:
+                    raise RuntimeError("telegram-confirmed-without-real-message-id")
+                self.db.publication_confirmed(item_id, str(message_id))
                 self.db.transition(item_id, State.PUBLISHED, "publisher-confirms-existing")
                 self.pipeline.cleanup(item_id)
                 return

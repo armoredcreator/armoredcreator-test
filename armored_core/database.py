@@ -170,6 +170,14 @@ class Database:
         self.conn.commit()
         return item_id
 
+    def repair_original_path(self, item_id: str, path: Path) -> None:
+        """Repair a legacy/incomplete row without changing its pipeline state."""
+        self.conn.execute(
+            "UPDATE items SET original_path=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+            (str(path), str(item_id)),
+        )
+        self.conn.commit()
+
     def finalize_original_path(self, item_id: str, path: Path, sha256: str) -> None:
         self.conn.execute(
             "UPDATE items SET original_path=?, original_sha256=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
@@ -245,6 +253,18 @@ class Database:
         self.conn.execute(
             "INSERT INTO state_events (content_id,old_state,new_state,reason) VALUES (?,?,?,?)",
             (item_id, old.value, new_state.value, reason),
+        )
+        self.conn.commit()
+
+    def mark_vision_waiting(self, item_id: str, reason: str) -> None:
+        old = self.get(item_id).state
+        self.conn.execute(
+            "UPDATE items SET state=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+            (State.WAITING_VISION.value, reason, item_id),
+        )
+        self.conn.execute(
+            "INSERT INTO state_events (content_id,old_state,new_state,reason) VALUES (?,?,?,?)",
+            (item_id, old.value, State.WAITING_VISION.value, reason),
         )
         self.conn.commit()
 

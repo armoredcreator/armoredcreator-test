@@ -61,6 +61,12 @@ def test_studio_has_no_legacy_v1_v2_architecture():
     assert not (studio / "modules" / "v2").exists()
 
 
+def test_repository_has_one_operational_launcher():
+    assert (ROOT / "START_ALL.bat").is_file()
+    assert not (ROOT / "START_COORDINATOR.bat").exists()
+    assert not (ROOT / "armored_core" / "demo.py").exists()
+
+
 @pytest.mark.parametrize("production_root", PRODUCTION_DIRS)
 def test_production_code_has_no_machine_specific_windows_paths(production_root):
     if not production_root.exists():

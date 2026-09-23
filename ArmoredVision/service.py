@@ -4,9 +4,9 @@ import os
 from pathlib import Path
 
 from armored_core.models import Item
-from armored_core.services import VisionResult
+from armored_core.services import VisionResult, VisionUnresolvedError
 
-from .modules.v1.shopee_api import ShopeeAffiliateAPI
+from .modules.v1.shopee_api import ShopeeAffiliateAPI, ShopeeProductNotFoundError
 from .modules.v1.shopee_resolver import resolve_short_url
 
 
@@ -27,7 +27,13 @@ class ArmoredVision:
 
         resolved = resolve_short_url(original)
         api = self.api or ShopeeAffiliateAPI()
-        product = api.get_exact_product(resolved.shop_id, resolved.item_id)
+        try:
+            product = api.get_exact_product(resolved.shop_id, resolved.item_id)
+        except ShopeeProductNotFoundError as exc:
+            raise VisionUnresolvedError(
+                f"Vision V1 não resolveu o produto Shopee {resolved.shop_id}:{resolved.item_id}; "
+                "item preservado para futura reconciliação Vision V2"
+            ) from exc
 
         affiliate_url = str(product.get("offerLink") or "").strip()
         if not affiliate_url:
