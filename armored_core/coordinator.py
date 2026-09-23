@@ -475,12 +475,35 @@ class Coordinator:
         )
 
         cycles = 0
+        live_error_backoff = max(
+            1.0,
+            float(os.getenv("ARMORED_LIVE_ERROR_BACKOFF", "5")),
+        )
         while max_cycles is None or cycles < max_cycles:
             self.db.heartbeat_runtime_lock("coordinator")
-            processed = await self.run_live_once_async()
-            cycles += 1
-            if not processed and (max_cycles is None or cycles < max_cycles):
-                await asyncio.sleep(float(poll_seconds))
+            try:
+                processed = await self.run_live_once_async()
+                cycles += 1
+                if not processed and (max_cycles is None or cycles < max_cycles):
+                    await asyncio.sleep(float(poll_seconds))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Telegram/network outages are transient LIVE conditions, not
+                # process-fatal errors. The source deliberately leaves the
+                # checkpoint unchanged when discovery/materialization fails,
+                # so the same candidate can be rediscovered after reconnect.
+                # Keep the Coordinator alive and let the next iteration rebuild
+                # the Telegram client/session through _ensure_source_connection.
+                import logging
+                logging.getLogger(__name__).exception(
+                    "[COORDINATOR][LIVE] Telegram/rede de origem indisponível; "
+                    "Coordinator permanece vivo e tentará reconectar: %s",
+                    exc,
+                )
+                cycles += 1
+                if max_cycles is None or cycles < max_cycles:
+                    await asyncio.sleep(live_error_backoff)
 
     def run_forever(self, poll_seconds: float = 2.0, max_cycles: int | None = None) -> None:
         """Recover, finish catch-up once, then monitor Telegram continuously.
