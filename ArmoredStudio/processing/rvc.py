@@ -9,9 +9,13 @@ import sys
 
 
 BASE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BASE_DIR.parents[1]
+STUDIO_ROOT = BASE_DIR.parent
 _configured_rvc_root = os.getenv("ARMORED_RVC_ROOT", "").strip()
-RVC_ROOT = (Path(_configured_rvc_root).expanduser() if _configured_rvc_root else PROJECT_ROOT / "rvc").resolve()
+RVC_ROOT = (
+    Path(_configured_rvc_root).expanduser()
+    if _configured_rvc_root
+    else STUDIO_ROOT / "runtime" / "rvc"
+).resolve()
 MODELS_DIR = RVC_ROOT / "models"
 RVC_ENV_DIR = RVC_ROOT / "env"
 
@@ -62,40 +66,59 @@ def localizar_modelo(voz):
     return modelos[0], index
 
 
-def converter_interno(entrada, saida, modelo, index):
+def converter_interno(entrada, saida, modelo, index, item_id=None):
     from rvc_python.infer import RVCInference
     import scipy.io.wavfile as wavfile
 
-    print("\nCarregando modelo RVC...")
+    prefix = f"[RVC][ITEM {item_id}] " if item_id else "[RVC] "
+    print(f"\n{prefix}Iniciando conversão de voz")
     rvc = RVCInference(
         model_path=str(modelo),
         index_path=str(index) if index else "",
         version="v2",
         device="cpu:0",
     )
-    print("Modelo carregado.\n\nConvertendo voz...")
-    resultado = rvc.infer_file(str(entrada), str(saida))
-    if isinstance(resultado, tuple):
+    print(f"{prefix}Modelo carregado; convertendo voz")
+    try:
+        resultado = rvc.infer_file(str(entrada), str(saida))
+    except Exception:
+        Path(saida).unlink(missing_ok=True)
+        raise
+
+    # rvc-python normally writes the requested output file itself. Some
+    # versions also return (sample_rate, audio); only rewrite the file
+    # when that tuple is a valid audio result. Failed/interrupted inference
+    # can otherwise return an error string, which scipy would report later as
+    # the misleading str has no attribute dtype.
+    if isinstance(resultado, tuple) and len(resultado) == 2:
         sample_rate, audio = resultado
+        if not isinstance(sample_rate, int) or not hasattr(audio, "dtype"):
+            Path(saida).unlink(missing_ok=True)
+            raise RuntimeError(
+                "RVC retornou resultado inválido; conversão não concluída"
+            )
         wavfile.write(str(saida), sample_rate, audio)
-    validar_arquivo(saida, "Áudio RVC")
-    print("\nConversão RVC concluída:")
-    print(saida)
+
+    try:
+        validar_arquivo(saida, "Áudio RVC")
+    except Exception:
+        Path(saida).unlink(missing_ok=True)
+        raise
+    print(f"{prefix}CONCLUÍDO output={saida}")
     return Path(saida)
 
 
-def executar_no_rvc(entrada, saida, voz):
+def executar_no_rvc(entrada, saida, voz, item_id=None):
     modelo, index = localizar_modelo(voz)
     rvc_python = resolver_rvc_python()
 
-    print("\n=== RVC VOICE ===")
-    print(f"Voz: {voz}")
-    print(f"Modelo: {modelo}")
-    print(f"Index: {index or '(opcional; não encontrado)'}")
+    prefix = f"[RVC][ITEM {item_id}]" if item_id else "[RVC]"
+    print(f"\n{prefix} VOICE | voz={voz}")
+    print(f"{prefix} modelo={modelo.name} index={index.name if index else '-'}")
 
     current_python = Path(sys.executable).resolve()
     if current_python == rvc_python.resolve():
-        return converter_interno(entrada, saida, modelo, index)
+        return converter_interno(entrada, saida, modelo, index, item_id)
 
     comando = [
         str(rvc_python),
@@ -103,25 +126,25 @@ def executar_no_rvc(entrada, saida, voz):
         str(entrada),
         str(saida),
         voz,
+        str(item_id or ""),
     ]
-    print("\nExecutando ambiente RVC:")
-    print(" ".join(map(str, comando)))
+    print(f"{prefix} Executando ambiente RVC")
 
-    resultado = subprocess.run(comando, cwd=str(PROJECT_ROOT))
+    resultado = subprocess.run(comando, cwd=str(BASE_DIR))
     if resultado.returncode != 0:
         raise RuntimeError("Falha na conversão RVC.")
     validar_arquivo(saida, "Áudio RVC")
     return Path(saida)
 
 
-def converter_voz(entrada, saida=None, voz=DEFAULT_VOICE):
+def converter_voz(entrada, saida=None, voz=DEFAULT_VOICE, item_id=None):
     entrada = Path(entrada)
     saida = Path(saida) if saida is not None else DEFAULT_OUTPUT
     validar_arquivo(entrada, "Áudio de entrada")
     saida.parent.mkdir(parents=True, exist_ok=True)
     if saida.exists():
         saida.unlink()
-    return executar_no_rvc(entrada, saida, voz)
+    return executar_no_rvc(entrada, saida, voz, item_id)
 
 
 def main():
@@ -132,13 +155,14 @@ def main():
     entrada = Path(sys.argv[1])
     saida = Path(sys.argv[2])
     voz = sys.argv[3] if len(sys.argv) >= 4 else DEFAULT_VOICE
+    item_id = sys.argv[4] if len(sys.argv) >= 5 and sys.argv[4] else None
 
     if Path(sys.executable).resolve() == resolver_rvc_python().resolve():
         modelo, index = localizar_modelo(voz)
-        converter_interno(entrada, saida, modelo, index)
+        converter_interno(entrada, saida, modelo, index, item_id)
         return
 
-    converter_voz(entrada, saida, voz)
+    converter_voz(entrada, saida, voz, item_id)
 
 
 if __name__ == "__main__":

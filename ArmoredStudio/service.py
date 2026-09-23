@@ -20,13 +20,16 @@ class ArmoredStudio:
         self.engine = UnifiedStudio(self.root, self.storage)
 
     def process(self, item: Item) -> StudioResult:
-        ffmpeg = os.getenv("ARMORED_FFMPEG", "ffmpeg")
-        if not shutil.which(ffmpeg):
-            raise RuntimeError("FFmpeg não encontrado")
+        if os.getenv("ARMORED_STUDIO_FORCE_COPY") != "1":
+            ffmpeg = os.getenv("ARMORED_FFMPEG", "ffmpeg")
+            if not shutil.which(ffmpeg):
+                raise RuntimeError("FFmpeg não encontrado")
 
         result_path, _details = self.engine.process(item)
+        # Studio reads ORIGINAL directly unless a durable WORKING artifact
+        # already exists. It does not manufacture a byte-identical copy.
         return StudioResult(
-            self.storage.working(item.item_id, item.telegram_message_id),
+            Path(item.working_path) if item.working_path else None,
             Path(result_path),
         )
 

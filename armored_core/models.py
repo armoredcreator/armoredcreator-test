@@ -6,6 +6,7 @@ from pathlib import Path
 class State(StrEnum):
     RECEIVED = "RECEIVED"
     VISION = "VISION"
+    WAITING_VISION = "WAITING_VISION"
     STUDIO = "STUDIO"
     PUBLISHING = "PUBLISHING"
     PUBLISHED = "PUBLISHED"
@@ -19,7 +20,7 @@ class PublicationCheck(StrEnum):
 
 @dataclass(frozen=True)
 class Item:
-    item_id: int
+    content_id: str
     telegram_message_id: str
     state: State
     workspace: Path
@@ -32,3 +33,12 @@ class Item:
     original_url: str | None = None
     topic_id: int | None = None
     topic_name: str | None = None
+    original_sha256: str | None = None
+    attempts: int = 0
+    recovery_count: int = 0
+    cleanup_completed: bool = False
+
+    @property
+    def item_id(self) -> str:
+        """Backward-compatible alias; content_id is the canonical identity."""
+        return self.content_id

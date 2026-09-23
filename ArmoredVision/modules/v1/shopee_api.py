@@ -5,6 +5,11 @@ import requests
 
 class ShopeeAPIError(RuntimeError): pass
 
+
+class ShopeeProductNotFoundError(ShopeeAPIError):
+    """Exact V1 lookup found no affiliate offer for the supplied IDs."""
+
+
 PRODUCT_OFFER_QUERY = """
 query ProductOffer($itemId: Int64, $shopId: Int64, $page: Int, $limit: Int) {
   productOfferV2(itemId: $itemId, shopId: $shopId, page: $page, limit: $limit) {
@@ -40,7 +45,7 @@ class ShopeeAffiliateAPI:
     def get_exact_product(self,shop_id:str,item_id:str):
         data=self._post(PRODUCT_OFFER_QUERY,{"itemId":str(item_id),"shopId":str(shop_id),"page":1,"limit":1})
         nodes=data.get("data",{}).get("productOfferV2",{}).get("nodes") or []
-        if not nodes: raise ShopeeAPIError(f"Produto não encontrado: {shop_id}:{item_id}")
+        if not nodes: raise ShopeeProductNotFoundError(f"Produto não encontrado: {shop_id}:{item_id}")
         p=nodes[0]
         if str(p.get("shopId"))!=str(shop_id) or str(p.get("itemId"))!=str(item_id): raise ShopeeAPIError("Produto Shopee divergente")
         return p

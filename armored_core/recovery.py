@@ -22,13 +22,19 @@ class Recovery:
                 f"cannot-recover-without-immutable-original: {item.original_path}"
             )
 
-        previous_state = item.state
+        self.db.record_recovery(item_id)
         self.db.transition(item_id, State.RECOVERY, "startup-recovery")
         item = self.db.get(item_id)
 
         pub = self.db.publication(item_id)
         if pub:
             if pub["confirmed"]:
+                # A confirmed publication is only terminal if its external
+                # identity is also durable. Without the real Telegram ID we
+                # cannot safely verify it later.
+                message_id = pub["published_message_id"]
+                if not message_id:
+                    raise RuntimeError("confirmed-publication-without-real-message-id")
                 self.db.transition(item_id, State.PUBLISHED, "db-publication-already-confirmed")
                 self.pipeline.cleanup(item_id)
                 return
@@ -37,20 +43,31 @@ class Recovery:
             if check == PublicationCheck.UNKNOWN:
                 raise RuntimeError("publication-check-uncertain-recovery-stopped")
             if check == PublicationCheck.CONFIRMED:
-                self.db.publication_confirmed(
-                    item_id,
-                    pub["published_message_id"] or f"existing-{item_id}",
-                )
+                refreshed = self.db.publication(item_id)
+                message_id = refreshed["published_message_id"] if refreshed else None
+                if not message_id:
+                    raise RuntimeError("telegram-confirmed-without-real-message-id")
+                self.db.publication_confirmed(item_id, str(message_id))
                 self.db.transition(item_id, State.PUBLISHED, "publisher-confirms-existing")
                 self.pipeline.cleanup(item_id)
                 return
 
-        # Canonical workspace filenames are durable facts even if DB path fields
-        # were not committed before a crash.
-        working = item.working_path or self.storage.working(item_id)
+        # A DB path is a durable claim, not proof that the artifact still exists.
+        # If the previous synthetic WORKING artifact was removed, clear the stale
+        # path so Studio deterministically falls back to the immutable ORIGINAL.
+        working = item.working_path
+        if working is not None and not working.is_file():
+            self.db.set_working(item_id, None)
+            working = None
+        working = working or self.storage.working(item_id)
+
         result = item.result_path
-        if not result and item.affiliate_name:
-            result = self.storage.result(item_id, item.affiliate_name)
+        if not result and item.affiliate_url:
+            result = self.storage.result(
+                item_id,
+                item.affiliate_url,
+                item.affiliate_name,
+            )
 
         if result and result.is_file():
             if item.result_path is None:

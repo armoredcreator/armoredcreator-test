@@ -27,8 +27,8 @@ class Studio:
     def __init__(self, storage):
         self.storage = storage
     def process(self, item):
-        w = self.storage.working(item.item_id)
-        r = self.storage.result(item.item_id, item.affiliate_name or "affiliate")
+        w = self.storage.working(item.content_id)
+        r = self.storage.result(item.content_id, affiliate_name=item.affiliate_name or "affiliate")
         payload = item.original_path.read_bytes()
         w.write_bytes(payload)
         r.write_bytes(payload + b"-processed")
@@ -44,8 +44,6 @@ class Publisher:
         self.count += 1
         self.ids.add(item.item_id)
         return PublicationResult(True, f"telegram-result-{self.count}")
-
-
 
 class AsyncSource:
     def __init__(self):
@@ -71,7 +69,6 @@ class AsyncSource:
     def mark_ingested(self, message_id):
         self.marked = message_id
 
-
 class CoordinatorTests(unittest.TestCase):
     def test_async_source_materializes_inside_same_event_loop(self):
         with tempfile.TemporaryDirectory() as td:
@@ -83,7 +80,7 @@ class CoordinatorTests(unittest.TestCase):
 
             item_id = coordinator.ingest_once()
 
-            self.assertEqual(item_id, 1)
+            self.assertEqual(item_id, "telegram-async-1")
             item = db.get(item_id)
             self.assertEqual(item.original_path.name, "telegram-async-1_finaldomeulinknovo.mp4")
             self.assertEqual(item.original_path.read_bytes(), b"ASYNC-TELEGRAM")
@@ -91,6 +88,68 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(source.marked, "telegram-async-1")
             coordinator.close()
 
+    def test_interrupted_materialization_leaves_durable_received_item(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            service = __import__("armored_core.services", fromlist=["SyncService"]).SyncService(db, storage)
+
+            async def materialize(target):
+                target.write_bytes(b"PARTIAL")
+                raise RuntimeError("simulated-download-crash")
+
+            from armored_core.services import IngestMessage
+            message = IngestMessage(
+                telegram_message_id="telegram-crash",
+                original_url="https://shopee.com.br/example/crash",
+                materialize=materialize,
+            )
+
+            with self.assertRaises(RuntimeError):
+                import asyncio
+                asyncio.run(service.ingest_message_async(message))
+
+            row = db.get("telegram-crash")
+            self.assertEqual(row.state, State.RECEIVED)
+            self.assertTrue(row.original_path.parent.exists())
+            self.assertFalse(row.original_path.exists())
+            self.assertFalse(row.original_path.with_suffix(row.original_path.suffix + ".part").exists())
+            db.close()
+
+
+    def test_live_connection_failure_does_not_kill_coordinator(self):
+        class FlakyLiveSource:
+            def __init__(self):
+                self.calls = 0
+
+            async def fetch_live_candidate_async(self):
+                self.calls += 1
+                if self.calls == 1:
+                    raise ConnectionError("simulated Telegram outage")
+                return None, {}
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            db.complete_historical_sync()
+            db.set_sync_topic_checkpoint(0, "LIVE-TEST", 0)
+            db.set_sync_mode("LIVE")
+            source = FlakyLiveSource()
+            coordinator = Coordinator(
+                db,
+                storage,
+                Vision(),
+                Studio(storage),
+                Publisher(),
+                source,
+            )
+
+            coordinator.run_forever(poll_seconds=0.001, max_cycles=2)
+
+            self.assertEqual(source.calls, 2)
+            coordinator.close()
 
     def test_complete_chain_is_composed_and_sequential(self):
         with tempfile.TemporaryDirectory() as td:
@@ -101,8 +160,10 @@ class CoordinatorTests(unittest.TestCase):
             src.write_bytes(b"ORIGINAL")
             pub = Publisher()
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), pub, Source(src))
+
             item_id = coordinator.process_next()
-            self.assertEqual(item_id, 1)
+
+            self.assertEqual(item_id, "telegram-100")
             row = db.get(item_id)
             self.assertEqual(row.state, State.PUBLISHED)
             self.assertEqual(row.original_path.read_bytes(), b"ORIGINAL")

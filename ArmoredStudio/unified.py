@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import logging
 import os
 import shutil
 import subprocess
@@ -80,17 +82,17 @@ class UnifiedStudio:
         if not original.is_file():
             raise FileNotFoundError(original)
 
-        working = self.storage.working(item.item_id, item.telegram_message_id)
-        output = self.storage.result(item.item_id, item.affiliate_url, item.affiliate_name, item.telegram_message_id)
+        output = self.storage.result(item.content_id, item.affiliate_url, item.affiliate_name)
         if output.exists():
             output.unlink()
 
-        source = Path(item.working_path or original)
+        # The immutable ORIGINAL is the canonical Studio input. Do not create
+        # a byte-identical WORKING copy merely to satisfy the old contract.
+        # A WORKING artifact is used only when a durable intermediate exists.
+        working = item.working_path
+        source = Path(working) if working and Path(working).is_file() else original
         if not source.is_file():
             raise FileNotFoundError(source)
-        if source != working:
-            shutil.copy2(source, working)
-        source = working
 
         # Explicit deterministic test mode preserves the contract tests without
         # pretending that arbitrary bytes are a real video.
@@ -98,7 +100,12 @@ class UnifiedStudio:
             self._test_copy(source, output)
             return output, {"mode": "test-copy", "plan": None}
 
-        analysis = self.analysis.analyze(source)
+        if os.getenv("ARMORED_CONSOLE_VERBOSE", "0") == "1":
+            analysis = self.analysis.analyze(source)
+        else:
+            with open(os.devnull, "w", encoding="utf-8") as quiet:
+                with contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                    analysis = self.analysis.analyze(source)
 
         # Real Studio resources are explicit/configurable; never use another
         # checkout or machine-specific path.
@@ -128,11 +135,20 @@ class UnifiedStudio:
         )
 
         voice = os.getenv("ARMORED_STUDIO_RVC_VOICE", "melody")
+        logging.getLogger(__name__).info(
+            "[STUDIO][ITEM %s] RVC iniciando voz=%s",
+            item.content_id,
+            voice,
+        )
         from .processing.rvc import converter_voz
-        converter_voz(audio_original, audio_rvc, voice)
+        converter_voz(audio_original, audio_rvc, voice, item_id=item.content_id)
+        logging.getLogger(__name__).info(
+            "[STUDIO][ITEM %s] RVC concluído",
+            item.content_id,
+        )
 
         from .processing.finalizer import finalizar
-        finalizar(source, audio_rvc, music, banner, output, position=os.getenv("ARMORED_STUDIO_INTRO_POSITION", "final"), intro=os.getenv("ARMORED_STUDIO_INTRO", "1") != "0")
+        finalizar(source, audio_rvc, music, banner, output, position=os.getenv("ARMORED_STUDIO_INTRO_POSITION", "final"), intro=os.getenv("ARMORED_STUDIO_INTRO", "1") != "0", plan=analysis.plan)
 
         for artifact in (audio_original, audio_rvc):
             artifact.unlink(missing_ok=True)

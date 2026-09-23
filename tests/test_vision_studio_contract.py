@@ -25,13 +25,13 @@ class FakeAPI:
 class VisionStudioContractTests(unittest.TestCase):
     def _item(self, root):
         storage = Storage(root)
-        original = storage.original(1, telegram_message_id="tg-1", original_url="https://shopee.com.br/abc/123/456")
+        original = storage.original("tg-1", original_url="https://shopee.com.br/abc/123/456")
         original.write_bytes(b"ORIGINAL")
         return Item(
-            item_id=1,
+            content_id="tg-1",
             telegram_message_id="tg-1",
             state=State.VISION,
-            workspace=storage.workspace(1),
+            workspace=storage.workspace("tg-1"),
             original_path=original,
             working_path=None,
             result_path=None,
@@ -73,19 +73,19 @@ class VisionStudioContractTests(unittest.TestCase):
                        "affiliate_url": "https://shopee.com.br/abc/finaldomeulinknovo"}
                 )
                 result = ArmoredStudio(root).process(item)
-                self.assertEqual(result.working_path, storage.working(1))
+                self.assertIsNone(result.working_path)
                 self.assertEqual(
                     result.result_path.name,
                     "tg-1_finaldomeulinknovo.mp4",
                 )
                 self.assertEqual(
-                    sorted(p.name for p in storage.workspace(1).iterdir()),
-                    ["tg-1_working.mp4", "tg-1_finaldomeulinknovo.mp4", "tg-1_456.mp4"],
+                    sorted(p.name for p in storage.workspace(item.content_id).iterdir()),
+                    ["tg-1_456.mp4", "tg-1_finaldomeulinknovo.mp4"],
                 )
                 self.assertFalse((root / "storage" / "sync").exists())
                 self.assertFalse((root / "storage" / "queue").exists())
                 self.assertFalse((root / "storage" / "pipeline").exists())
-                self.assertEqual(storage.original(1).read_bytes(), b"ORIGINAL")
+                self.assertEqual(item.original_path.read_bytes(), b"ORIGINAL")
         finally:
             for name, old in (
                 ("ARMORED_STUDIO_ALLOW_COPY", old_allow),

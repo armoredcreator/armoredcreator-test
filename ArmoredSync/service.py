@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from armored_core.database import Database
 from armored_core.services import IngestMessage, SyncService
 
 
@@ -54,11 +55,25 @@ class TelegramReader:
             from telethon import TelegramClient
         except ImportError as exc:
             raise RuntimeError("Dependência Telethon ausente; instale as dependências do Sync.") from exc
-        session = Path(root) / "credentials" / "telegram" / "session" / "armoredsync"
-        session.parent.mkdir(parents=True, exist_ok=True)
-        self.client = TelegramClient(str(session), api_id, api_hash)
+
+        self._session = Path(root) / "credentials" / "telegram" / "session" / "armoredsync"
+        self._api_id = api_id
+        self._api_hash = api_hash
+        self._TelegramClient = TelegramClient
+        self._build_client()
+
+    def _build_client(self) -> None:
+        self._session.parent.mkdir(parents=True, exist_ok=True)
+        self.client = self._TelegramClient(str(self._session), self._api_id, self._api_hash)
 
     async def connect(self):
+        # Telethon binds a client to the event loop used by its first
+        # connection. Coordinator intentionally runs bounded async operations
+        # with separate asyncio.run() calls, so a disconnected client must be
+        # recreated before reconnecting on a new loop.
+        if self.client.is_connected():
+            return
+        self._build_client()
         await self.client.start()
 
     async def disconnect(self):
@@ -80,11 +95,90 @@ class TelegramSource:
     URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
     SHOPEE_DOMAINS = ("shopee.com.br", "shopee.co", "shopee.ee")
 
-    def __init__(self, root: Path, reader: Any):
+    def __init__(self, root: Path, reader: Any, db: Database | None = None):
         self.root = Path(root)
         self.reader = reader
+        self.db = db
         self._seen: set[int] = set()
         self._topic_iterator = None
+        self._topics: list[tuple[int, str]] | None = None
+        self._historical_complete = False
+        self._historical_checkpoints: dict[int, int] = {}
+        self._historical_limit = self._read_historical_limit()
+        self._historical_candidates_emitted = 0
+        self._historical_limit_reached = False
+        self._historical_materialization_failed = False
+        self._historical_scan_exhausted = False
+
+    @property
+    def mode(self) -> str:
+        return self.db.sync_mode() if self.db is not None else ("LIVE" if self._historical_complete else "CATCH_UP")
+
+    @staticmethod
+    def _read_historical_limit() -> int | None:
+        raw = (os.getenv("ARMORED_SYNC_CATCHUP_LIMIT") or "").strip()
+        if not raw:
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            print(f"[SYNC][CATCH-UP] Limite inválido {raw!r}; CATCH-UP completo.")
+            return None
+        if value < 0:
+            print(f"[SYNC][CATCH-UP] Limite {value} inválido; use 0 para ilimitado ou um inteiro positivo.")
+            return None
+        if value == 0:
+            print("[SYNC][CATCH-UP] Limite 0 = CATCH-UP ilimitado.")
+            return None
+        return value
+
+    @property
+    def historical_limit_reached(self) -> bool:
+        return self._historical_limit_reached
+
+    @property
+    def historical_collection_limited(self) -> bool:
+        return self._historical_limit is not None
+
+    @property
+    def historical_materialization_failed(self) -> bool:
+        return self._historical_materialization_failed
+
+    @property
+    def historical_scan_exhausted(self) -> bool:
+        return self._historical_scan_exhausted
+
+    def complete_historical_sync(self) -> None:
+        """Commit final historical checkpoints only after every candidate completed."""
+        if self.db is not None and self._historical_checkpoints:
+            self.commit_live_checkpoints(self._historical_checkpoints)
+        self.mark_historical_complete()
+        self._historical_scan_exhausted = True
+
+    def mark_materialization_failed(self) -> None:
+        self._historical_materialization_failed = True
+
+    def _catchup_limit_before_candidate(self) -> bool:
+        if self._historical_limit is None:
+            return False
+        if self._historical_candidates_emitted >= self._historical_limit:
+            self._historical_limit_reached = True
+            print(
+                f"[SYNC][CATCH-UP] Limite atingido: "
+                f"{self._historical_candidates_emitted} candidato(s)."
+            )
+            return True
+        return False
+
+    def mark_historical_complete(self) -> None:
+        if self.db is not None:
+            self.db.complete_historical_sync()
+        self._historical_complete = True
+        self._historical_scan_exhausted = True
+        self._historical_checkpoints.clear()
+
+    def is_historical_complete(self) -> bool:
+        return self.mode == "LIVE"
 
     @staticmethod
     def _shopee_url(message: Any) -> str | None:
@@ -129,6 +223,13 @@ class TelegramSource:
         return topics
 
     async def _topic_messages(self, source: str, topic_id: int):
+        """Yield historical messages page-by-page.
+
+        The backup processed Telegram pages incrementally. Do the same here:
+        never build the complete topic history in memory before candidate
+        detection. The caller keeps the Telegram connection open for the whole
+        catch-up batch, so candidates can still be materialized safely.
+        """
         from telethon import functions
         offset_id = 0
         while True:
@@ -160,30 +261,90 @@ class TelegramSource:
             offset_id = oldest
 
     async def _download_to(self, message: Any, target: Path) -> None:
+        """Materialize one Telegram video without a false total-duration timeout.
+
+        Telegram downloads can legitimately take more than three minutes on a
+        slow connection. A wall-clock timeout therefore converts a healthy,
+        progressing transfer into a lost candidate. The safety bound here is
+        an inactivity timeout per chunk: a transfer may take as long as
+        necessary as long as Telegram keeps delivering data.
+        """
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             target.unlink()
-        with target.open("wb") as output:
-            async for chunk in self.reader.client.iter_download(
-                message,
-                request_size=1024 * 1024,
-            ):
-                if chunk:
-                    output.write(chunk)
-        actual_size = target.stat().st_size if target.exists() else 0
+
         telegram_size = getattr(getattr(message, "document", None), "size", None)
+        idle_timeout = max(
+            1,
+            int(os.getenv("ARMORED_SYNC_DOWNLOAD_IDLE_TIMEOUT", "60")),
+        )
+        started = asyncio.get_running_loop().time()
+        downloaded = 0
+        last_report = 0
+
+        iterator = self.reader.client.iter_download(
+            message,
+            request_size=1024 * 1024,
+        ).__aiter__()
+
+        with target.open("wb") as output:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        iterator.__anext__(),
+                        timeout=idle_timeout,
+                    )
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError as exc:
+                    raise TimeoutError(
+                        f"download Telegram ficou {idle_timeout}s sem progresso "
+                        f"para mensagem {getattr(message, 'id', '?')}"
+                    ) from exc
+
+                if not chunk:
+                    continue
+
+                output.write(chunk)
+                downloaded += len(chunk)
+                now = asyncio.get_running_loop().time()
+                if now - last_report >= 5:
+                    last_report = now
+                    if telegram_size:
+                        pct = downloaded * 100.0 / int(telegram_size)
+                        print(
+                            f"[SYNC][DOWNLOAD] {getattr(message, 'id', '?')} "
+                            f"{downloaded / 1048576:.1f}/{int(telegram_size) / 1048576:.1f} MiB "
+                            f"({pct:.0f}%)"
+                        )
+                    else:
+                        print(
+                            f"[SYNC][DOWNLOAD] {getattr(message, 'id', '?')} "
+                            f"{downloaded / 1048576:.1f} MiB"
+                        )
+
+        actual_size = target.stat().st_size if target.exists() else 0
+        elapsed = max(asyncio.get_running_loop().time() - started, 0.001)
         if actual_size <= 0:
             raise RuntimeError("download retornou arquivo vazio")
         if telegram_size is not None and actual_size != int(telegram_size):
             raise RuntimeError(f"download incompleto: {actual_size} bytes de {int(telegram_size)}")
+        print(
+            f"[SYNC][DOWNLOAD] {getattr(message, 'id', '?')} concluído "
+            f"{actual_size / 1048576:.1f} MiB em {elapsed:.1f}s"
+        )
 
     async def fetch_next_async(self) -> SyncMessage | None:
+        if self.is_historical_complete():
+            return None
         source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
         source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
         source_ref = int(source) if str(source).lstrip("-").isdigit() else source
 
-        if self._topic_iterator is None:
+        if not self.reader.client.is_connected():
             await self.reader.connect()
+
+        if self._topic_iterator is None:
             topics = await self._discover_topics(source_ref)
             if not topics:
                 raise RuntimeError(f"Nenhum tópico de fórum encontrado na fonte Telegram {source}.")
@@ -193,6 +354,12 @@ class TelegramSource:
             message_id, topic_id, topic_name, message, original_url = candidate
             if message_id in self._seen:
                 continue
+            # The bounded certification limit belongs to the
+            # Coordinator, not to Sync discovery. Sync must behave exactly
+            # like production: keep discovering the next eligible candidate
+            # until the Coordinator has completed the requested number of
+            # full pipeline items.
+            self._historical_candidates_emitted += 1
             return SyncMessage(
                 telegram_message_id=str(message_id),
                 source_id=source_id,
@@ -201,30 +368,406 @@ class TelegramSource:
                 original_url=original_url,
                 materialize=lambda target, m=message: self._download_to(m, target),
             )
+        if self._historical_materialization_failed:
+            # Do not advance the scan checkpoint to the end of history and do
+            # not switch to LIVE. The failed candidate remains recoverable and
+            # will be rediscovered after restart.
+            return None
+        # The Coordinator owns historical checkpoint advancement. Reaching
+        # the end of discovery is not sufficient to declare CATCH-UP complete:
+        # the last discovered candidates may still be processing.
+        self._historical_scan_exhausted = True
         return None
 
     async def _candidate_iterator(self, source: str, topics: list[tuple[int, str]]):
+        """Stream historical candidates without building a topic-sized list."""
         for topic_id, topic_name in topics:
-            messages = [message async for message in self._topic_messages(source, topic_id)]
-            for index, message in enumerate(messages):
+            pending_video = None
+            topic_max_id = 0
+
+            async for message in self._topic_messages(source, topic_id):
+                message_id = int(getattr(message, "id", 0) or 0)
+                if message_id > topic_max_id:
+                    topic_max_id = message_id
+                if message_id <= 0:
+                    continue
+
+                # Preserve the backup association rule:
+                # video + Shopee in the same message, or video + Shopee in
+                # the immediately following non-video message.
+                if pending_video is not None:
+                    pending_id, pending_message = pending_video
+                    if not getattr(message, "video", None):
+                        original_url = self._shopee_url(message)
+                        if (
+                            pending_id not in self._seen
+                            and original_url is not None
+                        ):
+                            yield (
+                                pending_id,
+                                int(topic_id),
+                                topic_name,
+                                pending_message,
+                                original_url,
+                            )
+                    pending_video = None
+
                 if not getattr(message, "video", None):
                     continue
 
-                # Preserva exatamente o comportamento do backup:
-                # 1) vídeo + Shopee na mesma mensagem; ou
-                # 2) vídeo + Shopee na mensagem imediatamente seguinte.
                 original_url = self._shopee_url(message)
-
-                if original_url is None and index + 1 < len(messages):
-                    next_message = messages[index + 1]
-                    next_is_video = bool(getattr(next_message, "video", None))
-                    if not next_is_video:
-                        original_url = self._shopee_url(next_message)
-
-                if original_url is None:
+                if original_url is not None:
+                    if message_id not in self._seen:
+                        yield (
+                            message_id,
+                            int(topic_id),
+                            topic_name,
+                            message,
+                            original_url,
+                        )
                     continue
 
-                yield (int(getattr(message, "id", 0) or 0), int(topic_id), topic_name, message, original_url)
+                pending_video = (message_id, message)
+
+            if topic_max_id:
+                self._historical_checkpoints[topic_id] = topic_max_id
+
+    async def iter_historical_candidates_async(self):
+        """Yield historical candidates as soon as they are discovered.
+
+        The Telegram connection stays open for the whole generator lifetime,
+        allowing each candidate to be materialized immediately like the
+        legacy Sync instead of waiting for the complete history scan.
+        """
+        if self.is_historical_complete():
+            return
+
+        source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
+        source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
+        source_ref = int(source) if str(source).lstrip("-").isdigit() else source
+
+        await self.reader.connect()
+        if self._historical_limit is not None:
+            print(f"[SYNC][CATCH-UP] Limite de candidatos: {self._historical_limit}")
+        topics = await self._discover_topics(source_ref)
+        if not topics:
+            raise RuntimeError(f"Nenhum tópico de fórum encontrado na fonte Telegram {source}.")
+
+        self._historical_checkpoints.clear()
+        self._historical_candidates_emitted = 0
+        self._historical_limit_reached = False
+        try:
+            for topic_id, topic_name in topics:
+                pending_video = None
+                topic_max_id = 0
+                candidate_ids: set[int] = set()
+
+                async for message in self._topic_messages(source_ref, topic_id):
+                    message_id = int(getattr(message, "id", 0) or 0)
+                    if message_id > topic_max_id:
+                        topic_max_id = message_id
+                    if message_id <= 0:
+                        continue
+
+                    if pending_video is not None:
+                        pending_id, pending_message = pending_video
+                        if pending_id not in self._seen and pending_id not in candidate_ids:
+                            original_url = self._shopee_url(pending_message)
+                            if original_url is None and not getattr(message, "video", None):
+                                original_url = self._shopee_url(message)
+                            if original_url is not None:
+                                candidate_ids.add(pending_id)
+                                if self._catchup_limit_before_candidate():
+                                    return
+                                self._historical_candidates_emitted += 1
+                                yield SyncMessage(
+                                    telegram_message_id=str(pending_id),
+                                    source_id=source_id,
+                                    topic_id=topic_id,
+                                    topic_name=topic_name,
+                                    original_url=original_url,
+                                    materialize=lambda target, m=pending_message: self._download_to(m, target),
+                                )
+                        pending_video = None
+
+                    if not getattr(message, "video", None):
+                        continue
+
+                    original_url = self._shopee_url(message)
+                    if original_url is not None:
+                        if message_id not in self._seen and message_id not in candidate_ids:
+                            candidate_ids.add(message_id)
+                            if self._catchup_limit_before_candidate():
+                                return
+                            self._historical_candidates_emitted += 1
+                            yield SyncMessage(
+                                telegram_message_id=str(message_id),
+                                source_id=source_id,
+                                topic_id=topic_id,
+                                topic_name=topic_name,
+                                original_url=original_url,
+                                materialize=lambda target, m=message: self._download_to(m, target),
+                            )
+                        continue
+
+                    pending_video = (message_id, message)
+
+                if topic_max_id:
+                    self._historical_checkpoints[topic_id] = topic_max_id
+        except Exception:
+            await self.reader.disconnect()
+            raise
+
+    async def collect_historical_batch_async(self) -> tuple[list[SyncMessage], dict[int, int]]:
+        """Collect the complete historical candidate set while one Telegram
+        connection is open, then let the Coordinator process it sequentially.
+        """
+        if self.is_historical_complete():
+            return [], {}
+
+        source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
+        source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
+        source_ref = int(source) if str(source).lstrip("-").isdigit() else source
+
+        await self.reader.connect()
+        try:
+            topics = await self._discover_topics(source_ref)
+            if not topics:
+                raise RuntimeError(f"Nenhum tópico de fórum encontrado na fonte Telegram {source}.")
+
+            candidates: list[SyncMessage] = []
+            checkpoints: dict[int, int] = {}
+
+            for topic_id, topic_name in topics:
+                # Telethon returns this history newest-first. The legacy
+                # collector associated a video with the immediately following
+                # element in that returned sequence, so keep one look-ahead
+                # message while streaming pages.
+                pending_video = None
+                topic_max_id = 0
+                candidate_ids: set[int] = set()
+
+                async for message in self._topic_messages(source_ref, topic_id):
+                    message_id = int(getattr(message, "id", 0) or 0)
+                    if message_id > topic_max_id:
+                        topic_max_id = message_id
+                    if message_id <= 0:
+                        continue
+
+                    if pending_video is not None:
+                        pending_id, pending_message = pending_video
+                        if pending_id not in self._seen and pending_id not in candidate_ids:
+                            original_url = self._shopee_url(pending_message)
+                            if original_url is None and not getattr(message, "video", None):
+                                original_url = self._shopee_url(message)
+                            if original_url is not None:
+                                candidates.append(SyncMessage(
+                                    telegram_message_id=str(pending_id),
+                                    source_id=source_id,
+                                    topic_id=topic_id,
+                                    topic_name=topic_name,
+                                    original_url=original_url,
+                                    materialize=lambda target, m=pending_message: self._download_to(m, target),
+                                ))
+                                candidate_ids.add(pending_id)
+                        pending_video = None
+
+                    if not getattr(message, "video", None):
+                        continue
+
+                    # Same-message video + Shopee has priority.
+                    original_url = self._shopee_url(message)
+                    if original_url is not None:
+                        if message_id not in self._seen and message_id not in candidate_ids:
+                            candidates.append(SyncMessage(
+                                telegram_message_id=str(message_id),
+                                source_id=source_id,
+                                topic_id=topic_id,
+                                topic_name=topic_name,
+                                original_url=original_url,
+                                materialize=lambda target, m=message: self._download_to(m, target),
+                            ))
+                            candidate_ids.add(message_id)
+                        continue
+
+                    # Otherwise wait for exactly the next message in the
+                    # Telegram result sequence, matching the BACKUP behavior.
+                    pending_video = (message_id, message)
+
+                if topic_max_id:
+                    checkpoints[topic_id] = topic_max_id
+            return candidates, checkpoints
+        except Exception:
+            await self.reader.disconnect()
+            raise
+
+    async def fetch_live_batch_async(self, limit: int | None = None) -> tuple[list[SyncMessage], dict[int, int]]:
+        """Discover all new candidates since the persisted topic checkpoints."""
+        source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
+        source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
+        source_ref = int(source) if str(source).lstrip("-").isdigit() else source
+
+        await self.reader.connect()
+        try:
+            if self._topics is None:
+                self._topics = await self._discover_topics(source_ref)
+            if not self._topics:
+                raise RuntimeError(f"Nenhum tópico de fórum encontrado na fonte Telegram {source}.")
+
+            candidates: list[SyncMessage] = []
+            checkpoints: dict[int, int] = {}
+            for topic_id, topic_name in self._topics:
+                checkpoint = self.db.sync_topic_checkpoint(topic_id) if self.db is not None else 0
+                min_id = max(0, checkpoint - 1)
+                messages = []
+                async for message in self.reader.client.iter_messages(
+                    source_ref, reply_to=topic_id, min_id=min_id, reverse=True
+                ):
+                    messages.append(message)
+
+                ids = [int(getattr(message, "id", 0) or 0) for message in messages]
+                if ids:
+                    checkpoints[topic_id] = max(checkpoint, max(ids))
+
+                for index, message in enumerate(messages):
+                    message_id = int(getattr(message, "id", 0) or 0)
+                    if message_id <= 0 or message_id in self._seen:
+                        continue
+                    if not getattr(message, "video", None):
+                        continue
+
+                    original_url = self._shopee_url(message)
+                    if original_url is None and index + 1 < len(messages):
+                        next_message = messages[index + 1]
+                        if not getattr(next_message, "video", None):
+                            original_url = self._shopee_url(next_message)
+                    if original_url is None:
+                        continue
+
+                    candidates.append(SyncMessage(
+                        telegram_message_id=str(message_id),
+                        source_id=source_id,
+                        topic_id=topic_id,
+                        topic_name=topic_name,
+                        original_url=original_url,
+                        materialize=lambda target, m=message: self._download_to(m, target),
+                    ))
+                    if limit is not None and len(candidates) >= limit:
+                        return candidates, {topic_id: message_id}
+            return candidates, checkpoints
+        except Exception:
+            await self.reader.disconnect()
+            raise
+
+    async def fetch_live_candidate_async(self) -> tuple[SyncMessage | None, dict[int, int]]:
+        """Discover exactly one LIVE candidate without collecting a batch.
+
+        The compatibility path previously called fetch_live_batch_async(limit=1),
+        which still accumulated Telegram messages into a Python list before
+        returning the first candidate. LIVE now streams the topic and returns
+        immediately when the first eligible candidate is found.
+        """
+        source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
+        source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
+        source_ref = int(source) if str(source).lstrip("-").isdigit() else source
+
+        await self.reader.connect()
+        try:
+            if self._topics is None:
+                self._topics = await self._discover_topics(source_ref)
+            if not self._topics:
+                raise RuntimeError(
+                    f"Nenhum tópico de fórum encontrado na fonte Telegram {source}."
+                )
+
+            for topic_id, topic_name in self._topics:
+                checkpoint = (
+                    self.db.sync_topic_checkpoint(topic_id)
+                    if self.db is not None else 0
+                )
+                min_id = max(0, checkpoint - 1)
+                pending_video = None
+
+                async for message in self.reader.client.iter_messages(
+                    source_ref, reply_to=topic_id, min_id=min_id, reverse=True
+                ):
+                    message_id = int(getattr(message, "id", 0) or 0)
+                    if message_id <= 0:
+                        continue
+
+                    if pending_video is not None:
+                        pending_id, pending_message = pending_video
+                        if (
+                            pending_id > checkpoint
+                            and pending_id not in self._seen
+                        ):
+                            original_url = self._shopee_url(pending_message)
+                            if (
+                                original_url is None
+                                and not getattr(message, "video", None)
+                            ):
+                                original_url = self._shopee_url(message)
+                            if original_url is not None:
+                                return (
+                                    SyncMessage(
+                                        telegram_message_id=str(pending_id),
+                                        source_id=source_id,
+                                        topic_id=topic_id,
+                                        topic_name=topic_name,
+                                        original_url=original_url,
+                                        materialize=lambda target, m=pending_message:
+                                            self._download_to(m, target),
+                                    ),
+                                    {topic_id: pending_id},
+                                )
+                        pending_video = None
+
+                    if not getattr(message, "video", None):
+                        continue
+
+                    if message_id <= checkpoint or message_id in self._seen:
+                        continue
+
+                    original_url = self._shopee_url(message)
+                    if original_url is not None:
+                        return (
+                            SyncMessage(
+                                telegram_message_id=str(message_id),
+                                source_id=source_id,
+                                topic_id=topic_id,
+                                topic_name=topic_name,
+                                original_url=original_url,
+                                materialize=lambda target, m=message:
+                                    self._download_to(m, target),
+                            ),
+                            {topic_id: message_id},
+                        )
+
+                    # Keep exactly one look-ahead candidate. If the next
+                    # Telegram message contains the Shopee URL, the video is
+                    # the candidate; otherwise it is discarded and scanning
+                    # continues.
+                    pending_video = (message_id, message)
+
+            # No eligible candidate was found. Do not manufacture a checkpoint
+            # past a trailing video: the next poll may contain its URL.
+            return None, {}
+        except Exception:
+            await self.reader.disconnect()
+            raise
+
+    def commit_live_checkpoints(self, checkpoints: dict[int, int]) -> None:
+        if self.db is None:
+            return
+        for topic_id, message_id in checkpoints.items():
+            topic_name = next(
+                (name for tid, name in (self._topics or []) if tid == topic_id),
+                str(topic_id),
+            )
+            self.db.set_sync_topic_checkpoint(topic_id, topic_name, message_id)
+
+    def fetch_live_batch(self) -> tuple[list[SyncMessage], dict[int, int]]:
+        return asyncio.run(self.fetch_live_batch_async())
 
     def mark_ingested(self, telegram_message_id: str) -> None:
         self._seen.add(int(telegram_message_id))

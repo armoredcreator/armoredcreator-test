@@ -5,7 +5,7 @@ from pathlib import Path
 from armored_core.database import Database
 from armored_core.models import PublicationCheck, State
 from armored_core.pipeline import Pipeline
-from armored_core.services import PublicationResult, StudioResult, SyncService, VisionResult
+from armored_core.services import PublicationResult, PublicationUnknownError, StudioResult, SyncService, VisionResult
 from armored_core.storage import Storage
 
 class Vision:
@@ -60,6 +60,25 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.pub.count, 1)
         self.assertTrue(row.working_path is not None)
         self.assertTrue(row.result_path is not None)
+
+    def test_telegram_timeout_enters_recovery_without_becoming_failed(self):
+        class UnknownPublisher(Publisher):
+            def publish(self, item):
+                self.count += 1
+                raise PublicationUnknownError("Telegram publication outcome is UNKNOWN")
+
+        pub = UnknownPublisher()
+        p = Pipeline(self.db, self.storage, Vision(), Studio(self.storage), pub)
+
+        p.run(self.item)
+
+        row = self.db.get(self.item)
+        self.assertEqual(row.state, State.RECOVERY)
+        self.assertNotEqual(row.state, State.FAILED)
+        self.assertEqual(pub.count, 1)
+        publication = self.db.publication(self.item)
+        self.assertIsNotNone(publication)
+        self.assertEqual(publication["verification_status"], "PENDING")
 
     def test_second_run_does_not_republish(self):
         p = Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub)
