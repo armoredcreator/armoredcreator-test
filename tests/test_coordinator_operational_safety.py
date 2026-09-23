@@ -51,7 +51,7 @@ class CoordinatorOperationalSafetyTests(unittest.TestCase):
             db.set_sync_topic_checkpoint(228, "topic", 99)
 
             class FailingSource(_Source):
-                async def fetch_live_batch_async(self):
+                async def fetch_live_batch_async(self, limit=1):
                     raise RuntimeError("simulated-live-source-failure")
 
             coordinator = Coordinator(
