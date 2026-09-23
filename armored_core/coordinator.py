@@ -481,6 +481,7 @@ class Coordinator:
                         "implemente prepare_live_cutover_async()"
                     )
 
+                import logging
                 await cutover()
                 logging.getLogger(__name__).info(
                     "[COORDINATOR][CERT] CATCH-UP limitado concluído; "
