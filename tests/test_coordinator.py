@@ -117,6 +117,40 @@ class CoordinatorTests(unittest.TestCase):
             self.assertFalse(row.original_path.with_suffix(row.original_path.suffix + ".part").exists())
             db.close()
 
+
+    def test_live_connection_failure_does_not_kill_coordinator(self):
+        class FlakyLiveSource:
+            def __init__(self):
+                self.calls = 0
+
+            async def fetch_live_candidate_async(self):
+                self.calls += 1
+                if self.calls == 1:
+                    raise ConnectionError("simulated Telegram outage")
+                return None, {}
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            db.complete_historical_sync()
+            db.set_sync_topic_checkpoint(0, "LIVE-TEST", 0)
+            db.set_sync_mode("LIVE")
+            source = FlakyLiveSource()
+            coordinator = Coordinator(
+                db,
+                storage,
+                Vision(),
+                Studio(storage),
+                Publisher(),
+                source,
+            )
+
+            coordinator.run_forever(poll_seconds=0.001, max_cycles=2)
+
+            self.assertEqual(source.calls, 2)
+            coordinator.close()
+
     def test_complete_chain_is_composed_and_sequential(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
