@@ -315,7 +315,7 @@ class Coordinator:
                 import logging
                 logging.getLogger(__name__).info(
                     "[COORDINATOR][CATCH-UP] Limite fechado atingido: %s item(ns). "
-                    "Encerrando o ensaio sem entrar em LIVE.",
+                    "Devolvendo controle ao Coordinator para encerramento ou cutover de certificação.",
                     completed_count,
                 )
                 self._last_catch_up_completed_count = completed_count
@@ -458,15 +458,34 @@ class Coordinator:
                 self.db.set_sync_mode("CATCH_UP")
             catch_up_processed = await self.run_catch_up_async()
 
-            # A bounded CATCH-UP run is a certification/ensayo mode: once the
-            # requested number of fully published+cleaned items is reached,
-            # the Coordinator must terminate instead of opening LIVE.
+            # A bounded CATCH-UP run remains opt-in certification behavior.
+            # By default it terminates here, preserving the existing contract.
+            # A second explicit certification flag may instead perform a safe
+            # history-to-LIVE cutover after the requested number of completed
+            # items.
             bounded_limit = getattr(self.source, "_historical_limit", None)
             if (
                 bounded_limit is not None
                 and self._last_catch_up_completed_count >= int(bounded_limit)
             ):
-                return
+                cert_then_live = (
+                    os.getenv("ARMORED_CERT_CATCHUP_THEN_LIVE", "0").strip() == "1"
+                )
+                if not cert_then_live:
+                    return
+
+                cutover = getattr(self.source, "prepare_live_cutover_async", None)
+                if cutover is None:
+                    raise RuntimeError(
+                        "ARMORED_CERT_CATCHUP_THEN_LIVE=1 exige que a fonte "
+                        "implemente prepare_live_cutover_async()"
+                    )
+
+                await cutover()
+                logging.getLogger(__name__).info(
+                    "[COORDINATOR][CERT] CATCH-UP limitado concluído; "
+                    "cutover histórico seguro executado; entrando em LIVE"
+                )
 
         import logging
         logging.getLogger(__name__).info(
