@@ -18,13 +18,21 @@ RVC_ROOT = (
 ).resolve()
 MODELS_DIR = RVC_ROOT / "models"
 RVC_ENV_DIR = RVC_ROOT / "env"
+_configured_rvc_python = os.getenv("ARMORED_RVC_PYTHON", "").strip()
 
 DEFAULT_VOICE = "melody"
 DEFAULT_OUTPUT = RVC_ROOT / "output" / "audio_rvc.wav"
 
 
 def resolver_rvc_python() -> Path:
-    """Resolve the local RVC Python for the current operating system."""
+    """Resolve the RVC Python, allowing an explicit known-good runtime override."""
+    if _configured_rvc_python:
+        configured = Path(_configured_rvc_python).expanduser().resolve()
+        if configured.exists() and configured.is_file():
+            return configured
+        raise FileNotFoundError(
+            "ARMORED_RVC_PYTHON aponta para um Python inexistente:\\n" + str(configured)
+        )
     candidates = (
         RVC_ENV_DIR / "Scripts" / "python.exe",
         RVC_ENV_DIR / "bin" / "python",
