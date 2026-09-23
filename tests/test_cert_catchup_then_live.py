@@ -30,6 +30,9 @@ class _Db:
         self.checkpoints = {}
         self.completed = False
 
+    def sync_mode(self):
+        return "LIVE" if self.completed else "CATCH_UP"
+
     def set_sync_topic_checkpoint(self, topic_id, topic_name, message_id):
         self.checkpoints[int(topic_id)] = int(message_id)
 
@@ -37,7 +40,7 @@ class _Db:
         self.completed = True
 
 
-def test_certification_cutover_advances_each_topic_to_current_high_water_mark(monkeypatch, tmp_path):
+def test_certification_cutover_advances_each_topic_to_current_high_water_mark(tmp_path):
     reader = _Reader()
     db = _Db()
     source = TelegramSource(tmp_path, reader, db)
