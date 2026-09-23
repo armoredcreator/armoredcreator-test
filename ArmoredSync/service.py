@@ -756,6 +756,46 @@ class TelegramSource:
             await self.reader.disconnect()
             raise
 
+    async def prepare_live_cutover_async(self) -> dict[int, int]:
+        """Close a bounded certification window and enter LIVE safely.
+
+        This method is only used when ARMORED_CERT_CATCHUP_THEN_LIVE=1.
+        It advances each discovered topic checkpoint to its current newest
+        Telegram message ID, then marks historical sync complete. This prevents
+        old backlog from being reinterpreted as LIVE after a certification
+        cutoff. Normal production CATCH-UP behavior is unchanged.
+        """
+        source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
+        source_ref = int(source) if str(source).lstrip("-").isdigit() else source
+
+        await self.reader.connect()
+        try:
+            if self._topics is None:
+                self._topics = await self._discover_topics(source_ref)
+            if not self._topics:
+                raise RuntimeError(
+                    f"Nenhum tópico de fórum encontrado na fonte Telegram {source}."
+                )
+
+            checkpoints: dict[int, int] = {}
+            for topic_id, _topic_name in self._topics:
+                # _topic_messages() is newest-first. Read only the first
+                # available message so the cutover does not scan the backlog.
+                async for message in self._topic_messages(source_ref, topic_id):
+                    message_id = int(getattr(message, "id", 0) or 0)
+                    if message_id > 0:
+                        checkpoints[int(topic_id)] = message_id
+                    break
+
+            if checkpoints:
+                self.commit_live_checkpoints(checkpoints)
+
+            self.mark_historical_complete()
+            return checkpoints
+        except Exception:
+            await self.reader.disconnect()
+            raise
+
     def commit_live_checkpoints(self, checkpoints: dict[int, int]) -> None:
         if self.db is None:
             return
