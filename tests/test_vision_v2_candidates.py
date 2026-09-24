@@ -46,6 +46,12 @@ class FakeAPI:
     def generate_short_link(self, origin_url):
         return origin_url + "?affiliate=1"
 
+    def affiliate_link_for_product(self, product):
+        offer = str(product.get("offerLink") or "").strip()
+        if offer:
+            return offer
+        return self.generate_short_link(str(product.get("productLink") or ""))
+
 
 class VisionV2CandidateTests(unittest.TestCase):
     def tearDown(self):
