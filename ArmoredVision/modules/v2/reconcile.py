@@ -108,7 +108,11 @@ class CandidateReconciler:
         same_shop = str(original.get("shopId") or "") == str(candidate.get("shopId") or "")
         price_score = _price_score(original, candidate)
         image_score = None
-        if name_score >= 0.55:
+        # A conservative text gate alone can hide the strongest evidence:
+        # equivalent ads often use very different titles. If explicit
+        # structure agrees, inspect the image even when the name is weak.
+        image_gate = name_score >= 0.55 or len(structural_matches) >= 1
+        if image_gate:
             original_image_url = str(original.get("imageUrl") or "")
             candidate_image_url = str(candidate.get("imageUrl") or "")
             image_key = (original_image_url, candidate_image_url)
