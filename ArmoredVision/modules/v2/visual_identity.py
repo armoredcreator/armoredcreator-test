@@ -38,8 +38,15 @@ class CLIPVisualScorer:
 
         self._torch = torch
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._processor = CLIPProcessor.from_pretrained(self.model_name)
-        self._model = CLIPModel.from_pretrained(self.model_name).to(self._device)
+        self._processor = CLIPProcessor.from_pretrained(
+            self.model_name,
+            token=False,
+            use_fast=False,
+        )
+        self._model = CLIPModel.from_pretrained(
+            self.model_name,
+            token=False,
+        ).to(self._device)
         self._model.eval()
 
     def _download(self, url: str):
