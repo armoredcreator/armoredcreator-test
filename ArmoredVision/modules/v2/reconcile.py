@@ -150,9 +150,10 @@ def canonical_url(product: dict[str, Any]) -> str:
     return str(product.get("productLink") or product.get("offerLink") or "").strip()
 
 
-def candidate_key(product: dict[str, Any]) -> tuple[str, str, str]:
-    return (
-        str(product.get("shopId") or ""),
-        str(product.get("itemId") or ""),
-        canonical_url(product).split("?", 1)[0].rstrip("/"),
-    )
+def candidate_key(product: dict[str, Any]) -> tuple[str, str]:
+    """Deduplicate an offer by its stable Shopee identity before URL variants."""
+    shop_id = str(product.get("shopId") or "").strip()
+    item_id = str(product.get("itemId") or "").strip()
+    if shop_id and item_id:
+        return shop_id, item_id
+    return "", canonical_url(product).split("?", 1)[0].rstrip("/")
