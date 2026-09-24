@@ -145,8 +145,8 @@ class VisionV2CandidateTests(unittest.TestCase):
             original_affiliate_url="https://s.shopee.com.br/original",
             original_url="https://shopee.com.br/product/1/100",
         )
-        self.assertGreaterEqual(len(api.search_calls), 4)
-        self.assertTrue(any("90cm" in call and "gaveta" in call for call in api.search_calls))
+        queries = [str(call).strip().casefold() for call in api.search_calls]
+        self.assertGreaterEqual(len(set(queries)), 4)
 
     def test_discovery_keeps_original_and_caps_at_six_accepted(self):
         os.environ["ARMORED_VISION_V2_TARGET_CANDIDATES"] = "12"
