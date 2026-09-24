@@ -12,6 +12,55 @@ from .shopee_search import ShopeeCandidateAPI
 class VisionCandidateError(RuntimeError):
     pass
 
+def _identity_anchor_terms(product_name: str) -> list[str]:
+    """Build narrow discovery anchors from identity-bearing words plus structure.
+
+    These anchors are discovery-only. They do not accept a candidate and do not
+    replace the existing structural queries.
+    """
+    words = [w.casefold() for w in str(product_name or "").split() if len(w) >= 3]
+    facts = structural_facts(product_name)
+    size = f"{facts['size_cm']:g}cm" if facts.get("size_cm") else ""
+    structural = []
+    if facts.get("drawers") is not None:
+        structural.append("gaveta" if int(facts["drawers"]) == 1 else f"{int(facts['drawers'])} gavetas")
+    if facts.get("doors") is not None:
+        structural.append("porta" if int(facts["doors"]) == 1 else f"{int(facts['doors'])} portas")
+
+    # Only use domain/identity terms that are actually present in the reference.
+    anchors = [
+        token for token in (
+            "barbearia", "cabeleireiro", "bancada", "penteadeira",
+            "suspensa", "camarim", "espelho", "gaveteiro", "nicho",
+            "ripado", "basculhante",
+        )
+        if any(token in word for word in words)
+    ]
+
+    raw: list[str] = []
+    for anchor in anchors:
+        if size and structural:
+            raw.append(" ".join((size, structural[0], anchor)))
+        if structural:
+            raw.append(" ".join((structural[0], anchor)))
+        if size:
+            raw.append(" ".join((size, anchor)))
+    if len(anchors) >= 2 and size and structural:
+        raw.append(" ".join((size, structural[0], anchors[0], anchors[1])))
+    if len(anchors) >= 2 and structural:
+        raw.append(" ".join((structural[0], anchors[0], anchors[1])))
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for term in raw:
+        term = " ".join(term.split()).strip()
+        key = term.casefold()
+        if term and key not in seen:
+            seen.add(key)
+            result.append(term)
+    return result
+
+
 def _query_terms(product_name: str) -> list[str]:
     """Build several discovery signatures, prioritizing explicit structure."""
     words = [w for w in str(product_name or "").split() if len(w) >= 2]
@@ -79,9 +128,22 @@ class CandidateDiscovery:
         reference_cats = {str(x) for x in (reference.get("productCatIds") or [])}
         # Keep a large discovery pool before reconciliation.
         raw_pool_limit = max(target * 10, 100)
-        # Search multiple independent families and two pages before capping.
-        base_terms = _query_terms(str(reference.get("productName") or ""))
-        for keyword in base_terms:
+        # Search identity anchors first. They recover equivalent listings whose
+        # listing noun changes (for example bancada -> penteadeira) while
+        # retaining the same domain + size + structural signature.
+        identity_terms = _identity_anchor_terms(str(reference.get("productName") or ""))
+        base_terms = identity_terms + _query_terms(str(reference.get("productName") or ""))
+        seen_terms: set[str] = set()
+        ordered_terms = []
+        for term in base_terms:
+            key = term.casefold()
+            if term and key not in seen_terms:
+                seen_terms.add(key)
+                ordered_terms.append(term)
+
+        # Search multiple independent families and two/three pages before capping.
+        # A hard pool cap must not prevent the identity-anchor phase from running.
+        for keyword in ordered_terms:
             for sort_type in (1, 2):
                 for page in (1, 2, 3):
                     products = self.api.search_products(keyword, page=page, limit=50, sort_type=sort_type)
@@ -97,6 +159,8 @@ class CandidateDiscovery:
                 if len(records) >= raw_pool_limit:
                     break
             if len(records) >= raw_pool_limit:
+                # The anchor terms were deliberately placed first. Once the
+                # pool is full, remaining broad discovery is unnecessary.
                 break
 
         # Category expansion is discovery only; category never proves identity.
