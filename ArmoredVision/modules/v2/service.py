@@ -5,6 +5,7 @@ from collections import OrderedDict
 from typing import Any
 
 from .models import CandidateRecord
+from .normalize import structural_facts
 from .reconcile import CandidateReconciler, candidate_key
 from .shopee_search import ShopeeCandidateAPI
 
@@ -12,11 +13,27 @@ class VisionCandidateError(RuntimeError):
     pass
 
 def _query_terms(product_name: str) -> list[str]:
+    """Build several discovery signatures, prioritizing explicit structure."""
     words = [w for w in str(product_name or "").split() if len(w) >= 2]
     if not words:
         return []
+    facts = structural_facts(product_name)
+    size = f"{facts['size_cm']:g}cm" if facts.get("size_cm") else ""
+    parts = []
+    for token in ("bancada", "suspensa", "barbearia", "cabeleireiro", "gaveta", "porta", "nicho", "ripado", "basculhante"):
+        if any(token.casefold() in w.casefold() for w in words):
+            parts.append(token)
     distinctive = [w for w in words if any(ch.isdigit() for ch in w) or len(w) >= 5]
-    raw = [" ".join(words[:6]), " ".join(words[:4]), " ".join(distinctive[:5]), " ".join(words[-5:])]
+    raw = [
+        " ".join(x for x in ("bancada", "suspensa", size, "gaveta") if x),
+        " ".join(x for x in ("bancada", size, "gaveta") if x),
+        " ".join(x for x in ("bancada", "barbearia", size, "gaveta") if x),
+        " ".join(x for x in ("bancada", "cabeleireiro", size, "gaveta") if x),
+        " ".join(x for x in (" ".join(parts[:5]), size) if x),
+        " ".join(words[:6]),
+        " ".join(distinctive[:5]),
+        " ".join(words[-5:]),
+    ]
     result: list[str] = []
     seen: set[str] = set()
     for term in raw:
@@ -53,8 +70,9 @@ class CandidateDiscovery:
             pass
 
         records: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
+        reference_cats = {str(x) for x in (reference.get("productCatIds") or [])}
         for keyword in _query_terms(str(reference.get("productName") or "")):
-            products = self.api.search_products(keyword, page=1, limit=20, sort_type=1)
+            products = self.api.search_products(keyword, page=1, limit=50, sort_type=1)
             for product in products:
                 key = candidate_key(product)
                 if not key[0] or not key[1]:
@@ -62,10 +80,27 @@ class CandidateDiscovery:
                 if str(product.get("shopId")) == str(reference.get("shopId")) and str(product.get("itemId")) == str(reference.get("itemId")):
                     continue
                 records.setdefault(key, product)
-                if len(records) >= target:
-                    break
-            if len(records) >= target:
-                break
+
+        def discovery_score(product: dict[str, Any]) -> tuple[float, int, float]:
+            cats = {str(x) for x in (product.get("productCatIds") or [])}
+            category_overlap = len(reference_cats & cats) / max(1, len(reference_cats | cats))
+            ref_facts = structural_facts(str(reference.get("productName") or ""))
+            cand_facts = structural_facts(str(product.get("productName") or ""))
+            matches = sum(
+                1 for field in ("size_cm", "doors", "drawers", "niches", "basculhante", "ripado", "models")
+                if ref_facts.get(field) is not None and cand_facts.get(field) is not None
+                and ref_facts.get(field) == cand_facts.get(field)
+            )
+            conflicts = sum(
+                1 for field in ("size_cm", "doors", "drawers", "niches", "basculhante", "ripado", "models")
+                if ref_facts.get(field) is not None and cand_facts.get(field) is not None
+                and ref_facts.get(field) != cand_facts.get(field)
+            )
+            return category_overlap * 0.55 + matches * 0.15 - conflicts * 0.30, matches, category_overlap
+
+        ranked = sorted(records.values(), key=discovery_score, reverse=True)
+        records = OrderedDict((candidate_key(product), product) for product in ranked[:target])
+
 
         evaluated: list[CandidateRecord] = [
             CandidateRecord(
