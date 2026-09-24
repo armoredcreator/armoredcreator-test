@@ -263,6 +263,12 @@ def main() -> int:
               type { kind name ofType { kind name ofType { kind name } } }
             }
           }
+          page: __type(name: "ItemFeedPageInfo") {
+            fields {
+              name
+              type { kind name ofType { kind name ofType { kind name } } }
+            }
+          }
           row: __type(name: "ItemFeedDataRow") {
             fields {
               name
@@ -280,34 +286,28 @@ def main() -> int:
                 data_schema_body.get("data", {}).get("connection", {}).get("fields", [])
                 if isinstance(data_schema_body, dict) else []
             ),
+            "page_info_fields": (
+                data_schema_body.get("data", {}).get("page", {}).get("fields", [])
+                if isinstance(data_schema_body, dict) else []
+            ),
             "row_fields": (
                 data_schema_body.get("data", {}).get("row", {}).get("fields", [])
                 if isinstance(data_schema_body, dict) else []
             ),
         }
 
-        row_fields = {field.get("name") for field in result["datafeed_schema"].get("row_fields", [])}
         connection_data_fields = {field.get("name") for field in result["datafeed_schema"].get("connection_fields", [])}
-        row_selection = [
-            name for name in (
-                "shopId", "itemId", "productName", "imageUrl", "images",
-                "productLink", "offerLink", "price", "commission", "category",
-            ) if name in row_fields
-        ]
-        container = next(
-            (name for name in ("nodes", "items", "data", "rows") if name in connection_data_fields),
-            None,
-        )
-        if row_selection and container and result["feed_query"] and result["feed_query"].get("data", {}).get("feeds"):
+        row_fields = {field.get("name") for field in result["datafeed_schema"].get("row_fields", [])}
+        page_fields = {field.get("name") for field in result["datafeed_schema"].get("page_info_fields", [])}
+        if "rows" in connection_data_fields and "columns" in row_fields and result["feed_query"] and result["feed_query"].get("data", {}).get("feeds"):
             datafeed_id = result["feed_query"]["data"]["feeds"][0].get("datafeedId")
             if datafeed_id:
-                selection = "\n".join(f"              {name}" for name in row_selection)
+                page_selection = "\n".join(f"              {name}" for name in page_fields)
                 datafeed_query = f"""
         query ProbeItemFeedData {{
           getItemFeedData(datafeedId: "{datafeed_id}", offset: 0, limit: 5) {{
-            {container} {{
-{selection}
-            }}
+            rows {{ columns updateType }}
+            pageInfo {{ {page_selection} }}
           }}
         }}
                 """
