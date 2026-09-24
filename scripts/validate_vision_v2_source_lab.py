@@ -5,15 +5,16 @@ This script intentionally tests ONE external discovery source at a time.
 It does not use our discovery logic, known benchmark IDs as input, CLIP,
 SIFT, dHash, or the V2 reconciler.
 
-First source: Shopee Affiliate Open API product_item_recommend_get.
+Sources currently supported:
+  - product_offers: Shopee Affiliate Open API productOfferV2.
 
-Environment:
-  SHOPEE_ACCESS_TOKEN or SHOPEE_API_ACCESS_TOKEN
-  optional: ARMORED_VISION_LAB_ORIGINAL_URL
+Environment for product_offers:
+  SHOPEE_APP_ID
+  SHOPEE_SECRET_KEY
+  optional SHOPEE_AFFILIATE_API_URL
 
 Usage:
-  python scripts/validate_vision_v2_source_lab.py --source recommendations \
-      --url "https://s.shopee.com.br/8KolJcZrfU"
+  python scripts/validate_vision_v2_source_lab.py --source product_offers
 
 The result is saved under storage/vision_v2_source_lab/<source>.json.
 Known IDs may be configured only as post-discovery benchmark labels and are
@@ -23,6 +24,7 @@ never sent to the discovery source.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -30,12 +32,12 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
 
 
 ORIGINAL_DEFAULT = "https://s.shopee.com.br/8KolJcZrfU"
+ORIGINAL_NAME_DEFAULT = "Bancada Suspensa Barbearia Cabeleireiro 90cm Com Gaveta"
 RESULT_ROOT = Path("storage/vision_v2_source_lab")
 
 # Benchmark-only labels. Never included in requests.
@@ -46,7 +48,7 @@ KNOWN_BENCHMARK_IDS = {
     "382998202:23198215253",
 }
 
-SOURCES = ("recommendations",)
+SOURCES = ("product_offers",)
 
 
 def parse_product_ids(value: str) -> tuple[str, str] | None:
@@ -66,7 +68,6 @@ def resolve_original(url: str) -> tuple[str, str]:
     if ids:
         return ids
 
-    # Short links are resolved without logging cookies or auth headers.
     r = requests.get(
         url,
         allow_redirects=True,
@@ -78,124 +79,193 @@ def resolve_original(url: str) -> tuple[str, str]:
     if ids:
         return ids
 
-    # Some Shopee pages expose the canonical product URL in HTML.
     m = re.search(r"https?://(?:www\.)?shopee\.com\.br/product/(\d+)/(\d+)", r.text)
     if m:
         return m.group(1), m.group(2)
-    m = re.search(r"shopee\.com\.br/[^\"' ]+\.i\.(\d+)\.(\d+)", r.text)
+    m = re.search(r"shopee\.com\.br/[^\\"' ]+\.i\.(\d+)\.(\d+)", r.text)
     if m:
         return m.group(1), m.group(2)
 
     raise RuntimeError(f"Não foi possível resolver shop_id/item_id: {url} -> {r.url}")
 
 
-def request_recommendations(shop_id: str, item_id: str) -> dict[str, Any]:
-    token = os.getenv("SHOPEE_ACCESS_TOKEN") or os.getenv("SHOPEE_API_ACCESS_TOKEN")
-    if not token:
-        raise RuntimeError(
-            "Defina SHOPEE_ACCESS_TOKEN (ou SHOPEE_API_ACCESS_TOKEN) "
-            "para testar product_item_recommend_get."
-        )
-
+def request_product_offers(keyword: str, *, page: int, limit: int) -> dict[str, Any]:
+    app_id = os.getenv("SHOPEE_APP_ID")
+    secret = os.getenv("SHOPEE_SECRET_KEY")
     endpoint = os.getenv(
-        "SHOPEE_RECOMMENDATIONS_ENDPOINT",
-        "https://open.shopee.vn/openapi/product/v2/product_item_recommend_get",
+        "SHOPEE_AFFILIATE_API_URL",
+        "https://open-api.affiliate.shopee.com.br/graphql",
     )
-    params = {"item_id": item_id, "shop_id": shop_id}
+
+    if not app_id:
+        raise RuntimeError("Defina SHOPEE_APP_ID.")
+    if not secret:
+        raise RuntimeError("Defina SHOPEE_SECRET_KEY.")
+
+    # Keep this query compact and deterministic. The signature covers the
+    # exact JSON payload sent over the wire.
+    query = (
+        "query ProductOfferV2($keyword: String, $sortType: Int, "
+        "$page: Int, $limit: Int) { "
+        "productOfferV2(keyword: $keyword, sortType: $sortType, "
+        "page: $page, limit: $limit) { "
+        "nodes { productId productName productLink offerLink imageUrl "
+        "price priceMin priceMax commissionRate shopId shopName "
+        "soldCount ratingStar productCatIds } "
+        "pageInfo { page limit hasNextPage } } }"
+    )
+    payload_obj = {
+        "query": query,
+        "operationName": "ProductOfferV2",
+        "variables": {
+            "keyword": keyword,
+            "sortType": 1,
+            "page": page,
+            "limit": limit,
+        },
+    }
+    payload = json.dumps(payload_obj, ensure_ascii=False, separators=(",", ":"))
+
+    timestamp = str(int(time.time()))
+    signature_input = f"{app_id}{timestamp}{payload}{secret}"
+    signature = hashlib.sha256(signature_input.encode("utf-8")).hexdigest()
+
     headers = {
-        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
         "Accept": "application/json",
+        "Authorization": (
+            f"SHA256 Credential={app_id}, "
+            f"Timestamp={timestamp}, "
+            f"Signature={signature}"
+        ),
         "User-Agent": "ArmoredVisionSourceLab/1.0",
     }
 
     started = time.perf_counter()
-    response = requests.get(
+    response = requests.post(
         endpoint,
-        params=params,
+        data=payload.encode("utf-8"),
         headers=headers,
         timeout=(10, 30),
     )
     elapsed = time.perf_counter() - started
 
     try:
-        payload = response.json()
+        response_payload = response.json()
     except ValueError:
-        payload = {"raw": response.text[:4000]}
+        response_payload = {"raw": response.text[:4000]}
 
     return {
         "endpoint": endpoint,
         "http_status": response.status_code,
         "elapsed_seconds": round(elapsed, 3),
-        "request_params": params,
-        "response": payload,
+        "request": {
+            "keyword": keyword,
+            "sort_type": 1,
+            "page": page,
+            "limit": limit,
+        },
+        "response": response_payload,
     }
 
 
 def extract_candidates(payload: Any) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
+    root = payload
+    if isinstance(payload, dict):
+        root = payload.get("data", payload)
 
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            item_id = node.get("item_id") or node.get("itemId")
-            shop_id = node.get("shop_id") or node.get("shopId")
-            name = node.get("title") or node.get("productName") or node.get("product_name")
-            link = node.get("product_link") or node.get("productLink") or node.get("url")
-            images = node.get("images") or node.get("imageUrl") or node.get("image_url")
-            if item_id is not None and shop_id is not None:
-                candidates.append(
+    if isinstance(root, dict):
+        offers = root.get("productOfferV2")
+        if isinstance(offers, dict):
+            nodes = offers.get("nodes")
+            if isinstance(nodes, list):
+                return [
                     {
-                        "shop_id": str(shop_id),
-                        "item_id": str(item_id),
-                        "product_name": name,
-                        "product_link": link,
-                        "images": images,
+                        "shop_id": str(node.get("shopId")) if node.get("shopId") is not None else None,
+                        "item_id": str(node.get("productId")) if node.get("productId") is not None else None,
+                        "product_name": node.get("productName"),
+                        "product_link": node.get("productLink"),
+                        "offer_link": node.get("offerLink"),
+                        "images": node.get("imageUrl"),
+                        "price": node.get("price"),
+                        "price_min": node.get("priceMin"),
+                        "price_max": node.get("priceMax"),
+                        "commission_rate": node.get("commissionRate"),
+                        "shop_name": node.get("shopName"),
+                        "sold_count": node.get("soldCount"),
+                        "rating_star": node.get("ratingStar"),
+                        "category_ids": node.get("productCatIds"),
                     }
-                )
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                walk(value)
+                    for node in nodes
+                    if node.get("productId") is not None and node.get("shopId") is not None
+                ]
 
-    walk(payload)
-
-    unique: dict[str, dict[str, Any]] = {}
-    for candidate in candidates:
-        key = f"{candidate['shop_id']}:{candidate['item_id']}"
-        unique[key] = candidate
-    return list(unique.values())
+    return []
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", choices=SOURCES, required=True)
-    parser.add_argument("--url", default=os.getenv("ARMORED_VISION_LAB_ORIGINAL_URL", ORIGINAL_DEFAULT))
+    parser.add_argument(
+        "--url",
+        default=os.getenv("ARMORED_VISION_LAB_ORIGINAL_URL", ORIGINAL_DEFAULT),
+    )
+    parser.add_argument(
+        "--keyword",
+        default=os.getenv("ARMORED_VISION_LAB_KEYWORD", ORIGINAL_NAME_DEFAULT),
+        help="Keyword sent verbatim to productOfferV2. Defaults to the original product title.",
+    )
+    parser.add_argument("--pages", type=int, default=3)
+    parser.add_argument("--limit", type=int, default=50)
     args = parser.parse_args()
 
     shop_id, item_id = resolve_original(args.url)
-    result = request_recommendations(shop_id, item_id)
-    candidates = extract_candidates(result.get("response"))
 
-    discovered_ids = {
-        f"{c['shop_id']}:{c['item_id']}" for c in candidates
-    }
+    started = time.perf_counter()
+    page_results: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+
+    for page in range(1, max(args.pages, 1) + 1):
+        result = request_product_offers(args.keyword, page=page, limit=args.limit)
+        page_results.append(result)
+        candidates.extend(extract_candidates(result.get("response")))
+        if result["http_status"] >= 400:
+            break
+
+    unique: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        key = f"{candidate['shop_id']}:{candidate['item_id']}"
+        unique[key] = candidate
+    candidates = list(unique.values())
+
+    discovered_ids = {f"{c['shop_id']}:{c['item_id']}" for c in candidates}
+    benchmark_hits = sorted(discovered_ids & KNOWN_BENCHMARK_IDS)
+    elapsed = time.perf_counter() - started
+    last_status = page_results[-1]["http_status"] if page_results else 0
 
     output = {
-        "status": "OK" if result["http_status"] < 400 else "SOURCE_ERROR",
+        "status": "OK" if last_status < 400 else "SOURCE_ERROR",
         "source": args.source,
         "original": {
             "shop_id": shop_id,
             "item_id": item_id,
             "url": args.url,
+            "product_name": ORIGINAL_NAME_DEFAULT,
+        },
+        "source_input": {
+            "keyword": args.keyword,
+            "pages": args.pages,
+            "limit": args.limit,
         },
         "discovery": {
             "candidate_count": len(candidates),
             "unique_candidate_count": len(discovered_ids),
-            "known_benchmark_hits": sorted(discovered_ids & KNOWN_BENCHMARK_IDS),
-            "known_benchmark_hit_count": len(discovered_ids & KNOWN_BENCHMARK_IDS),
+            "known_benchmark_hits": benchmark_hits,
+            "known_benchmark_hit_count": len(benchmark_hits),
+            "elapsed_seconds": round(elapsed, 3),
         },
         "candidates": candidates,
-        "raw": result,
+        "raw_pages": page_results,
         "rules": {
             "known_ids_are_benchmark_only": True,
             "known_ids_were_not_sent_to_source": True,
@@ -207,19 +277,24 @@ def main() -> int:
 
     RESULT_ROOT.mkdir(parents=True, exist_ok=True)
     output_path = RESULT_ROOT / f"{args.source}.json"
-    output_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_path.write_text(
+        json.dumps(output, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     print(json.dumps({
         "status": output["status"],
         "source": args.source,
         "original": f"{shop_id}:{item_id}",
+        "keyword": args.keyword,
+        "pages": args.pages,
         "candidates": len(candidates),
-        "known_benchmark_hits": output["discovery"]["known_benchmark_hit_count"],
+        "known_benchmark_hits": len(benchmark_hits),
         "output": str(output_path),
-        "http_status": result["http_status"],
+        "http_status": last_status,
     }, ensure_ascii=False, indent=2))
 
-    return 0 if result["http_status"] < 400 else 2
+    return 0 if last_status < 400 else 2
 
 
 if __name__ == "__main__":
