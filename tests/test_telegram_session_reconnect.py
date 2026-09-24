@@ -1,5 +1,7 @@
 import asyncio
 
+from pathlib import Path
+
 from ArmoredSync.service import TelegramReader
 
 
@@ -33,7 +35,7 @@ class _FakeClient:
 
 def _reader(factory):
     reader = TelegramReader.__new__(TelegramReader)
-    reader._session = __import__("pathlib").Path("test-session")
+    reader._session = Path("test-session")
     reader._api_id = 1
     reader._api_hash = "hash"
     reader._TelegramClient = factory
@@ -42,14 +44,15 @@ def _reader(factory):
 
 
 def test_failed_telegram_start_closes_session_before_next_reconnect():
-    clients = [
+    created = [
         _FakeClient(fail_start=True),
         _FakeClient(fail_start=True),
         _FakeClient(fail_start=False),
     ]
+    pool = list(created)
 
     def factory(*_args):
-        return clients.pop(0)
+        return pool.pop(0)
 
     reader = _reader(factory)
 
@@ -65,7 +68,11 @@ def test_failed_telegram_start_closes_session_before_next_reconnect():
 
     asyncio.run(scenario())
 
-    failed_client = clients  # retained only to make the test body explicit
+    # The two clients that failed/preceded the final reconnect were closed
+    # before their SQLite session files could remain owned by stale objects.
+    assert created[0].session.closed is True
+    assert created[1].session.closed is True
+    assert created[2].session.closed is False
     assert reader.client.is_connected() is True
 
 
