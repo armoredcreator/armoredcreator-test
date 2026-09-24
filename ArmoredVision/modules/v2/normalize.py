@@ -145,6 +145,22 @@ def structural_compare(original: dict[str, object], candidate: dict[str, object]
             conflicts.append(key)
         else:
             matches.append(key)
+
+    # When both titles explicitly identify opposite storage types, treat them
+    # as incompatible. Unknown/omitted features remain neutral.
+    left_doors, right_doors = left.get("doors"), right.get("doors")
+    left_drawers, right_drawers = left.get("drawers"), right.get("drawers")
+    if left_drawers is not None and right_doors is not None and left_drawers > 0 and right_doors > 0:
+        if "drawers" not in conflicts:
+            conflicts.append("drawers")
+        if "doors" not in conflicts:
+            conflicts.append("doors")
+    if left_doors is not None and right_drawers is not None and left_doors > 0 and right_drawers > 0:
+        if "doors" not in conflicts:
+            conflicts.append("doors")
+        if "drawers" not in conflicts:
+            conflicts.append("drawers")
+
     return matches, conflicts
 
 def category_overlap(a: object, b: object) -> float | None:
