@@ -123,9 +123,14 @@ class CandidateDiscovery:
         accepted.sort(key=lambda row: (-row[0], str(row[1].get("shopId")), str(row[1].get("itemId"))))
         accepted = accepted[:maximum]
         if len(accepted) < minimum:
-            raise VisionCandidateError(
+            error = VisionCandidateError(
                 f"V2 encontrou {len(accepted)} candidatos comprovados; mínimo={minimum}; descobertos={len(records)}"
             )
+            error.accepted_count = len(accepted)
+            error.minimum_required = minimum
+            error.discovered_count = len(records)
+            error.records = tuple(record.as_dict() for record in evaluated)
+            raise error
 
         accepted_keys = {(str(p.get("shopId") or ""), str(p.get("itemId") or "")) for _, p, _, _ in accepted}
         final_links = [self.api.affiliate_link_for_product(reference)]
