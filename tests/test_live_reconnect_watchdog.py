@@ -1,4 +1,6 @@
 import asyncio
+import os
+import unittest
 
 from armored_core.coordinator import Coordinator
 
@@ -31,26 +33,33 @@ class _Source:
         return None, {}
 
 
-def test_live_discovery_timeout_forces_clean_disconnect_then_allows_next_cycle(monkeypatch):
-    monkeypatch.setenv("ARMORED_LIVE_DISCOVERY_TIMEOUT", "0.1")
-
-    coordinator = Coordinator.__new__(Coordinator)
-    coordinator.source = _Source()
-
-    async def scenario():
+class LiveReconnectWatchdogTests(unittest.TestCase):
+    def test_timeout_forces_clean_disconnect_then_next_cycle_reconnects(self):
+        previous = os.environ.get("ARMORED_LIVE_DISCOVERY_TIMEOUT")
+        os.environ["ARMORED_LIVE_DISCOVERY_TIMEOUT"] = "0.1"
         try:
-            await coordinator.run_live_once_async()
-        except asyncio.TimeoutError:
-            pass
-        else:
-            raise AssertionError("LIVE discovery timeout was expected")
+            coordinator = Coordinator.__new__(Coordinator)
+            coordinator.source = _Source()
 
-        assert coordinator.source.calls == 1
-        assert coordinator.source.reader.disconnect_calls == 1
+            async def scenario():
+                with self.assertRaises(asyncio.TimeoutError):
+                    await coordinator.run_live_once_async()
 
-        result = await coordinator.run_live_once_async()
-        assert result == []
-        assert coordinator.source.calls == 2
-        assert coordinator.source.reader.connect_calls == 2
+                self.assertEqual(coordinator.source.calls, 1)
+                self.assertEqual(coordinator.source.reader.disconnect_calls, 1)
 
-    asyncio.run(scenario())
+                result = await coordinator.run_live_once_async()
+                self.assertEqual(result, [])
+                self.assertEqual(coordinator.source.calls, 2)
+                self.assertEqual(coordinator.source.reader.connect_calls, 2)
+
+            asyncio.run(scenario())
+        finally:
+            if previous is None:
+                os.environ.pop("ARMORED_LIVE_DISCOVERY_TIMEOUT", None)
+            else:
+                os.environ["ARMORED_LIVE_DISCOVERY_TIMEOUT"] = previous
+
+
+if __name__ == "__main__":
+    unittest.main()
