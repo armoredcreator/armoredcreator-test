@@ -5,25 +5,28 @@
 
 ## 1. Estado do projeto
 
-Este README descreve o estado do código no **main após a correção do LIVE Telegram polling** e é a referência operacional para a próxima etapa: **CATCH-UP histórico completo**.
+Este README descreve o estado do código no **main após o merge da correção de RVC/Recovery do PR #16** e consolida a certificação ponta a ponta realizada até **24/09/2026**. Ele é a referência operacional antes da próxima pequena implementação: **ArmoredVision V2**, seguida da certificação do **CATCH-UP histórico completo**.
 
 ### Marco atual
 
 - **Repository:** `armoredcreator/armoredcreator-test`
 - **Branch operacional:** `main`
-- **Última correção funcional antes deste README:** PR #14 — redução do polling LIVE e dos `FloodWait`
+- **Últimas correções funcionais:** PR #14 — redução do polling LIVE e dos `FloodWait`; PR #16 — contrato de erro do RVC após Recovery, mergeado em `88cf76f9`.
 - **Fluxo real já comprovado:** Telegram fonte → Sync → SQLite → Vision → Studio/RVC → Hub → Telegram destino → confirmação → cleanup.
 - **CATCH-UP → LIVE real:** comprovado com 3 itens reais.
 - **Restart em LIVE:** comprovado.
 - **Wi-Fi OFF/ON + reconexão Telegram:** comprovado, incluindo reconstrução da sessão e ausência do antigo `database is locked`.
-- **CATCH-UP histórico completo dos ~308 conteúdos:** ainda não executado nesta certificação limpa.
+- **Recuperação após queda física de energia:** comprovada ponta a ponta com item 1383, do estado persistido em `STUDIO` até RVC → Studio → Hub → confirmação Telegram → cleanup.
+- **Recuperação de publicação pendente:** comprovada com item 1174, que foi reencontrado em `PUBLISHING`, publicado e finalizado como `PUBLISHED+cleanup`.
+- **CATCH-UP histórico completo dos ~308 conteúdos:** ainda não executado nesta certificação limpa; será feito depois da implementação da Vision V2.
+- **Vision V2:** arquitetura e plano de reconciliação estão definidos; implementação operacional ainda não começou.
 - **Novo vídeo inserido manualmente no grupo fonte:** não reproduzível, porque a fonte pertence a terceiros.
 
 ### Regra de congelamento
 
-A partir do commit de congelamento desta documentação, **não modificar o código da pipeline antes de terminar a certificação do CATCH-UP histórico**, salvo correção bloqueadora descoberta durante o próprio teste.
+A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A única implementação planejada antes do CATCH-UP completo é a **ArmoredVision V2**, porque ela faz parte da evolução funcional já documentada para itens que não conseguem ser resolvidos pela V1.
 
-O objetivo desta etapa é medir a operação da arquitetura existente, não continuar reconstruindo a arquitetura durante a medição.
+Depois que a V2 for implementada, testada e mergeada, o código volta a ser tratado como congelado durante o CATCH-UP histórico, salvo correção bloqueadora descoberta pelo próprio teste.
 
 ---
 
@@ -1077,9 +1080,9 @@ Por isso, a chegada de um conteúdo novo enquanto o processo está em LIVE não 
 
 ### Perda abrupta de energia
 
-Ainda não foi realizado teste físico de desligamento da máquina no meio do processamento.
+**CERTIFICADO EM 24/09/2026.** A máquina sofreu uma queda física durante o processamento do item 1383. Após o retorno do sistema, o startup audit encontrou o item persistido em `STUDIO`, com o original e o workspace preservados. O Coordinator retomou o Studio, o RVC concluiu após a correção do contrato de erro, o resultado foi publicado no Telegram, a publicação foi confirmada e o cleanup foi concluído.
 
-Esse cenário é diferente de `CTRL+C`.
+Esse teste certifica o mecanismo de recuperação pós-power-loss ponta a ponta. A primeira tentativa desse mesmo cenário havia exposto um contrato defeituoso no wrapper rvc-python; o PR #16 corrigiu a fronteira e o reteste concluiu com sucesso.
 
 ---
 
@@ -1611,3 +1614,686 @@ congelar
 → entrar em LIVE
 → registrar o resultado
 ```
+
+
+---
+
+# 36. Atualização de certificação — 24/09/2026
+
+Esta seção **prevalece sobre os status históricos anteriores** quando houver diferença de estado, porque registra a situação mais recente observada no laboratório.
+
+## 36.1 Commit certificado atualmente
+
+O main utilizado após a correção do RVC está em:
+
+~~~text
+88cf76f93a88c1c8bd8ad81c67c508bc5db1b459
+Merge pull request #16 from armoredcreator/fix/rvc-recovery-error-contract
+~~~
+
+O PR #16 corrigiu o contrato do wrapper RVC para que uma falha devolvida pelo backend não seja convertida posteriormente em um erro enganoso do SciPy. O CI do PR terminou com sucesso antes do merge.
+
+## 36.2 E2E real ponta a ponta
+
+O fluxo real foi comprovado com Telegram fonte e Telegram destino:
+
+~~~text
+Telegram fonte
+→ ArmoredSync
+→ SQLite
+→ ArmoredVision V1
+→ ArmoredStudio
+→ RVC
+→ FFmpeg/finalização
+→ ArmoredHub
+→ Telegram destino/topic 228
+→ confirmação
+→ PUBLISHED
+→ cleanup
+~~~
+
+Já houve uma execução real com os itens 1383, 1174 e 823, com publicação confirmada e cleanup dos três, além de auditoria de restart sem republicações.
+
+## 36.3 Recovery real — dois pontos diferentes da pipeline
+
+O laboratório comprovou dois tipos importantes de retomada.
+
+### Item 1174 — publicação pendente
+
+Após restart, o item foi encontrado em estado relacionado a PUBLISHING, com resultado durável presente. Com ARMORED_HUB_DRY_RUN=0 e ARMORED_REAL_TELEGRAM=1, o Hub confirmou ausência da publicação anterior e realizou a publicação real.
+
+Resultado observado:
+
+~~~text
+[PIPELINE][ITEM 1174] PUBLICADO confirmado; cleanup iniciando
+[PIPELINE][ITEM 1174] FINALIZADO PUBLISHED+cleanup
+~~~
+
+Posteriormente, o startup audit registrou:
+
+~~~text
+id=1174 state=PUBLISHED publication=CONFIRMED#876 cleanup=OK
+~~~
+
+Isso demonstra que um item que sobrevive ao restart em uma fase de publicação pode continuar sem exigir reprocessamento do Studio.
+
+### Item 1383 — queda física durante STUDIO/RVC
+
+A queda de energia ocorreu enquanto o item estava sendo processado no Studio.
+
+Após o retorno:
+
+~~~text
+id=1383 state=STUDIO
+files=1383_8KolJcZrfU.mp4,1383_audio_original.wav
+~~~
+
+O Coordinator retomou:
+
+~~~text
+STUDIO
+→ RVC
+→ resultado final
+→ PUBLISHING
+→ confirmação Telegram
+→ PUBLISHED
+→ cleanup
+~~~
+
+Logs decisivos do reteste:
+
+~~~text
+[RVC][ITEM 1383] CONCLUÍDO output=...1383_audio_rvc.wav
+[STUDIO][ITEM 1383] RVC concluído
+[PIPELINE][ITEM 1383] STUDIO/RVC concluído result=...1383_2BF7xpWaI1.mp4
+[PIPELINE][ITEM 1383] HUB/PUBLICAÇÃO iniciando
+[PIPELINE][ITEM 1383] PUBLICADO confirmado; cleanup iniciando
+[PIPELINE][ITEM 1383] FINALIZADO PUBLISHED+cleanup
+~~~
+
+Portanto, **Recovery pós-power-loss está certificado ponta a ponta** para esse cenário.
+
+## 36.4 O que a primeira tentativa de power-loss revelou
+
+A primeira retomada de 1383 encontrou corretamente o estado STUDIO, o workspace preservado e o original preservado, mas o RVC antigo utilizava uma fronteira problemática: o backend podia retornar um traceback como resultado de erro e o wrapper seguinte tentava passá-lo para scipy.wavfile.write(), produzindo um erro secundário do tipo:
+
+~~~text
+AttributeError: 'str' object has no attribute 'dtype'
+~~~
+
+O PR #16 transformou essa falha em um contrato determinístico e foi validado pelo CI. O novo reteste real confirmou que o RVC consegue concluir nesse cenário.
+
+## 36.5 Rede, sessão Telegram e LIVE
+
+Já estão comprovados:
+
+- queda e retorno de Wi-Fi sem derrubar o Coordinator;
+- reconstrução da sessão Telegram;
+- ausência do antigo database is locked causado pelo lifecycle da sessão;
+- watchdog de descoberta LIVE;
+- polling LIVE em rodízio de tópicos;
+- correção do excesso de chamadas que havia produzido FloodWait;
+- execução contínua dentro de um único loop asyncio.
+
+Uma ausência de novo conteúdo no LIVE é considerada operação ociosa normal. Como o grupo fonte pertence a terceiros, não existe um método legítimo de inserir manualmente um novo vídeo apenas para produzir esse evento de teste.
+
+---
+
+# 37. Situação real do produto — fechado x ainda pendente
+
+## 37.1 Fechado e certificado
+
+~~~text
+✅ arquitetura canônica
+✅ Coordinator como única raiz de composição
+✅ SQLite como verdade interna
+✅ workspace canônico
+✅ sequência de 1 item ativo
+✅ ArmoredSync real
+✅ regra vídeo + mensagem seguinte com link Shopee
+✅ Vision V1 exata por shop_id + item_id
+✅ nome do produto retornado pela Shopee em productName
+✅ persistência do nome como affiliate_name
+✅ Studio unificado
+✅ análise Studio
+✅ RVC real
+✅ FFmpeg/finalização
+✅ Hub real
+✅ publicação Telegram
+✅ confirmação determinística
+✅ idempotência
+✅ Recovery
+✅ restart
+✅ reconexão após perda de rede
+✅ power-loss recovery ponta a ponta
+✅ cleanup pós-confirmação
+✅ CATCH-UP limitado → LIVE
+✅ LIVE contínuo
+~~~
+
+## 37.2 Ainda pendente antes da certificação histórica final
+
+~~~text
+⏳ ArmoredVision V2 — implementação
+⏳ testes unitários e de integração da V2
+⏳ validação da V2 contra a API Shopee real
+⏳ definir e registrar persistência das evidências da V2
+⏳ ativação controlada da V2 para WAITING_VISION
+⏳ CATCH-UP histórico completo dos ~308 conteúdos
+⏳ relatório final do CATCH-UP
+~~~
+
+O teste de novo vídeo em LIVE permanece uma **limitação do laboratório**, não um item que possa ser forçado sem alterar a fonte de terceiros.
+
+---
+
+# 38. ArmoredVision V2 — plano funcional completo
+
+A Vision V2 será uma **evolução interna do estágio Vision**. Não será um segundo processo, uma nova pipeline, um novo banco nem uma nova fila.
+
+Fluxo:
+
+~~~text
+Vision V1
+   ↓
+produto exato encontrado?
+   ├── SIM → VisionResult → STUDIO
+   └── NÃO
+        ↓
+   WAITING_VISION
+        ↓
+   Vision V2
+        ↓
+   candidatos Shopee
+        ↓
+   reconciliação de identidade
+        ↓
+   revalidação
+        ├── RESOLVED → STUDIO
+        ├── UNRESOLVED → WAITING_VISION
+        └── AMBIGUOUS → WAITING_VISION
+~~~
+
+## 38.1 Problema que a V2 deve resolver
+
+A V1 depende da identidade exata shop_id + item_id.
+
+Quando esse par não retorna uma oferta, a conclusão correta é apenas que a V1 não conseguiu resolver a identidade exata naquele momento.
+
+Isso não prova, por si só, que:
+
+- o produto deixou de existir;
+- o produto não pode mais ser afiliado;
+- a oferta nunca mais voltará;
+- a identidade futura será a mesma;
+- uma eventual relistagem usará o mesmo item_id.
+
+A V2 existe para procurar uma identidade candidata quando a V1 não consegue fechar a associação exata.
+
+## 38.2 O nome do produto que já temos entra diretamente no plano
+
+A V1 já recebe da Shopee o campo productName e hoje o transforma em VisionResult.affiliate_name, que é persistido em SQLite.items.affiliate_name.
+
+Esse nome passa a ser uma **evidência textual de identidade** para a V2.
+
+O nome não deve ser tratado isoladamente como prova de identidade. Ele será combinado com outras evidências.
+
+## 38.3 Candidatos, não primeiro resultado
+
+A V2 não pode fazer:
+
+~~~text
+keyword
+→ primeiro resultado
+→ aceitar
+→ publicar
+~~~
+
+O comportamento correto é:
+
+~~~text
+entrada
+→ gerar conjunto de candidatos
+→ eliminar incompatíveis
+→ comparar evidências
+→ selecionar apenas se houver evidência suficiente
+→ revalidar identidade final
+→ retornar VisionResult
+~~~
+
+Se dois candidatos permanecerem plausíveis sem separação suficiente:
+
+~~~text
+AMBIGUOUS
+→ WAITING_VISION
+~~~
+
+## 38.4 Evidências de identidade
+
+Sempre que disponíveis, a V2 deve considerar e preservar:
+
+### Identidade histórica
+
+~~~text
+URL Shopee original
+shop_id original
+item_id original
+affiliate_name original
+affiliate_url original
+~~~
+
+### Identidade candidata
+
+~~~text
+shop_id
+item_id
+productName
+productLink
+offerLink
+imageUrl
+shopName
+categorias
+preço
+sales
+rating
+commission/offer signals
+~~~
+
+### Evidências derivadas
+
+~~~text
+similaridade textual
+similaridade visual
+compatibilidade de categoria
+compatibilidade de loja
+distância de preço
+qualidade/confiança da oferta
+timestamp da tentativa
+versão da Vision
+motivo da decisão
+histórico dos candidatos
+~~~
+
+## 38.5 Sinais e seu significado
+
+### Nome
+
+O nome deverá passar por normalização antes da comparação:
+
+- caixa;
+- acentuação;
+- pontuação;
+- espaços;
+- tokens;
+- expressões irrelevantes;
+- possíveis variações de escrita.
+
+A comparação pode usar similaridade textual, mas o nome sozinho não autoriza.
+
+### Loja
+
+shop_id e shopName são evidências fortes quando disponíveis.
+
+Uma mudança de loja não deve ser aceita automaticamente como equivalência.
+
+### Categoria
+
+Categorias compatíveis aumentam a evidência.
+
+Categoria incompatível deve eliminar ou reduzir fortemente a confiança do candidato, conforme regra definida na implementação.
+
+### Preço
+
+Preço é apenas evidência auxiliar.
+
+Não usar “mesmo preço = mesmo produto” nem “preço diferente = produto diferente” isoladamente.
+
+### Imagem
+
+A imagem é uma evidência importante para casos em que o produto foi relistado com outra identidade.
+
+O projeto já possui capacidade CLIP no ecossistema ArmoredVision. Ela pode ser usada como sinal de similaridade visual da V2, mas:
+
+> **CLIP sozinho nunca pode autorizar uma identidade.**
+
+### URL e IDs
+
+Quando shop_id + item_id continuam válidos, essa identidade exata é a confirmação mais forte.
+
+A V2 existe principalmente para casos onde essa identidade não está disponível ou deixou de resolver.
+
+## 38.6 Decisão formal
+
+A V2 deve produzir explicitamente:
+
+~~~text
+RESOLVED
+UNRESOLVED
+AMBIGUOUS
+~~~
+
+### RESOLVED
+
+Requisitos:
+
+1. existir candidato suficientemente sustentado;
+2. persistir identidade antiga e nova;
+3. revalidar a nova identidade por shop_id + item_id;
+4. obter ou gerar offerLink;
+5. retornar VisionResult;
+6. permitir transição para STUDIO.
+
+### UNRESOLVED
+
+Quando não houver evidência suficiente:
+
+~~~text
+WAITING_VISION
+~~~
+
+O original permanece preservado.
+
+### AMBIGUOUS
+
+Quando existir mais de uma hipótese plausível:
+
+~~~text
+WAITING_VISION
+~~~
+
+Não escolher arbitrariamente.
+
+## 38.7 Persistência de evidências
+
+A recomendação arquitetural continua sendo uma tabela própria, separada de items:
+
+~~~text
+vision_resolutions
+~~~
+
+Campos mínimos planejados:
+
+~~~text
+content_id
+vision_version
+original_url
+original_shop_id
+original_item_id
+original_name
+candidate_shop_id
+candidate_item_id
+candidate_name
+candidate_product_link
+candidate_offer_link
+candidate_image
+candidate_category
+candidate_shop_name
+candidate_price
+text_score
+image_score
+category_evidence
+store_evidence
+decision
+reason
+attempted_at
+~~~
+
+A tabela não substitui items. Ela é o histórico auditável da resolução.
+
+## 38.8 Versionamento
+
+A resolução precisa distinguir pelo menos:
+
+~~~text
+VISION_V1_EXACT
+VISION_V2_CANDIDATE
+~~~
+
+Isso permite responder depois:
+
+- qual estratégia resolveu;
+- qual identidade foi usada;
+- qual era a identidade anterior;
+- quais candidatos foram avaliados;
+- quando a resolução ocorreu;
+- por qual motivo a decisão foi tomada.
+
+## 38.9 Retry e scheduler
+
+A V2 não deve criar retry infinito.
+
+O desenho é:
+
+~~~text
+WAITING_VISION
+→ tentativa limitada
+→ backoff
+→ nova tentativa futura
+~~~
+
+Um item preso em Vision não pode bloquear o restante da pipeline.
+
+Quando o scheduler futuro estiver ativo, o Coordinator poderá revisar WAITING_VISION de forma controlada usando:
+
+- intervalo mínimo;
+- número máximo de tentativas;
+- backoff;
+- rate limit;
+- prioridade;
+- versionamento da estratégia.
+
+## 38.10 Compatibilidade com Recovery
+
+A V2 deve continuar obedecendo à arquitetura já certificada.
+
+Exemplo:
+
+~~~text
+WAITING_VISION
+→ V2 resolve
+→ STUDIO
+→ PUBLISHING
+→ PUBLISHED
+→ cleanup
+~~~
+
+Em caso de crash durante V2, o estado e as evidências persistidas devem permitir o restart sem perder o original e sem inventar uma identidade.
+
+---
+
+# 39. Matriz mínima de testes da Vision V2
+
+Antes de ativar V2 operacionalmente:
+
+1. V1 resolve normalmente.
+2. V1 encontra zero produtos.
+3. Item vai para WAITING_VISION.
+4. WAITING_VISION sobrevive a restart.
+5. Coordinator continua processando outros itens.
+6. V2 encontra candidato único.
+7. V2 rejeita nome incompatível.
+8. V2 rejeita categoria incompatível.
+9. V2 considera loja.
+10. V2 usa preço somente como evidência.
+11. V2 compara imagem.
+12. V2 não aceita CLIP sozinho.
+13. V2 rejeita empate/ambiguidade.
+14. V2 revalida shop_id + item_id.
+15. V2 gera affiliate URL válida.
+16. V2 não cria duplicata.
+17. V2 mantém o original.
+18. V2 registra identidade antiga e nova.
+19. V2 respeita rate limit/backoff.
+20. V2 não cria pipeline paralela.
+21. V2 funciona após restart.
+22. V2 é compatível com Recovery.
+23. Um erro da V2 não transforma silenciosamente um item em publicação.
+24. Um candidato ambíguo permanece em WAITING_VISION.
+
+---
+
+# 40. Ordem de execução daqui para frente
+
+A ordem operacional passa a ser deliberadamente esta:
+
+~~~text
+1. README atualizado
+       ↓
+2. implementar Vision V2
+       ↓
+3. testes automatizados da V2
+       ↓
+4. validar contrato real da Shopee
+       ↓
+5. CI verde
+       ↓
+6. merge no main
+       ↓
+7. atualizar laboratório local
+       ↓
+8. reset limpo
+       ↓
+9. CATCH-UP histórico completo (~308)
+       ↓
+10. medir todos os indicadores
+       ↓
+11. histórico concluído
+       ↓
+12. LIVE contínuo
+~~~
+
+Não iniciar o CATCH-UP completo entre as etapas 1–6.
+
+A razão é que o CATCH-UP histórico deve ser executado sobre a **versão final da lógica Vision**, evitando processar centenas de conteúdos com uma estratégia que será substituída logo depois.
+
+---
+
+# 41. Critério de fechamento final
+
+O laboratório poderá ser considerado **operacionalmente fechado** somente quando todos estes blocos estiverem concluídos:
+
+### Arquitetura
+
+~~~text
+✅ composição canônica
+✅ storage único
+✅ SQLite central
+✅ pipeline sequencial
+✅ Coordinator único
+~~~
+
+### Robustez
+
+~~~text
+✅ restart
+✅ Recovery
+✅ power-loss recovery
+✅ Wi-Fi OFF/ON
+✅ reconnect Telethon
+✅ proteção contra republicação
+✅ UNKNOWN seguro
+~~~
+
+### Produção real
+
+~~~text
+✅ Telegram fonte real
+✅ Vision V1 real
+✅ Studio real
+✅ RVC real
+✅ Hub real
+✅ Telegram destino real
+✅ confirmação
+✅ cleanup
+~~~
+
+### Vision
+
+~~~text
+✅ V1 exata
+⏳ V2 implementada
+⏳ V2 validada
+⏳ V2 ativada
+~~~
+
+### Histórico
+
+~~~text
+⏳ CATCH-UP completo ~308
+⏳ relatório final
+⏳ entrada em LIVE após histórico
+~~~
+
+A certificação de power-loss já deixa de ser uma pendência: **ela está concluída**.
+
+O principal trabalho funcional restante antes do histórico agora é a **ArmoredVision V2**.
+
+---
+
+# 42. Regra de segurança da Vision V2
+
+A regra final continua:
+
+> **Na dúvida, não resolver.**
+
+Formalmente:
+
+~~~text
+evidência insuficiente
+        ↓
+UNRESOLVED / AMBIGUOUS
+        ↓
+WAITING_VISION
+~~~
+
+Nunca:
+
+~~~text
+candidato "parecido"
+→ aceitar automaticamente
+→ Studio
+→ publicação
+~~~
+
+A V2 deve favorecer **precisão de identidade**, não quantidade de resoluções.
+
+---
+
+# 43. Declaração de estado para a próxima sessão
+
+Ao iniciar a próxima etapa deste projeto, o ponto de partida é:
+
+~~~text
+MAIN
+└── 88cf76f9
+
+Arquitetura Core
+└── certificada
+
+E2E real
+└── certificado
+
+Recovery/restart
+└── certificado
+
+Rede/reconnect
+└── certificado
+
+Power-loss recovery
+└── certificado
+
+Vision V1
+└── ativa e funcional
+
+Vision V2
+└── plano fechado
+└── implementação pendente
+
+CATCH-UP histórico ~308
+└── aguardando implementação final da V2
+
+Novo candidato LIVE
+└── teste manual limitado pela fonte de terceiros
+~~~
+
+Esse é o estado de referência para a implementação seguinte.
