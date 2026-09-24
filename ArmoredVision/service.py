@@ -19,8 +19,10 @@ class ArmoredVision:
     armored_core and no JSON state from the legacy Vision is used.
     """
 
-    def __init__(self, api=None):
+    def __init__(self, api=None, candidate_discovery=None, caption_generator=None):
         self.api = api
+        self.candidate_discovery = candidate_discovery
+        self.caption_generator = caption_generator
 
     def identify(self, item: Item) -> VisionResult:
         original = (item.original_url or "").strip()
