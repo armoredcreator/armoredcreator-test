@@ -63,6 +63,7 @@ Retorne somente as duas linhas finais, sem aspas e sem explicações.
                 prompt
                 + f"\n\nNome interno (não repetir): {product.get('productName', '')}"
                 + f"\nCategoria/contexto: {product.get('category_name', '') or product.get('category', '')}"
+                + f"\nPúblico-alvo: {os.getenv('ARMORED_CAPTION_AUDIENCE', 'público brasileiro de descoberta e lifestyle')}"
                 + f"\nLoja (não repetir): {product.get('shopName', '')}"
             )
         }]
