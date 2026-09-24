@@ -89,3 +89,48 @@ def test_v2_and_caption_are_composed_after_v1_without_changing_v1(monkeypatch):
     assert result.publication_caption == "Olha esse charme ✨\n#casa"
     assert result.candidate_records[0]["decision"] == "ORIGINAL"
     assert api.exact_calls == [("456", "123")]
+
+class FailingV2:
+    def discover(self, *args, **kwargs):
+        raise RuntimeError("shopee-api-temporarily-unavailable")
+
+
+class FailingCaption:
+    def generate(self, product):
+        raise RuntimeError("gemini-temporarily-unavailable")
+
+
+def test_v2_runtime_failure_maps_to_waiting_vision(monkeypatch):
+    monkeypatch.setenv("ARMORED_VISION_V2_ENABLED", "1")
+    monkeypatch.delenv("ARMORED_CAPTION_ENABLED", raising=False)
+    vision = ArmoredVision(api=V1FakeAPI(), candidate_discovery=FailingV2())
+
+    try:
+        vision.identify(type("ItemStub", (), {
+            "original_url": "https://shopee.com.br/product/456/123",
+        })())
+    except Exception as exc:
+        from armored_core.services import VisionUnresolvedError
+        assert isinstance(exc, VisionUnresolvedError)
+        assert "V2 indisponível" in str(exc)
+    else:
+        raise AssertionError("V2 failure deveria virar VisionUnresolvedError")
+
+
+def test_caption_runtime_failure_maps_to_waiting_vision(monkeypatch):
+    monkeypatch.delenv("ARMORED_VISION_V2_ENABLED", raising=False)
+    monkeypatch.setenv("ARMORED_CAPTION_ENABLED", "1")
+    vision = ArmoredVision(api=V1FakeAPI(), caption_generator=FailingCaption())
+
+    try:
+        vision.identify(type("ItemStub", (), {
+            "original_url": "https://shopee.com.br/product/456/123",
+        })())
+    except Exception as exc:
+        from armored_core.services import VisionUnresolvedError
+        assert isinstance(exc, VisionUnresolvedError)
+        assert "Caption Generator indisponível" in str(exc)
+    else:
+        raise AssertionError("Caption failure deveria virar VisionUnresolvedError")
+
+
