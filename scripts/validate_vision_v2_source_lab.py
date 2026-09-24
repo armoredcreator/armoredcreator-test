@@ -7,11 +7,15 @@ SIFT, dHash, or the V2 reconciler.
 
 Sources currently supported:
   - product_offers: Shopee Affiliate Open API productOfferV2.
+  - market_search: AddLiveTag Data API Market Search.
 
 Environment for product_offers:
   SHOPEE_APP_ID
   SHOPEE_SECRET_KEY
   optional SHOPEE_AFFILIATE_API_URL
+
+Environment for market_search:
+  ADDLIVETAG_API_KEY
 
 Usage:
   python scripts/validate_vision_v2_source_lab.py --source product_offers
@@ -48,7 +52,7 @@ KNOWN_BENCHMARK_IDS = {
     "382998202:23198215253",
 }
 
-SOURCES = ("product_offers",)
+SOURCES = ("product_offers", "market_search")
 
 
 def parse_product_ids(value: str) -> tuple[str, str] | None:
@@ -169,6 +173,84 @@ def request_product_offers(keyword: str, *, page: int, limit: int) -> dict[str, 
     }
 
 
+
+def request_market_search(keyword: str, *, limit: int, offset: int = 0) -> dict[str, Any]:
+    api_key = os.getenv("ADDLIVETAG_API_KEY")
+    if not api_key:
+        raise RuntimeError("Defina ADDLIVETAG_API_KEY.")
+
+    endpoint = "https://data.addlivetag.com/search/market.php"
+    params = {
+        "q": keyword,
+        "limit": min(max(limit, 1), 200),
+        "offset": max(offset, 0),
+        "sort": "revenue_all",
+    }
+    headers = {
+        "Accept": "application/json",
+        "X-API-Key": api_key,
+        "User-Agent": "ArmoredVisionSourceLab/1.0",
+    }
+
+    started = time.perf_counter()
+    response = requests.get(endpoint, params=params, headers=headers, timeout=(10, 30))
+    elapsed = time.perf_counter() - started
+
+    try:
+        response_payload = response.json()
+    except ValueError:
+        response_payload = {"raw": response.text[:4000]}
+
+    return {
+        "endpoint": endpoint,
+        "http_status": response.status_code,
+        "elapsed_seconds": round(elapsed, 3),
+        "request": params,
+        "response": response_payload,
+    }
+
+
+def extract_market_candidates(payload: Any) -> list[dict[str, Any]]:
+    root = payload.get("response", payload) if isinstance(payload, dict) else payload
+    if not isinstance(root, dict):
+        return []
+
+    products = root.get("products")
+    if not isinstance(products, list):
+        return []
+
+    candidates = []
+    for node in products:
+        if not isinstance(node, dict):
+            continue
+        shop_id = node.get("shopId")
+        item_id = node.get("itemId")
+        if shop_id is None or item_id is None:
+            continue
+        candidates.append({
+            "shop_id": str(shop_id),
+            "item_id": str(item_id),
+            "product_name": node.get("productName"),
+            "product_link": node.get("productLink"),
+            "offer_link": None,
+            "images": node.get("imageUrl"),
+            "price": node.get("price"),
+            "price_min": node.get("priceMin"),
+            "price_max": node.get("priceMax"),
+            "commission_rate": node.get("commissionRate"),
+            "shop_name": node.get("shopName"),
+            "sold_count": node.get("sales"),
+            "sold_7d": node.get("sold7d"),
+            "sold_30d": node.get("sold30d"),
+            "rating_star": node.get("rating"),
+            "category_id": node.get("catId"),
+            "revenue_all": node.get("revenueAll"),
+            "revenue_30d": node.get("revenue30d"),
+            "growth": node.get("growth"),
+        })
+    return candidates
+
+
 def extract_candidates(payload: Any) -> list[dict[str, Any]]:
     root = payload
     if isinstance(payload, dict):
@@ -213,7 +295,7 @@ def main() -> int:
     parser.add_argument(
         "--keyword",
         default=os.getenv("ARMORED_VISION_LAB_KEYWORD", ORIGINAL_NAME_DEFAULT),
-        help="Keyword sent verbatim to productOfferV2. Defaults to the original product title.",
+        help="Keyword sent verbatim to the selected external source. Defaults to the original product title.",
     )
     parser.add_argument("--pages", type=int, default=3)
     parser.add_argument("--limit", type=int, default=50)
@@ -225,12 +307,30 @@ def main() -> int:
     page_results: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
 
-    for page in range(1, max(args.pages, 1) + 1):
-        result = request_product_offers(args.keyword, page=page, limit=args.limit)
-        page_results.append(result)
-        candidates.extend(extract_candidates(result.get("response")))
-        if result["http_status"] >= 400:
-            break
+    if args.source == "product_offers":
+        for page in range(1, max(args.pages, 1) + 1):
+            result = request_product_offers(args.keyword, page=page, limit=args.limit)
+            page_results.append(result)
+            candidates.extend(extract_candidates(result.get("response")))
+            if result["http_status"] >= 400:
+                break
+    elif args.source == "market_search":
+        # Market Search is not paginated by page number; use offset batches.
+        for page in range(max(args.pages, 1)):
+            result = request_market_search(
+                args.keyword,
+                limit=min(args.limit, 200),
+                offset=page * min(args.limit, 200),
+            )
+            page_results.append(result)
+            candidates.extend(extract_market_candidates(result.get("response")))
+            if result["http_status"] >= 400:
+                break
+            response_payload = result.get("response", {})
+            if isinstance(response_payload, dict):
+                products = response_payload.get("products")
+                if not isinstance(products, list) or len(products) < min(args.limit, 200):
+                    break
 
     unique: dict[str, dict[str, Any]] = {}
     for candidate in candidates:
@@ -272,6 +372,7 @@ def main() -> int:
             "our_discovery": False,
             "our_reconciler": False,
             "visual_judgement": "not performed in this first pass; preserve source output first",
+        "api_key_sent_via_header": args.source == "market_search",
         },
     }
 
