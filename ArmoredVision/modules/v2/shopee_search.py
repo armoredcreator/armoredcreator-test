@@ -88,13 +88,6 @@ class ShopeeCandidateAPI:
         )
         return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
 
-    def search_category_products(self, category_id: str, *, page: int = 1, limit: int = 50) -> list[dict[str, Any]]:
-        data = self._post(
-            PRODUCT_SEARCH_QUERY,
-            {"productCatId": int(category_id), "page": int(page), "limit": min(50, int(limit)), "sortType": 1},
-        )
-        return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
-
     def search_category_products(
         self,
         category_id: str,
