@@ -64,7 +64,14 @@ class Pipeline:
                 except VisionUnresolvedError as exc:
                     self.db.mark_vision_waiting(item_id, str(exc))
                     return
-                self.db.set_vision(item_id, v.affiliate_name, v.affiliate_url)
+                self.db.set_vision(
+                    item_id,
+                    v.affiliate_name,
+                    v.affiliate_url,
+                    affiliate_urls=getattr(v, "affiliate_urls", ()),
+                    publication_caption=getattr(v, "publication_caption", None),
+                    candidate_records=getattr(v, "candidate_records", ()),
+                )
                 self.log.info("[PIPELINE][ITEM %s] VISION concluída", item_id)
                 self.db.transition(item_id, State.STUDIO, "vision-complete")
             item = self.db.get(item_id)
