@@ -2265,7 +2265,7 @@ Ao iniciar a próxima etapa deste projeto, o ponto de partida é:
 
 ~~~text
 MAIN
-└── 88cf76f9
+└── 379c964c
 
 Arquitetura Core
 └── certificada
@@ -2286,11 +2286,12 @@ Vision V1
 └── ativa e funcional
 
 Vision V2
-└── plano fechado
-└── implementação pendente
+└── fundação implementada e mergeada
+└── 98 testes unitários verdes
+└── validação real Shopee pendente
 
 CATCH-UP histórico ~308
-└── aguardando implementação final da V2
+└── aguardando validação real da V2 + Caption
 
 Novo candidato LIVE
 └── teste manual limitado pela fonte de terceiros
@@ -2471,42 +2472,75 @@ $env:ARMORED_VISION_V2_TARGET_CANDIDATES="12"
 $env:ARMORED_VISION_V2_MIN_ACCEPTED="2"
 $env:ARMORED_VISION_V2_MAX_ACCEPTED="6"
 
-python .\scripts\validate_vision_v2_real.py --url "COLE_AQUI_O_LINK_ORIGINAL"
+python .\scripts\validate_vision_v2_real.py --url "COLE_AQUI_O_LINK_ORIGINAL" --caption --require-gemini
 ```
 
 Credenciais Shopee já configuradas no ambiente local devem permanecer em `.env`/arquivo de credenciais e nunca no Git.
 
 ## 44.8 Status do PR #19
 
-Implementado no branch:
+O PR #19 foi mergeado no `main` do repositório de teste.
 
 ```text
-feat/vision-v2-candidates-caption
+merge: 379c964c
 ```
+
+O HEAD que recebeu o merge passou a suíte completa de **98 testes unitários**.
 
 Incluído:
 
 - Candidate Discovery;
 - reconciliação conservadora;
 - revalidação;
-- até 6 candidatos aceitos;
+- até 6 candidatos adicionais aceitos;
 - persistência de candidatos/evidências;
-- persistência dos links;
+- persistência de até 7 affiliate links;
 - Caption Generator;
 - policy validator;
 - Hub com legenda + links;
-- testes automatizados iniciais.
+- compatibilidade com publicações legadas;
+- tratamento de falhas V2/Caption como `WAITING_VISION`.
+
+As flags continuam desativadas por padrão.
 
 Ainda pendente antes do CATCH-UP histórico:
 
 ```text
-⏳ CI verde
-⏳ revisão/correções do motor
-⏳ validação com produtos reais da Shopee
-⏳ ativação controlada V2
+⏳ auditoria com produtos reais da Shopee
+⏳ ajuste fino dos gates de identidade com dados reais
 ⏳ validação real do Caption Generator
-⏳ ativação conjunta V2 + Caption
+⏳ ativação controlada V2 + Caption
 ⏳ CATCH-UP histórico completo
 ```
 
 **O CATCH-UP dos ~308 conteúdos permanece bloqueado até essa nova camada ser validada em ambiente real.**
+
+# 45. Fase de validação real — Vision V2 + Caption
+
+A fundação já está no `main`. A próxima etapa **não é o CATCH-UP**.
+
+Primeiro deve ser auditado um conjunto pequeno de produtos reais com o script:
+
+```powershell
+$env:ARMORED_VISION_V2_TARGET_CANDIDATES="12"
+$env:ARMORED_VISION_V2_MIN_ACCEPTED="2"
+$env:ARMORED_VISION_V2_MAX_ACCEPTED="6"
+
+python .\scripts\validate_vision_v2_real.py --url "LINK_ORIGINAL" --caption --require-gemini
+```
+
+A auditoria deve responder, com dados reais:
+
+```text
+1. Quantos candidatos adicionais aparecem?
+2. Quantos passam pelos gates?
+3. Os aceitos são realmente o mesmo produto?
+4. Variantes de quantidade/capacidade/modelo são corretamente rejeitadas?
+5. Relistagens em lojas diferentes são reconhecidas quando realmente equivalentes?
+6. Imagens diferentes do mesmo produto são reconhecidas sem aceitar produtos apenas parecidos?
+7. A lista final fica entre 1 e 7 links?
+8. A legenda cumpre todas as regras?
+9. O pacote final fica pronto para o Hub sem geração adicional?
+```
+
+Somente depois dessa auditoria e dos ajustes necessários a V2 + Caption devem ser ativadas para o histórico.
