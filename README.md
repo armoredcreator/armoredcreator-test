@@ -2544,3 +2544,102 @@ A auditoria deve responder, com dados reais:
 ```
 
 Somente depois dessa auditoria e dos ajustes necessários a V2 + Caption devem ser ativadas para o histórico.
+
+
+# 46. Regra de afiliado — URL de entrada nunca é URL final (24/09/2026)
+
+A validação real identificou uma regra crítica que fica explícita a partir desta fase:
+
+> **O link recebido de outra afiliada serve somente para identificar o produto. Ele nunca deve ser preservado como o affiliate link final.**
+
+Fluxo canônico:
+
+```text
+link recebido de terceiros
+        ↓
+resolve_short_url()
+        ↓
+shop_id + item_id
+        ↓
+Shopee Affiliate API
+        ↓
+productLink / offerLink do produto
+        ↓
+affiliate_link_for_product()
+        ↓
+SEU affiliate link
+```
+
+## 46.1 Produto original
+
+A Vision consulta o produto exato pela identidade:
+
+```text
+shop_id + item_id
+```
+
+Se a API retornar `offerLink`, ele é usado.
+
+Se não retornar `offerLink`, o fallback chama `generateShortLink` usando o **productLink canônico do produto**, nunca o short link recebido de outra afiliada.
+
+Portanto o fluxo não faz:
+
+```text
+URL da outra afiliada
+→ generateShortLink(URL da outra afiliada)
+```
+
+## 46.2 Candidatos V2
+
+A mesma regra vale para todos os candidatos:
+
+```text
+candidato
+→ shop_id + item_id
+→ revalidação
+→ offerLink
+ou
+→ generateShortLink(productLink)
+→ affiliate link final
+```
+
+O pacote final da V2 não deve conter o affiliate link de terceiros usado apenas como entrada.
+
+## 46.3 Auditoria
+
+O script:
+
+```text
+scripts/validate_vision_v2_real.py
+```
+
+também passou a usar a mesma função canônica de resolução do affiliate link.
+
+A auditoria continua sem escrever no SQLite e sem publicar no Telegram.
+
+## 46.4 Estado
+
+A correção foi implementada no branch:
+
+```text
+fix/affiliate-link-canonicalization
+```
+
+Arquivos envolvidos:
+
+```text
+ArmoredVision/modules/v1/shopee_api.py
+ArmoredVision/modules/v2/shopee_search.py
+ArmoredVision/modules/v2/service.py
+scripts/validate_vision_v2_real.py
+```
+
+A V1 continua intacta em seu comportamento de identificação. A alteração apenas garante que a **autoria do affiliate link final** seja derivada da conta/API configurada no laboratório.
+
+Antes de ativar V2 globalmente, executar a auditoria real novamente e conferir explicitamente o campo:
+
+```text
+original.affiliate_url
+```
+
+e os links finais retornados pelo script.
