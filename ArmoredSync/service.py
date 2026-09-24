@@ -66,19 +66,55 @@ class TelegramReader:
         self._session.parent.mkdir(parents=True, exist_ok=True)
         self.client = self._TelegramClient(str(self._session), self._api_id, self._api_hash)
 
+    async def _close_client(self) -> None:
+        """Release every Telethon resource before replacing the client.
+
+        A failed connection can leave the SQLiteSession open even when
+        ``is_connected()`` is already false. Replacing that client object
+        without closing it can make the next reconnect fail with
+        ``sqlite3.OperationalError: database is locked`` on Windows.
+        """
+        client = getattr(self, "client", None)
+        if client is None:
+            return
+
+        try:
+            await client.disconnect()
+        except Exception:
+            session = getattr(client, "session", None)
+            close = getattr(session, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        else:
+            session = getattr(client, "session", None)
+            close = getattr(session, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+
     async def connect(self):
         # Telethon binds a client to the event loop used by its first
-        # connection. Coordinator intentionally runs bounded async operations
-        # with separate asyncio.run() calls, so a disconnected client must be
-        # recreated before reconnecting on a new loop.
+        # connection. Always close the previous client before rebuilding it,
+        # especially after a failed connect, so the SQLite session is never
+        # owned by two client objects in the same process.
         if self.client.is_connected():
             return
+
+        await self._close_client()
         self._build_client()
-        await self.client.start()
+        try:
+            await self.client.start()
+        except Exception:
+            await self._close_client()
+            raise
 
     async def disconnect(self):
-        if self.client.is_connected():
-            await self.client.disconnect()
+        await self._close_client()
 
     def get_messages(self, source, limit=None):
         return self.client.iter_messages(source, limit=limit)
