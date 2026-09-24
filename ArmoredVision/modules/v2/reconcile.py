@@ -148,15 +148,9 @@ class CandidateReconciler:
         )
         weighted = max(0.0, min(1.0, weighted))
 
-        if strong_name and compatible_category and (matches or same_shop or strong_image):
-            return True, weighted, "nome forte + categoria + evidência adicional", evidence
-        if name_score >= 0.90 and (matches or strong_image):
-            return True, weighted, "nome muito forte + atributos/imagem", evidence
-        if strong_image and name_score >= 0.65 and (compatible_category or matches):
-            return True, weighted, "imagem forte + identidade textual/atributos", evidence
-        # Allow a moderately strong textual match when several independent
-        # structural signals agree. This is deliberately below the old name
-        # threshold, but never bypasses hard structural conflicts.
+        # Prefer the calibrated structural path whenever multiple explicit
+        # identity features agree. This keeps the reason auditable instead of
+        # hiding structural evidence behind the generic name path.
         if (
             name_score >= 0.68
             and compatible_category
@@ -164,6 +158,12 @@ class CandidateReconciler:
             and (strong_visual or same_shop or len(matches) >= 3)
         ):
             return True, weighted, "nome moderado + estrutura forte + evidência adicional", evidence
+        if strong_name and compatible_category and (matches or same_shop or strong_image):
+            return True, weighted, "nome forte + categoria + evidência adicional", evidence
+        if name_score >= 0.90 and (matches or strong_image):
+            return True, weighted, "nome muito forte + atributos/imagem", evidence
+        if strong_image and name_score >= 0.65 and (compatible_category or matches):
+            return True, weighted, "imagem forte + identidade textual/atributos", evidence
         if name_score >= 0.74 and matches and (compatible_category or same_shop):
             return True, weighted, "nome e atributos compatíveis", evidence
         return False, weighted, "evidência insuficiente para mesma identidade", evidence
