@@ -48,11 +48,43 @@ def pause(seconds: float, reason: str) -> None:
     time.sleep(seconds)
 
 
+
+def verification_visible(page) -> bool:
+    try:
+        body = clean(page.locator("body").inner_text(timeout=1500)).lower()
+    except Exception:
+        return False
+    markers = (
+        "tente novamente mais tarde",
+        "a verificação falhou",
+        "verificação falhou",
+        "try again later",
+        "verification failed",
+    )
+    return any(marker in body for marker in markers)
+
+
+def wait_for_manual_verification(page, context: str) -> None:
+    if not verification_visible(page):
+        return
+
+    print(f"[WEB-DISCOVERY] VERIFICACAO SHOPEE DETECTADA ({context}).", flush=True)
+    print("[WEB-DISCOVERY] AÇÃO MANUAL: clique em 'Tente novamente' no Chrome.", flush=True)
+    print("[WEB-DISCOVERY] O script NÃO vai clicar, contornar ou simular a verificacao.", flush=True)
+    print("[WEB-DISCOVERY] Aguardando a pagina voltar ao estado normal...", flush=True)
+
+    while verification_visible(page):
+        time.sleep(1.0)
+
+    print("[WEB-DISCOVERY] Verificacao liberada; continuando a coleta.", flush=True)
+
+
 def extract_page(page, url: str, delay: float = 0.0, label: str = "") -> dict:
     if label:
         print(f"[WEB-DISCOVERY] opening {label}: {url}", flush=True)
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
     pause(delay, "DOM carregado; visualizacao da pagina")
+    wait_for_manual_verification(page, label or url)
     try:
         page.wait_for_load_state("networkidle", timeout=10000)
     except PlaywrightTimeoutError:
@@ -131,6 +163,7 @@ def discover_from_search(
         try:
             page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
             pause(delay, f"busca page={page_number + 1} apos DOM")
+            wait_for_manual_verification(page, f"busca page={page_number + 1}")
             try:
                 page.wait_for_load_state("networkidle", timeout=8000)
             except PlaywrightTimeoutError:
