@@ -9,6 +9,12 @@ STOPWORDS = {
     "original", "oficial", "promocao", "promoção", "oferta", "frete",
     "gratis", "grátis", "shopee",
 }
+COUNT_WORDS = {
+    "unidades", "unidade", "itens", "item", "pecas", "peças", "peca",
+    "potes", "pote", "garrafas", "garrafa", "frascos", "frasco",
+    "pares", "par", "jogos", "jogo", "kits", "kit",
+}
+
 UNIT_ALIASES = {
     "ml": "ml", "mls": "ml", "l": "l", "litro": "l", "litros": "l",
     "g": "g", "grama": "g", "gramas": "g", "kg": "kg", "quilo": "kg", "quilos": "kg",
@@ -59,6 +65,13 @@ def quantity_facts(text: str) -> dict[str, tuple[float, str]]:
             value *= 100
             unit = "cm"
         facts[key] = (value, unit)
+
+    count_pattern = re.compile(
+        r"(?<!\\w)(\\d+)\\s+(?:" + "|".join(sorted(COUNT_WORDS, key=len, reverse=True)) + r")\\b"
+    )
+    for match in count_pattern.finditer(normalized):
+        facts["quantity"] = (float(match.group(1)), "un")
+
     return facts
 
 def category_overlap(a: object, b: object) -> float | None:
