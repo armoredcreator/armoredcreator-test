@@ -76,6 +76,7 @@ class CandidateReconciler:
 
     def __init__(self, *, image_scorer: Callable[[str, str], float | None] | None = None):
         self.image_scorer = image_scorer or _image_score
+        self._image_cache: dict[str, object] = {}
 
     def compare(self, original: dict[str, Any], candidate: dict[str, Any]) -> tuple[bool, float, str, dict[str, Any]]:
         original_name = str(original.get("productName") or "")
@@ -100,10 +101,14 @@ class CandidateReconciler:
         price_score = _price_score(original, candidate)
         image_score = None
         if name_score >= 0.55:
-            image_score = self.image_scorer(
-                str(original.get("imageUrl") or ""),
-                str(candidate.get("imageUrl") or ""),
-            )
+            original_image_url = str(original.get("imageUrl") or "")
+            candidate_image_url = str(candidate.get("imageUrl") or "")
+            image_key = (original_image_url, candidate_image_url)
+            if image_key in self._image_cache:
+                image_score = self._image_cache[image_key]
+            else:
+                image_score = self.image_scorer(original_image_url, candidate_image_url)
+                self._image_cache[image_key] = image_score
 
         evidence = {
             "name_score": round(name_score, 4),
