@@ -14,14 +14,24 @@ class RvcWrapperTests(unittest.TestCase):
     def _install_fake_rvc(self, result, output_bytes=b"wav"):
         infer_module = types.ModuleType("rvc_python.infer")
 
+        class FakeVC:
+            tgt_sr = 44100
+
+            def vc_single(self, **_kwargs):
+                return result
+
         class FakeRVCInference:
             def __init__(self, **_kwargs):
-                pass
-
-            def infer_file(self, _input, output):
-                if output is not None and result == "write":
-                    Path(output).write_bytes(output_bytes)
-                return result
+                self.models = {"model.pth": {"index": "model.index"}}
+                self.current_model = "model.pth"
+                self.f0up_key = 0
+                self.f0method = "harvest"
+                self.index_rate = 0.5
+                self.filter_radius = 3
+                self.resample_sr = 0
+                self.rms_mix_rate = 1
+                self.protect = 0.33
+                self.vc = FakeVC()
 
         infer_module.RVCInference = FakeRVCInference
 
@@ -40,34 +50,7 @@ class RvcWrapperTests(unittest.TestCase):
             "scipy.io.wavfile": wavfile_module,
         }
 
-    def test_accepts_library_that_writes_output_and_returns_none(self):
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            source = root / "input.wav"
-            output = root / "output.wav"
-            source.write_bytes(b"input")
-
-            modules = self._install_fake_rvc("write")
-            with patch.dict(sys.modules, modules):
-                converter_interno(source, output, root / "model.pth", None)
-
-            self.assertEqual(output.read_bytes(), b"wav")
-
-    def test_rejects_malformed_tuple_instead_of_scipy_dtype_error(self):
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            source = root / "input.wav"
-            output = root / "output.wav"
-            source.write_bytes(b"input")
-
-            modules = self._install_fake_rvc(("conversion failed", "not-audio"))
-            with patch.dict(sys.modules, modules):
-                with self.assertRaisesRegex(RuntimeError, "resultado inválido"):
-                    converter_interno(source, output, root / "model.pth", None)
-
-            self.assertFalse(output.exists())
-
-    def test_accepts_valid_tuple_result(self):
+    def test_accepts_library_audio_array_result(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             source = root / "input.wav"
@@ -77,11 +60,27 @@ class RvcWrapperTests(unittest.TestCase):
             class Audio:
                 dtype = "float32"
 
-            modules = self._install_fake_rvc((44100, Audio()))
+            modules = self._install_fake_rvc(Audio())
             with patch.dict(sys.modules, modules):
                 converter_interno(source, output, root / "model.pth", None)
 
             self.assertEqual(output.read_bytes(), b"wav")
+
+    def test_rejects_backend_traceback_tuple_without_scipy_dtype_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "input.wav"
+            output = root / "output.wav"
+            source.write_bytes(b"input")
+
+            modules = self._install_fake_rvc(
+                ("Traceback (most recent call last):\\nKeyboardInterrupt", (None, None))
+            )
+            with patch.dict(sys.modules, modules):
+                with self.assertRaisesRegex(RuntimeError, "RVC inference falhou no backend"):
+                    converter_interno(source, output, root / "model.pth", None)
+
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

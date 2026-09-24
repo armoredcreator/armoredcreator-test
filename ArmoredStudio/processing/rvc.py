@@ -79,25 +79,50 @@ def converter_interno(entrada, saida, modelo, index, item_id=None):
         device="cpu:0",
     )
     print(f"{prefix}Modelo carregado; convertendo voz")
+
     try:
-        resultado = rvc.infer_file(str(entrada), str(saida))
+        # rvc-python's infer_file() writes its result with scipy internally.
+        # When vc_single() fails, the library returns a traceback string
+        # instead of an audio array; infer_file() then raises the misleading
+        # "str has no attribute dtype". Call the underlying conversion
+        # contract directly so failures remain deterministic and actionable.
+        model_info = rvc.models[rvc.current_model]
+        file_index = model_info.get("index", "")
+        wav_opt = rvc.vc.vc_single(
+            sid=0,
+            input_audio_path=str(entrada),
+            f0_up_key=rvc.f0up_key,
+            f0_method=rvc.f0method,
+            file_index=file_index,
+            index_rate=rvc.index_rate,
+            filter_radius=rvc.filter_radius,
+            resample_sr=rvc.resample_sr,
+            rms_mix_rate=rvc.rms_mix_rate,
+            protect=rvc.protect,
+            f0_file="",
+            file_index2="",
+        )
+        if (
+            isinstance(wav_opt, tuple)
+            and len(wav_opt) == 2
+            and isinstance(wav_opt[0], str)
+            and isinstance(wav_opt[1], tuple)
+        ):
+            details = wav_opt[0].strip()
+            Path(saida).unlink(missing_ok=True)
+            raise RuntimeError(
+                "RVC inference falhou no backend"
+                + (f": {details}" if details else "")
+            )
+
+        if not hasattr(wav_opt, "dtype"):
+            Path(saida).unlink(missing_ok=True)
+            raise RuntimeError("RVC retornou áudio inválido")
+
+        wavfile.write(str(saida), int(rvc.vc.tgt_sr), wav_opt)
     except Exception:
         Path(saida).unlink(missing_ok=True)
         raise
-
-    # rvc-python normally writes the requested output file itself. Some
-    # versions also return (sample_rate, audio); only rewrite the file
-    # when that tuple is a valid audio result. Failed/interrupted inference
-    # can otherwise return an error string, which scipy would report later as
-    # the misleading str has no attribute dtype.
-    if isinstance(resultado, tuple) and len(resultado) == 2:
-        sample_rate, audio = resultado
-        if not isinstance(sample_rate, int) or not hasattr(audio, "dtype"):
-            Path(saida).unlink(missing_ok=True)
-            raise RuntimeError(
-                "RVC retornou resultado inválido; conversão não concluída"
-            )
-        wavfile.write(str(saida), sample_rate, audio)
 
     try:
         validar_arquivo(saida, "Áudio RVC")
