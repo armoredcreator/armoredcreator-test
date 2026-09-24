@@ -150,11 +150,18 @@ class CandidateDiscovery:
 
         reject_order = next_order
         for record in evaluated[1:]:
-            if record.decision == "ACCEPTED" and (record.shop_id, record.item_id) in accepted_keys:
+            record_dict = record.as_dict()
+            key = (record.shop_id, record.item_id)
+            if record.decision == "ACCEPTED" and key in accepted_keys:
                 continue
-            final_records.append(CandidateRecord(**{
-                **record.as_dict(), "candidate_order": reject_order,
-            }).as_dict())
+            if record.decision == "ACCEPTED" and key not in accepted_keys:
+                record_dict["decision"] = "REJECTED"
+                record_dict["reason"] = (
+                    "mesmo produto, mas excedeu o máximo de "
+                    f"{maximum} candidatos adicionais"
+                )
+            record_dict["candidate_order"] = reject_order
+            final_records.append(record_dict)
             reject_order += 1
 
         return tuple(dict.fromkeys(final_links)), tuple(final_records)
