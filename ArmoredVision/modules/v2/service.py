@@ -52,7 +52,7 @@ class CandidateDiscovery:
         except Exception:
             pass
 
-        records: "OrderedDict[tuple[str, str, str], dict[str, Any]]" = OrderedDict()
+        records: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
         for keyword in _query_terms(str(reference.get("productName") or "")):
             products = self.api.search_products(keyword, page=1, limit=20, sort_type=1)
             for product in products:
