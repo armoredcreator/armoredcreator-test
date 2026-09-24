@@ -245,13 +245,29 @@ class ArmoredHub:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _publication_text(item: Item) -> str:
+        links = list(item.affiliate_urls or ())
+        if not links and item.affiliate_url:
+            links = [str(item.affiliate_url).strip()]
+        links = list(dict.fromkeys(str(link).strip() for link in links if str(link).strip()))[:7]
+        caption = str(item.publication_caption or "").strip()
+        if caption and links:
+            text = caption + "\n\n" + "\n".join(links)
+        elif caption:
+            text = caption
+        else:
+            text = "\n".join(links)
+        if len(text) > 1024:
+            raise RuntimeError("Hub caption/publication package excede 1024 caracteres")
+        return text
     def _telegram_publication_matches(self, message, item: Item, topic_id: int) -> bool:
         """Require exact caption, exact topic and actual video media."""
         if self._topic_id(message) != int(topic_id):
             return False
 
         caption = str(getattr(message, "message", "") or "").strip()
-        expected = str(item.affiliate_url or "").strip()
+        expected = self._publication_text(item)
         if caption != expected:
             return False
 
@@ -509,7 +525,7 @@ class ArmoredHub:
                         duration=duration,
                         width=width,
                         height=height,
-                        caption=item.affiliate_url or "",
+                        caption=self._publication_text(item),
                         supports_streaming=True,
                     )
             finally:
