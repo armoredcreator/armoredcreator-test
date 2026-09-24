@@ -1789,28 +1789,30 @@ O teste de novo vídeo em LIVE permanece uma **limitação do laboratório**, n�
 
 A Vision V2 será uma **evolução interna do estágio Vision**. Não será um segundo processo, uma nova pipeline, um novo banco nem uma nova fila.
 
-Fluxo:
+Fluxo atualizado:
 
 ~~~text
 Vision V1
    ↓
-produto exato encontrado?
-   ├── SIM → VisionResult → STUDIO
-   └── NÃO
-        ↓
-   WAITING_VISION
-        ↓
-   Vision V2
-        ↓
-   candidatos Shopee
-        ↓
-   reconciliação de identidade
-        ↓
-   revalidação
-        ├── RESOLVED → STUDIO
-        ├── UNRESOLVED → WAITING_VISION
-        └── AMBIGUOUS → WAITING_VISION
+produto original exato
+   ↓
+Vision V2 Candidate Expansion
+   ├── original = candidato 0
+   ├── descoberta de 10–15 adicionais
+   ├── deduplicação
+   ├── reconciliação rigorosa
+   └── revalidação dos aprovados
+   ↓
+0–6 candidatos adicionais comprovados
+   ↓
+Caption Generator + policy validator
+   ↓
+VisionResult enriquecido
+   ↓
+STUDIO → HUB
 ~~~
+
+A V2 roda como enriquecimento mesmo quando a V1 resolve o produto. Quando houver evidência insuficiente para atingir o mínimo configurado, o item permanece em WAITING_VISION.
 
 ## 38.1 Problema que a V2 deve resolver
 
@@ -1826,7 +1828,7 @@ Isso não prova, por si só, que:
 - a identidade futura será a mesma;
 - uma eventual relistagem usará o mesmo item_id.
 
-A V2 existe para procurar uma identidade candidata quando a V1 não consegue fechar a associação exata.
+A V2 também existe para expandir uma identidade já resolvida pela V1, encontrando anúncios alternativos do mesmo produto. Falhar na V1 é apenas um dos cenários; o objetivo operacional da V2 é produzir uma coleção de até 6 alternativas comprovadamente equivalentes ao anúncio original.
 
 ## 38.2 O nome do produto que já temos entra diretamente no plano
 
@@ -1854,7 +1856,7 @@ entrada
 → gerar conjunto de candidatos
 → eliminar incompatíveis
 → comparar evidências
-→ selecionar apenas se houver evidência suficiente
+→ preservar apenas candidatos que passem pelos gates de identidade; não existe candidato vencedor
 → revalidar identidade final
 → retornar VisionResult
 ~~~
@@ -2108,8 +2110,8 @@ Antes de ativar V2 operacionalmente:
 3. Item vai para WAITING_VISION.
 4. WAITING_VISION sobrevive a restart.
 5. Coordinator continua processando outros itens.
-6. V2 encontra candidato único.
-7. V2 rejeita nome incompatível.
+6. V2 descobre 10–15 alternativas e pode manter até 6 adicionais comprovadamente equivalentes.
+7. V2 rejeita nome incompatível ou atributos estruturais conflitantes.
 8. V2 rejeita categoria incompatível.
 9. V2 considera loja.
 10. V2 usa preço somente como evidência.
