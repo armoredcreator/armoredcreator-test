@@ -71,7 +71,7 @@ class CandidateDiscovery:
             CandidateRecord(
                 0, "original", original_url,
                 str(reference.get("productLink") or original_url or ""),
-                str(original_affiliate_url), str(reference.get("shopId") or ""),
+                str(self.api.affiliate_link_for_product(reference)), str(reference.get("shopId") or ""),
                 str(reference.get("itemId") or ""), str(reference.get("productName") or ""),
                 str(reference.get("shopName") or ""), str(reference.get("imageUrl") or ""),
                 tuple(str(x) for x in (reference.get("productCatIds") or [])),
@@ -128,7 +128,7 @@ class CandidateDiscovery:
             )
 
         accepted_keys = {(str(p.get("shopId") or ""), str(p.get("itemId") or "")) for _, p, _, _ in accepted}
-        final_links = [str(original_affiliate_url).strip()]
+        final_links = [self.api.affiliate_link_for_product(reference)]
         final_records: list[dict[str, Any]] = [evaluated[0].as_dict()]
         next_order = 1
         for score, product, reason, evidence in accepted:
