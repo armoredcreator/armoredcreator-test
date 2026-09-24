@@ -2295,3 +2295,190 @@ Novo candidato LIVE
 ~~~
 
 Esse é o estado de referência para a implementação seguinte.
+
+# 44. Vision V2 — Candidate Expansion + Caption Generator (24/09/2026)
+
+Esta seção atualiza o desenho da Vision V2 definido anteriormente.
+
+## 44.1 V1 permanece intacta
+
+A implementação de ArmoredVision/modules/v1/ não é alterada pela V2. A V1 continua responsável pela identificação exata usando o link original.
+
+A V2 é uma camada posterior de enriquecimento do produto já resolvido pela V1.
+
+## 44.2 A V2 não escolhe um vencedor
+
+For each product:
+
+```text
+Candidato 0 = anúncio/link original
+        +
+10–15 candidatos adicionais descobertos
+        ↓
+deduplicação
+        ↓
+reconciliação conservadora
+        ↓
+revalidação individual
+        ↓
+até 6 adicionais aceitos
+```
+
+Portanto o pacote final pode ter:
+
+```text
+2 links = original + 1 adicional
+3 links = original + 2 adicionais
+...
+7 links = original + 6 adicionais
+```
+
+Encontrar seis adicionais não é obrigatório.
+
+Regra de segurança: não preencher vagas com candidato apenas parecido.
+Mínimo padrão: 2 adicionais comprovadamente equivalentes.
+Máximo: 6 adicionais.
+Alvo de descoberta: 10–15 adicionais.
+
+## 44.3 Prova de identidade
+
+Um resultado de busca por keyword nunca é aceito diretamente.
+
+A V2 compara, quando disponíveis:
+
+- nome normalizado;
+- atributos explícitos;
+- quantidade/capacidade/voltagem e outras medidas detectáveis;
+- categoria;
+- loja;
+- preço como sinal auxiliar;
+- imagem;
+- identidade exata shop_id + item_id na revalidação.
+
+Contradições de atributos são rejeições duras.
+
+Imagem e similaridade textual são evidências combinadas. Nenhum score isolado pode provar identidade.
+
+A ausência de evidência suficiente mantém o item fora da publicação.
+
+## 44.4 Persistência
+
+Os candidatos descobertos e suas evidências são persistidos em vision_candidates.
+
+O Core também persiste o pacote que será publicado:
+
+```text
+affiliate_urls_json
+publication_caption
+```
+
+O original ocupa sempre a posição 0.
+
+O Recovery reutiliza o pacote persistido; não refaz a descoberta V2 nem gera uma nova legenda para uma publicação já em andamento.
+
+## 44.5 Caption Generator
+
+Depois da consolidação do produto/candidatos:
+
+```text
+Vision V1
+  ↓
+Vision V2
+  ↓
+candidatos aceitos
+  ↓
+Caption Generator
+  ↓
+policy validator
+  ↓
+Studio
+  ↓
+Hub
+```
+
+A legenda é independente da decisão de identidade.
+
+Política obrigatória:
+
+- texto principal com 2–3 palavras;
+- exatamente 1 emoji;
+- 1–2 hashtags;
+- hashtags curtas e compatíveis com o contexto;
+- não mencionar explicitamente nome/marca/modelo do produto;
+- proibir embalagem, tampa, frasco e lacre;
+- bloquear linguagem comercial, urgência, desconto e promoção.
+
+O Generator possui integração opcional com Gemini e um fallback determinístico para laboratório. A validação é sempre determinística.
+
+## 44.6 Pacote enviado pelo Hub
+
+Quando V2 + Caption estiverem ativados:
+
+```text
+VÍDEO
++
+LEGENDA
++
+HASHTAGS
++
+LINK ORIGINAL
++
+0–6 LINKS ADICIONAIS
+```
+
+O Hub não faz descoberta, reconciliação ou geração de legenda. Ele somente publica o pacote persistido.
+
+Publicações legadas que possuem apenas o link continuam compatíveis com a verificação.
+
+## 44.7 Configuração inicial
+
+A funcionalidade entra desativada no .env.example durante a fase de validação:
+
+```text
+ARMORED_VISION_V2_ENABLED=0
+ARMORED_VISION_V2_TARGET_CANDIDATES=12
+ARMORED_VISION_V2_MIN_ACCEPTED=2
+ARMORED_VISION_V2_MAX_ACCEPTED=6
+
+ARMORED_CAPTION_ENABLED=0
+ARMORED_CAPTION_MODEL=gemini-3.6-flash
+ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK=1
+GEMINI_API_KEY=
+```
+
+Isso permite validar primeiro o motor sem alterar o comportamento da V1 certificada.
+
+## 44.8 Status do PR #19
+
+Implementado no branch:
+
+```text
+feat/vision-v2-candidates-caption
+```
+
+Incluído:
+
+- Candidate Discovery;
+- reconciliação conservadora;
+- revalidação;
+- até 6 candidatos aceitos;
+- persistência de candidatos/evidências;
+- persistência dos links;
+- Caption Generator;
+- policy validator;
+- Hub com legenda + links;
+- testes automatizados iniciais.
+
+Ainda pendente antes do CATCH-UP histórico:
+
+```text
+⏳ CI verde
+⏳ revisão/correções do motor
+⏳ validação com produtos reais da Shopee
+⏳ ativação controlada V2
+⏳ validação real do Caption Generator
+⏳ ativação conjunta V2 + Caption
+⏳ CATCH-UP histórico completo
+```
+
+**O CATCH-UP dos ~308 conteúdos permanece bloqueado até essa nova camada ser validada em ambiente real.**
