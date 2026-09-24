@@ -60,7 +60,23 @@ class ShopeeCandidateAPI:
         data = self._post(PRODUCT_SEARCH_QUERY, {"keyword": str(keyword), "page": int(page), "limit": min(20, int(limit)), "sortType": int(sort_type)})
         return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
 
-    def generate_short_link(self, origin_url: str) -> str:\n        q = f"""mutation {{ generateShortLink(input: {{ originUrl: {json.dumps(str(origin_url))} }}) {{ shortLink }} }}"""\n        link = ((self._post(q).get("data", {}).get("generateShortLink") or {}).get("shortLink"))\n        if not link:\n            raise ShopeeCandidateAPIError("Shopee não retornou shortLink V2")\n        return str(link).strip()\n\n    def affiliate_link_for_product(self, product: dict[str, Any]) -> str:\n        offer = str(product.get("offerLink") or "").strip()\n        if offer:\n            return offer\n        product_link = str(product.get("productLink") or "").strip()\n        if not product_link:\n            raise ShopeeCandidateAPIError("Produto não possui productLink canônico para gerar afiliação")\n        return self.generate_short_link(product_link)\n\n    def get_exact_product(self, shop_id: str, item_id: str) -> dict[str, Any]:
+    def generate_short_link(self, origin_url: str) -> str:
+        q = f"""mutation {{ generateShortLink(input: {{ originUrl: {json.dumps(str(origin_url))} }}) {{ shortLink }} }}"""
+        link = ((self._post(q).get("data", {}).get("generateShortLink") or {}).get("shortLink"))
+        if not link:
+            raise ShopeeCandidateAPIError("Shopee não retornou shortLink V2")
+        return str(link).strip()
+
+    def affiliate_link_for_product(self, product: dict[str, Any]) -> str:
+        offer = str(product.get("offerLink") or "").strip()
+        if offer:
+            return offer
+        product_link = str(product.get("productLink") or "").strip()
+        if not product_link:
+            raise ShopeeCandidateAPIError("Produto não possui productLink canônico para gerar afiliação")
+        return self.generate_short_link(product_link)
+
+    def get_exact_product(self, shop_id: str, item_id: str) -> dict[str, Any]:
         data = self._post(PRODUCT_SEARCH_QUERY, {"shopId": str(shop_id), "itemId": str(item_id), "page": 1, "limit": 1, "sortType": 1})
         nodes = list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
         if not nodes:
