@@ -61,6 +61,14 @@ class VisionV2CandidateTests(unittest.TestCase):
             quantity_facts("Pote 1L")["volume"],
             quantity_facts("Pote 1000ml")["volume"],
         )
+        self.assertEqual(
+            quantity_facts("Kit 3 Potes")["quantity"],
+            quantity_facts("Conjunto 3 Unidades")["quantity"],
+        )
+        self.assertNotEqual(
+            quantity_facts("Kit 3 Potes")["quantity"],
+            quantity_facts("Kit 2 Potes")["quantity"],
+        )
 
     def test_reconciler_accepts_same_product_with_reordered_name(self):
         reconciler = CandidateReconciler(image_scorer=lambda *_: 1.0)
