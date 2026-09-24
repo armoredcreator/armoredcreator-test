@@ -59,6 +59,7 @@ def parse_product_ids(value: str) -> tuple[str, str] | None:
     patterns = (
         r"/product/(\d+)/(\d+)",
         r"\.i\.(\d+)\.(\d+)",
+        r"shopee\.com\.br/[^/?#]+/(\d+)/(\d+)(?:[/?#]|$)",
     )
     for pattern in patterns:
         m = re.search(pattern, value)
