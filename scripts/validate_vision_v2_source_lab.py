@@ -86,7 +86,7 @@ def resolve_original(url: str) -> tuple[str, str]:
     m = re.search(r"https?://(?:www\.)?shopee\.com\.br/product/(\d+)/(\d+)", r.text)
     if m:
         return m.group(1), m.group(2)
-    m = re.search(r"shopee\.com\.br/[^\\"' ]+\.i\.(\d+)\.(\d+)", r.text)
+    m = re.search(r"""shopee\.com\.br/[^"']+\.i\.(\d+)\.(\d+)""", r.text)
     if m:
         return m.group(1), m.group(2)
 
