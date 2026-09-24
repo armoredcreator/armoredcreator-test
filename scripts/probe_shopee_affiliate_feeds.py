@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import time
+import re
 from typing import Any
 
 import requests
@@ -21,6 +22,9 @@ ENDPOINT = os.getenv(
 APP_ID = os.getenv("SHOPEE_APP_ID", "")
 SECRET = os.getenv("SHOPEE_SECRET_KEY", "")
 OUTPUT = "storage/vision_v2_source_lab/shopee_affiliate_feeds_probe.json"
+PAGE_LIMIT = 200
+MAX_ROWS_PER_FEED = 10000
+PRODUCT_RE = re.compile(r"/product/(\\d+)/(\\d+)")
 
 INTROSPECTION = """
 query ProbeSchema {
@@ -89,6 +93,98 @@ def signed_post(query: str, variables: dict[str, Any] | None = None) -> dict[str
     return {"http_status": response.status_code, "body": body}
 
 
+
+def parse_row_columns(columns: str) -> dict[str, Any] | None:
+    try:
+        row = json.loads(columns)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(row, dict):
+        return None
+    product_link = str(row.get("product_link") or "")
+    match = PRODUCT_RE.search(product_link)
+    if match:
+        row["shop_id"] = match.group(1)
+        row["item_id"] = match.group(2)
+        row["benchmark_id"] = f"{match.group(1)}:{match.group(2)}"
+    elif row.get("itemid"):
+        row["item_id"] = str(row["itemid"])
+    return row
+
+
+def scan_feed_for_benchmarks(datafeed_id: str) -> dict[str, Any]:
+    started = time.perf_counter()
+    found: dict[str, dict[str, Any]] = {}
+    scanned = 0
+    pages = 0
+    offset = 0
+    total_count = None
+    malformed = 0
+
+    while offset < MAX_ROWS_PER_FEED:
+        query = f"""
+        query ScanItemFeedData {{
+          getItemFeedData(datafeedId: "{datafeed_id}", offset: {offset}, limit: {PAGE_LIMIT}) {{
+            rows {{ columns updateType }}
+            pageInfo {{ offset limit totalCount hasMore }}
+          }}
+        }}
+        """
+        response = signed_post(query)
+        body = response["body"]
+        if response["http_status"] != 200 or not isinstance(body, dict) or body.get("errors"):
+            return {
+                "datafeed_id": datafeed_id,
+                "http_status": response["http_status"],
+                "graphql_errors": body.get("errors") if isinstance(body, dict) else None,
+                "rows_scanned": scanned,
+                "pages": pages,
+                "matches": found,
+                "malformed_rows": malformed,
+                "elapsed_seconds": round(time.perf_counter() - started, 3),
+            }
+
+        container = body.get("data", {}).get("getItemFeedData") or {}
+        rows = container.get("rows") or []
+        page_info = container.get("pageInfo") or {}
+        total_count = page_info.get("totalCount", total_count)
+        pages += 1
+
+        for raw in rows:
+            scanned += 1
+            parsed = parse_row_columns(raw.get("columns"))
+            if parsed is None:
+                malformed += 1
+                continue
+            benchmark_id = parsed.get("benchmark_id")
+            if benchmark_id in KNOWN and benchmark_id not in found:
+                found[benchmark_id] = {
+                    "shop_id": parsed.get("shop_id"),
+                    "item_id": parsed.get("item_id"),
+                    "title": parsed.get("title"),
+                    "product_link": parsed.get("product_link"),
+                    "image_link": parsed.get("image_link"),
+                    "global_category1": parsed.get("global_category1"),
+                    "global_category2": parsed.get("global_category2"),
+                }
+
+        if not page_info.get("hasMore") or not rows:
+            break
+        offset += len(rows)
+
+    return {
+        "datafeed_id": datafeed_id,
+        "http_status": 200,
+        "graphql_errors": None,
+        "rows_scanned": scanned,
+        "pages": pages,
+        "total_count": total_count,
+        "matches": found,
+        "matched_count": len(found),
+        "malformed_rows": malformed,
+        "elapsed_seconds": round(time.perf_counter() - started, 3),
+    }
+
 def main() -> int:
     result: dict[str, Any] = {
         "status": "PROBE_ONLY",
@@ -100,6 +196,7 @@ def main() -> int:
         "feed_query": None,
         "datafeed_schema": {},
         "datafeed_probe": None,
+        "benchmark_scan": None,
         "benchmark_policy": {
             "known_ids": sorted(KNOWN),
             "ids_are_labels_only": True,
@@ -266,6 +363,16 @@ def main() -> int:
                     "selected_fields": ["rows.columns", "rows.updateType", *[
                         f"pageInfo.{name}" for name in page_fields
                     ]],
+                }
+                full_feed_ids = [
+                    item.get("datafeedId")
+                    for item in (result["feed_query"] or {}).get("data", {}).get("feeds", [])
+                    if item.get("datafeedId")
+                ]
+                result["benchmark_scan"] = {
+                    "page_limit": PAGE_LIMIT,
+                    "max_rows_per_feed": MAX_ROWS_PER_FEED,
+                    "feeds": [scan_feed_for_benchmarks(feed_id) for feed_id in full_feed_ids],
                 }
 
     with open(OUTPUT, "w", encoding="utf-8") as f:
