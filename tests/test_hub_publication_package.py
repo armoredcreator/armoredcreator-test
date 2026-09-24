@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from armoredHub.service import ArmoredHub
+from ArmoredHub.service import ArmoredHub
 from armored_core.models import Item, State
 
 
