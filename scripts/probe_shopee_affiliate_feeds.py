@@ -130,6 +130,8 @@ def main() -> int:
         "feed_operations": {},
         "feed_type_schema": {},
         "feed_query": None,
+        "datafeed_schema": {},
+        "datafeed_probe": None,
         "benchmark_policy": {
             "known_ids": sorted(KNOWN),
             "ids_are_labels_only": True,
@@ -252,6 +254,76 @@ def main() -> int:
         result["status"] = (
             "FEED_QUERY_EXECUTED" if result["feed_query"] else "FEED_SCHEMA_VISIBLE"
         )
+
+        data_query = """
+        query ProbeFeedDataTypes {
+          connection: __type(name: "ItemFeedDataConnection") {
+            fields {
+              name
+              type { kind name ofType { kind name ofType { kind name } } }
+            }
+          }
+          row: __type(name: "ItemFeedDataRow") {
+            fields {
+              name
+              type { kind name ofType { kind name ofType { kind name } } }
+            }
+          }
+        }
+        """
+        data_schema_result = signed_post(data_query)
+        data_schema_body = data_schema_result["body"]
+        result["datafeed_schema"] = {
+            "http_status": data_schema_result["http_status"],
+            "graphql_errors": data_schema_body.get("errors") if isinstance(data_schema_body, dict) else None,
+            "connection_fields": (
+                data_schema_body.get("data", {}).get("connection", {}).get("fields", [])
+                if isinstance(data_schema_body, dict) else []
+            ),
+            "row_fields": (
+                data_schema_body.get("data", {}).get("row", {}).get("fields", [])
+                if isinstance(data_schema_body, dict) else []
+            ),
+        }
+
+        row_fields = {field.get("name") for field in result["datafeed_schema"].get("row_fields", [])}
+        connection_data_fields = {field.get("name") for field in result["datafeed_schema"].get("connection_fields", [])}
+        row_selection = [
+            name for name in (
+                "shopId", "itemId", "productName", "imageUrl", "images",
+                "productLink", "offerLink", "price", "commission", "category",
+            ) if name in row_fields
+        ]
+        container = next(
+            (name for name in ("nodes", "items", "data", "rows") if name in connection_data_fields),
+            None,
+        )
+        if row_selection and container and result["feed_query"] and result["feed_query"].get("data", {}).get("feeds"):
+            datafeed_id = result["feed_query"]["data"]["feeds"][0].get("datafeedId")
+            if datafeed_id:
+                selection = "\n".join(f"              {name}" for name in row_selection)
+                datafeed_query = f"""
+        query ProbeItemFeedData {{
+          getItemFeedData(datafeedId: "{datafeed_id}", offset: 0, limit: 5) {{
+            {container} {{
+{selection}
+            }}
+          }}
+        }}
+                """
+                data_result = signed_post(datafeed_query)
+                data_body = data_result["body"]
+                result["datafeed_probe"] = {
+                    "http_status": data_result["http_status"],
+                    "graphql_errors": data_body.get("errors") if isinstance(data_body, dict) else None,
+                    "data": (
+                        data_body.get("data", {}).get("getItemFeedData")
+                        if isinstance(data_body, dict) else None
+                    ),
+                    "datafeed_id": datafeed_id,
+                    "selected_fields": row_selection,
+                    "container": container,
+                }
 
     with open(OUTPUT, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
