@@ -37,6 +37,8 @@ class Item:
     attempts: int = 0
     recovery_count: int = 0
     cleanup_completed: bool = False
+    publication_caption: str | None = None
+    affiliate_urls: tuple[str, ...] = ()
 
     @property
     def item_id(self) -> str:

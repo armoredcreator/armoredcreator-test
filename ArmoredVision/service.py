@@ -8,6 +8,8 @@ from armored_core.services import VisionResult, VisionUnresolvedError
 
 from .modules.v1.shopee_api import ShopeeAffiliateAPI, ShopeeProductNotFoundError
 from .modules.v1.shopee_resolver import resolve_short_url
+from .modules.v2.service import CandidateDiscovery, VisionCandidateError
+from .modules.caption.generator import CaptionGenerator, CaptionGenerationError
 
 
 class ArmoredVision:
@@ -17,8 +19,10 @@ class ArmoredVision:
     armored_core and no JSON state from the legacy Vision is used.
     """
 
-    def __init__(self, api=None):
+    def __init__(self, api=None, candidate_discovery=None, caption_generator=None):
         self.api = api
+        self.candidate_discovery = candidate_discovery
+        self.caption_generator = caption_generator
 
     def identify(self, item: Item) -> VisionResult:
         original = (item.original_url or "").strip()
@@ -46,7 +50,42 @@ class ArmoredVision:
             or f"{resolved.shop_id}_{resolved.item_id}"
         )
 
-        return VisionResult(identifier, affiliate_url)
+        affiliate_urls = (affiliate_url,)
+        candidate_records: tuple[dict, ...] = ()
+        if os.getenv("ARMORED_VISION_V2_ENABLED", "0") == "1":
+            try:
+                discovery = self.candidate_discovery or CandidateDiscovery()
+                affiliate_urls, candidate_records = discovery.discover(
+                    product,
+                    original_affiliate_url=affiliate_url,
+                    original_url=original,
+                )
+            except VisionCandidateError as exc:
+                raise VisionUnresolvedError(str(exc)) from exc
+            except Exception as exc:
+                raise VisionUnresolvedError(
+                    f"Vision V2 indisponível: {type(exc).__name__}: {exc}"
+                ) from exc
+
+        publication_caption = None
+        if os.getenv("ARMORED_CAPTION_ENABLED", "0") == "1":
+            try:
+                generator = self.caption_generator or CaptionGenerator()
+                publication_caption = generator.generate(product)
+            except CaptionGenerationError as exc:
+                raise VisionUnresolvedError(str(exc)) from exc
+            except Exception as exc:
+                raise VisionUnresolvedError(
+                    f"Caption Generator indisponível: {type(exc).__name__}: {exc}"
+                ) from exc
+
+        return VisionResult(
+            identifier,
+            affiliate_url,
+            affiliate_urls=tuple(affiliate_urls),
+            publication_caption=publication_caption,
+            candidate_records=tuple(candidate_records),
+        )
 
 
 def build(**_kwargs):

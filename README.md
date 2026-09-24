@@ -1789,28 +1789,30 @@ O teste de novo vídeo em LIVE permanece uma **limitação do laboratório**, n�
 
 A Vision V2 será uma **evolução interna do estágio Vision**. Não será um segundo processo, uma nova pipeline, um novo banco nem uma nova fila.
 
-Fluxo:
+Fluxo atualizado:
 
 ~~~text
 Vision V1
    ↓
-produto exato encontrado?
-   ├── SIM → VisionResult → STUDIO
-   └── NÃO
-        ↓
-   WAITING_VISION
-        ↓
-   Vision V2
-        ↓
-   candidatos Shopee
-        ↓
-   reconciliação de identidade
-        ↓
-   revalidação
-        ├── RESOLVED → STUDIO
-        ├── UNRESOLVED → WAITING_VISION
-        └── AMBIGUOUS → WAITING_VISION
+produto original exato
+   ↓
+Vision V2 Candidate Expansion
+   ├── original = candidato 0
+   ├── descoberta de 10–15 adicionais
+   ├── deduplicação
+   ├── reconciliação rigorosa
+   └── revalidação dos aprovados
+   ↓
+0–6 candidatos adicionais comprovados
+   ↓
+Caption Generator + policy validator
+   ↓
+VisionResult enriquecido
+   ↓
+STUDIO → HUB
 ~~~
+
+A V2 roda como enriquecimento mesmo quando a V1 resolve o produto. Quando houver evidência insuficiente para atingir o mínimo configurado, o item permanece em WAITING_VISION.
 
 ## 38.1 Problema que a V2 deve resolver
 
@@ -1826,7 +1828,7 @@ Isso não prova, por si só, que:
 - a identidade futura será a mesma;
 - uma eventual relistagem usará o mesmo item_id.
 
-A V2 existe para procurar uma identidade candidata quando a V1 não consegue fechar a associação exata.
+A V2 também existe para expandir uma identidade já resolvida pela V1, encontrando anúncios alternativos do mesmo produto. Falhar na V1 é apenas um dos cenários; o objetivo operacional da V2 é produzir uma coleção de até 6 alternativas comprovadamente equivalentes ao anúncio original.
 
 ## 38.2 O nome do produto que já temos entra diretamente no plano
 
@@ -1854,7 +1856,7 @@ entrada
 → gerar conjunto de candidatos
 → eliminar incompatíveis
 → comparar evidências
-→ selecionar apenas se houver evidência suficiente
+→ preservar apenas candidatos que passem pelos gates de identidade; não existe candidato vencedor
 → revalidar identidade final
 → retornar VisionResult
 ~~~
@@ -2108,8 +2110,8 @@ Antes de ativar V2 operacionalmente:
 3. Item vai para WAITING_VISION.
 4. WAITING_VISION sobrevive a restart.
 5. Coordinator continua processando outros itens.
-6. V2 encontra candidato único.
-7. V2 rejeita nome incompatível.
+6. V2 descobre 10–15 alternativas e pode manter até 6 adicionais comprovadamente equivalentes.
+7. V2 rejeita nome incompatível ou atributos estruturais conflitantes.
 8. V2 rejeita categoria incompatível.
 9. V2 considera loja.
 10. V2 usa preço somente como evidência.
@@ -2295,3 +2297,216 @@ Novo candidato LIVE
 ~~~
 
 Esse é o estado de referência para a implementação seguinte.
+
+# 44. Vision V2 — Candidate Expansion + Caption Generator (24/09/2026)
+
+Esta seção atualiza o desenho da Vision V2 definido anteriormente.
+
+## 44.1 V1 permanece intacta
+
+A implementação de ArmoredVision/modules/v1/ não é alterada pela V2. A V1 continua responsável pela identificação exata usando o link original.
+
+A V2 é uma camada posterior de enriquecimento do produto já resolvido pela V1.
+
+## 44.2 A V2 não escolhe um vencedor
+
+For each product:
+
+```text
+Candidato 0 = anúncio/link original
+        +
+10–15 candidatos adicionais descobertos
+        ↓
+deduplicação
+        ↓
+reconciliação conservadora
+        ↓
+revalidação individual
+        ↓
+até 6 adicionais aceitos
+```
+
+Portanto o pacote final pode ter:
+
+```text
+2 links = original + 1 adicional
+3 links = original + 2 adicionais
+...
+7 links = original + 6 adicionais
+```
+
+Encontrar seis adicionais não é obrigatório.
+
+Regra de segurança: não preencher vagas com candidato apenas parecido.
+Mínimo padrão: 2 adicionais comprovadamente equivalentes.
+Máximo: 6 adicionais.
+Alvo de descoberta: 10–15 adicionais.
+
+## 44.3 Prova de identidade
+
+Um resultado de busca por keyword nunca é aceito diretamente.
+
+A V2 compara, quando disponíveis:
+
+- nome normalizado;
+- atributos explícitos;
+- quantidade/capacidade/voltagem e outras medidas detectáveis;
+- categoria;
+- loja;
+- preço como sinal auxiliar;
+- imagem;
+- identidade exata shop_id + item_id na revalidação.
+
+Contradições de atributos são rejeições duras.
+
+Imagem e similaridade textual são evidências combinadas. Nenhum score isolado pode provar identidade.
+
+A ausência de evidência suficiente mantém o item fora da publicação.
+
+## 44.4 Persistência
+
+Os candidatos descobertos e suas evidências são persistidos em vision_candidates.
+
+O Core também persiste o pacote que será publicado:
+
+```text
+affiliate_urls_json
+publication_caption
+```
+
+O original ocupa sempre a posição 0.
+
+O Recovery reutiliza o pacote persistido; não refaz a descoberta V2 nem gera uma nova legenda para uma publicação já em andamento.
+
+## 44.5 Caption Generator
+
+Depois da consolidação do produto/candidatos:
+
+```text
+Vision V1
+  ↓
+Vision V2
+  ↓
+candidatos aceitos
+  ↓
+Caption Generator
+  ↓
+policy validator
+  ↓
+Studio
+  ↓
+Hub
+```
+
+A legenda é independente da decisão de identidade.
+
+Política obrigatória:
+
+- texto principal com 2–3 palavras;
+- exatamente 1 emoji;
+- 1–2 hashtags;
+- hashtags curtas e compatíveis com o contexto;
+- não mencionar explicitamente nome/marca/modelo do produto;
+- proibir embalagem, tampa, frasco e lacre;
+- bloquear linguagem comercial, urgência, desconto e promoção.
+
+O Generator possui integração opcional com Gemini e um fallback determinístico para laboratório. A validação é sempre determinística.
+
+## 44.6 Pacote enviado pelo Hub
+
+Quando V2 + Caption estiverem ativados:
+
+```text
+VÍDEO
++
+LEGENDA
++
+HASHTAGS
++
+LINK ORIGINAL
++
+0–6 LINKS ADICIONAIS
+```
+
+O Hub não faz descoberta, reconciliação ou geração de legenda. Ele somente publica o pacote persistido.
+
+Publicações legadas que possuem apenas o link continuam compatíveis com a verificação.
+
+## 44.7 Configuração inicial
+
+A funcionalidade entra desativada no .env.example durante a fase de validação:
+
+```text
+ARMORED_VISION_V2_ENABLED=0
+ARMORED_VISION_V2_TARGET_CANDIDATES=12
+ARMORED_VISION_V2_MIN_ACCEPTED=2
+ARMORED_VISION_V2_MAX_ACCEPTED=6
+
+ARMORED_CAPTION_ENABLED=0
+ARMORED_CAPTION_MODEL=gemini-3.8-flash
+ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK=1
+GEMINI_API_KEY=
+```
+
+Isso permite validar primeiro o motor sem alterar o comportamento da V1 certificada.
+
+## 44.8.1 Auditoria real de candidatos
+
+O branch também inclui `scripts/validate_vision_v2_real.py`.
+
+Ele usa o link original, consulta a V1, executa a expansão V2 e imprime:
+- identidade original;
+- quantidade descoberta;
+- quantidade aceita;
+- quantidade rejeitada;
+- todos os links finais;
+- evidências registradas por candidato.
+
+A execução é somente de auditoria: não escreve no SQLite e não publica no Telegram.
+
+Exemplo PowerShell:
+
+```powershell
+$env:ARMORED_VISION_V2_TARGET_CANDIDATES="12"
+$env:ARMORED_VISION_V2_MIN_ACCEPTED="2"
+$env:ARMORED_VISION_V2_MAX_ACCEPTED="6"
+
+python .\scripts\validate_vision_v2_real.py --url "COLE_AQUI_O_LINK_ORIGINAL"
+```
+
+Credenciais Shopee já configuradas no ambiente local devem permanecer em `.env`/arquivo de credenciais e nunca no Git.
+
+## 44.8 Status do PR #19
+
+Implementado no branch:
+
+```text
+feat/vision-v2-candidates-caption
+```
+
+Incluído:
+
+- Candidate Discovery;
+- reconciliação conservadora;
+- revalidação;
+- até 6 candidatos aceitos;
+- persistência de candidatos/evidências;
+- persistência dos links;
+- Caption Generator;
+- policy validator;
+- Hub com legenda + links;
+- testes automatizados iniciais.
+
+Ainda pendente antes do CATCH-UP histórico:
+
+```text
+⏳ CI verde
+⏳ revisão/correções do motor
+⏳ validação com produtos reais da Shopee
+⏳ ativação controlada V2
+⏳ validação real do Caption Generator
+⏳ ativação conjunta V2 + Caption
+⏳ CATCH-UP histórico completo
+```
+
+**O CATCH-UP dos ~308 conteúdos permanece bloqueado até essa nova camada ser validada em ambiente real.**

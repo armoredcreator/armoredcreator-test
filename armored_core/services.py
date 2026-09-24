@@ -27,6 +27,9 @@ from .storage import Storage
 class VisionResult:
     affiliate_name: str
     affiliate_url: str
+    affiliate_urls: tuple[str, ...] = ()
+    publication_caption: str | None = None
+    candidate_records: tuple[dict, ...] = ()
 
 @dataclass(frozen=True)
 class StudioResult:

@@ -70,6 +70,51 @@ class TelegramPublicationIdentityTests(unittest.TestCase):
             self.assertTrue(hub._telegram_publication_matches(message, item, 228))
             db.close()
 
+
+    def test_full_caption_and_all_links_are_required_for_new_package(self):
+        with tempfile.TemporaryDirectory() as td:
+            db, item = self._item(Path(td))
+            db.set_vision(
+                item.item_id,
+                "product",
+                "https://s.shopee.com.br/TEST123",
+                affiliate_urls=(
+                    "https://s.shopee.com.br/TEST123",
+                    "https://s.shopee.com.br/CAND2",
+                ),
+                publication_caption="Olha esse charme ✨\n#casa #decoracao",
+            )
+            item = db.get(item.item_id)
+            hub = ArmoredHub(Path(td), db)
+            expected = hub._publication_text(item)
+            self.assertTrue(
+                hub._telegram_publication_matches(
+                    self._message(caption=expected),
+                    item,
+                    228,
+                )
+            )
+            self.assertFalse(
+                hub._telegram_publication_matches(
+                    self._message(caption="Olha esse charme ✨\n#casa\n\nhttps://s.shopee.com.br/TEST123"),
+                    item,
+                    228,
+                )
+            )
+            self.assertFalse(
+                hub._telegram_publication_matches(
+                    self._message(
+                        caption=expected.replace(
+                            "https://s.shopee.com.br/CAND2",
+                            "https://s.shopee.com.br/OTHER",
+                        )
+                    ),
+                    item,
+                    228,
+                )
+            )
+            db.close()
+
     def test_message_id_is_stored_unconfirmed(self):
         with tempfile.TemporaryDirectory() as td:
             db, item = self._item(Path(td))
