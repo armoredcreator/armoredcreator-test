@@ -63,7 +63,7 @@ def test_failed_telegram_start_closes_session_before_next_reconnect():
         except ConnectionError as exc:
             first_error = exc
         assert first_error is not None
-        assert clients is not None
+        assert pool == []
         await reader.connect()
 
     asyncio.run(scenario())
