@@ -140,3 +140,14 @@ class CandidateReconciler:
         if name_score >= 0.74 and matches and (compatible_category or same_shop):
             return True, weighted, "nome e atributos compatíveis", evidence
         return False, weighted, "evidência insuficiente para mesma identidade", evidence
+
+def canonical_url(product: dict[str, Any]) -> str:
+    return str(product.get("productLink") or product.get("offerLink") or "").strip()
+
+
+def candidate_key(product: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(product.get("shopId") or ""),
+        str(product.get("itemId") or ""),
+        canonical_url(product).split("?", 1)[0].rstrip("/"),
+    )
