@@ -1,522 +1,275 @@
-# ArmoredCreator — Reconstrução, Arquitetura e Certificação
+# ArmoredCreator — Arquitetura Canônica e Certificação
 
-Laboratório isolado da reconstrução do **ArmoredCreator**. Este documento é o registro técnico da arquitetura canônica, dos contratos entre módulos, das decisões de reconstrução, dos testes executados e do que ainda precisa ser certificado operacionalmente.
+> **Laboratório isolado:** este repositório é o ambiente de reconstrução e certificação do ArmoredCreator.  
+> O repositório oficial `armoredcreator/armoredcreator` e a branch `audit/baseline-2026-09-19` permanecem intocados.
 
-> **Regra de segurança:** este repositório é o laboratório. O repositório oficial `armoredcreator/armoredcreator` e a branch `audit/baseline-2026-09-19` permanecem intocáveis.
+## 1. Estado do projeto
 
-**Branch de trabalho:** `refactor/closure-batch`  
-**Base:** `refactor/single-storage-pipeline`  
-**HEAD atual da branch:** `463154ba24f2efccf7dfac9ffa858d953c1a4657`
+Este README descreve o estado do código no **main após a correção do LIVE Telegram polling** e é a referência operacional para a próxima etapa: **CATCH-UP histórico completo**.
 
----
+### Marco atual
 
-## 1. Objetivo da reconstrução
+- **Repository:** `armoredcreator/armoredcreator-test`
+- **Branch operacional:** `main`
+- **Última correção funcional antes deste README:** PR #14 — redução do polling LIVE e dos `FloodWait`
+- **Fluxo real já comprovado:** Telegram fonte → Sync → SQLite → Vision → Studio/RVC → Hub → Telegram destino → confirmação → cleanup.
+- **CATCH-UP → LIVE real:** comprovado com 3 itens reais.
+- **Restart em LIVE:** comprovado.
+- **Wi-Fi OFF/ON + reconexão Telegram:** comprovado, incluindo reconstrução da sessão e ausência do antigo `database is locked`.
+- **CATCH-UP histórico completo dos ~308 conteúdos:** ainda não executado nesta certificação limpa.
+- **Novo vídeo inserido manualmente no grupo fonte:** não reproduzível, porque a fonte pertence a terceiros.
 
-O ArmoredCreator não é tratado como um aplicativo monolítico. O comportamento original é composto por serviços/processos independentes coordenados por uma única composição operacional.
+### Regra de congelamento
 
-A reconstrução tem como objetivo preservar o comportamento funcional confirmado no backup, eliminando a arquitetura física antiga e consolidando:
+A partir do commit de congelamento desta documentação, **não modificar o código da pipeline antes de terminar a certificação do CATCH-UP histórico**, salvo correção bloqueadora descoberta durante o próprio teste.
 
-- armazenamento único;
-- SQLite como fonte de verdade;
-- processamento estritamente sequencial;
-- identidade determinística por mensagem Telegram;
-- recuperação após crash/restart;
-- publicação idempotente;
-- confirmação externa antes de cleanup;
-- execução portátil, sem caminhos absolutos da máquina;
-- um único launcher operacional;
-- CATCH-UP e LIVE usando a mesma pipeline.
-
-Princípio central:
-
-**SQLite = verdade. Filesystem = projeção/runtime. Telegram = realidade externa. Coordinator = composição.**
+O objetivo desta etapa é medir a operação da arquitetura existente, não continuar reconstruindo a arquitetura durante a medição.
 
 ---
 
 # 2. Arquitetura definitiva
 
-Fluxo canônico:
+O ArmoredCreator é composto por fronteiras de serviço, mas possui **uma única raiz de composição operacional**: o Coordinator.
+
+Fluxo:
 
 ```
 Telegram fonte
-    ↓
+      │
+      ▼
 ArmoredSync
-    ↓
-SQLite + storage/videos/{telegram_message_id}/
-    ↓
+      │
+      ▼
+SQLite + workspace canônico
+storage/videos/{item_id}/
+      │
+      ▼
 Coordinator
-    ↓
-Vision
-    ↓
-Studio
-    ↓
-Hub
-    ↓
-Telegram destino
-    ↓
-confirmação determinística
-    ↓
-PUBLISHED
-    ↓
-cleanup
-    ↓
-próximo item
+      │
+      ├──► ArmoredVision
+      │
+      ├──► ArmoredStudio
+      │      ├── análise
+      │      ├── processamento
+      │      ├── RVC
+      │      └── FFmpeg
+      │
+      └──► ArmoredHub
+               │
+               ▼
+       Telegram destino / tópico
+               │
+               ▼
+       confirmação determinística
+               │
+               ▼
+            PUBLISHED
+               │
+               ▼
+             cleanup
+               │
+               ▼
+          próximo item
 ```
 
-Existe exatamente **um item ativo no processamento**.
+A regra central é:
 
-O Sync não materializa vários itens antecipadamente. A sequência operacional é estritamente serial:
+> **um único item ativo por vez e nenhuma materialização antecipada de lote.**
 
-```
-descobre 1383
-   ↓
-materializa 1383
-   ↓
-Vision → Studio → Hub → confirmação → cleanup
-   ↓
-só então descobre 1384
-   ↓
-materializa 1384
-   ↓
-...
-```
-
-Não fazem parte da arquitetura final:
-
-- RabbitMQ;
-- Redis;
-- Celery;
-- Kafka;
-- filas físicas de vídeo;
-- diretórios de queue;
-- múltiplos Studios concorrentes;
-- pipeline separado para LIVE;
-- múltiplos launchers operacionais;
-- cópias espalhadas do mesmo vídeo.
-
----
-
-# 3. Componentes
-
-## 3.1 ArmoredSync
-
-Responsabilidade: **descobrir e ingerir conteúdo da fonte**.
-
-O Sync não executa Vision, Studio ou Hub.
-
-Possui dois modos:
+Exemplo:
 
 ```
-CATCH-UP
-   ↓
-histórico
-   ↓
-LIVE
-   ↓
-novas mensagens
-```
-
-A identidade é sempre o `telegram_message_id`.
-
-### Regra de candidato
-
-Um conteúdo é candidato quando:
-
-1. existe vídeo + link Shopee na mesma mensagem; ou
-2. existe vídeo e a mensagem imediatamente seguinte possui o link Shopee, desde que essa mensagem seguinte não seja vídeo.
-
-Não é permitido procurar links arbitrariamente distantes.
-
-### CATCH-UP
-
-O histórico percorre os tópicos configurados, mas **nunca materializa um lote**.
-
-Para cada candidato:
-
-```
-descobrir 1 candidato
-→ materializar somente esse candidato
-→ fechar/liberar a sessão Sync
+descobrir A
+→ materializar A
 → Vision
 → Studio
 → Hub
-→ confirmação Telegram
-→ cleanup
-→ próximo candidato
-```
-
-O próximo vídeo só pode ser baixado depois que o item anterior deixou a etapa Sync e entrou no processamento sequencial. Uma falha de materialização não cria uma fila de downloads: o item permanece persistido/recuperável e o Coordinator pode seguir para o próximo candidato.
-
-O checkpoint só avança depois que o item foi tratado corretamente: processamento concluído, publicação confirmada, estado `PUBLISHED` e cleanup concluído. Materializar o ORIGINAL sozinho nunca avança checkpoint. Se houver crash depois da materialização e antes da conclusão, o candidato continua recuperável pelo SQLite + workspace e permanece elegível para reconciliação após restart.
-
-### LIVE
-
-LIVE usa exatamente o mesmo contrato de item único:
-
-```
-descobrir 1 candidato
-→ materializar somente esse candidato
-→ liberar Sync
-→ processar
 → confirmar
 → cleanup
-→ próxima descoberta
+→ só então descobrir B
 ```
 
-Não existe batch de materialização no LIVE. A implementação pode limitar a descoberta a um candidato por chamada, mas nunca materializa vários vídeos antes do processamento.
-
-Os checkpoints ficam em SQLite na estrutura `sync_topics`. Uma pequena sobreposição continua permitida para detectar:
-
-```
-vídeo sem link
-↓
-mensagem seguinte com Shopee
-```
-
-A sobreposição é deduplicada pelo ID Telegram.
+Isso vale tanto para **CATCH-UP** quanto para **LIVE**.
 
 ---
 
-# 4. SQLite
+# 3. Fontes de verdade
 
-O banco é a fonte de verdade do pipeline.
+O sistema não depende de memória do processo para reconstruir o estado.
 
-Local canônico:
+### SQLite
+
+Verdade interna e persistente:
 
 ```
 storage/database/armoredcreator.db
 ```
 
-## 4.1 Items
+Contém identidade, estado, eventos, publicações, checkpoints e dados necessários à recuperação.
 
-A entidade principal contém, entre outros:
+### Filesystem
 
-- `content_id`;
-- `telegram_message_id`;
-- `source_id`;
-- `topic_id`;
-- `topic_name`;
-- `original_url`;
-- `state`;
-- `original_path`;
-- `original_sha256`;
-- `working_path`;
-- `result_path`;
-- `affiliate_name`;
-- `affiliate_url`;
-- `attempts`;
-- `recovery_count`;
-- `cleanup_completed`;
-- `last_error`;
-- timestamps.
-
-`telegram_message_id` possui identidade única.
-
-## 4.2 state_events
-
-Registra transições:
+Projeção física do item:
 
 ```
-id
-content_id
-old_state
-new_state
-reason
-created_at
+storage/videos/{item_id}/
 ```
 
-Isso mantém histórico determinístico das mudanças.
+O original é permanente. Working/result são artefatos de processamento e recuperação.
 
-## 4.3 publications
+### Telegram
 
-Registra a publicação externa e sua confirmação:
+Verdade externa da publicação.
 
-- `content_id`;
-- `idempotency_key`;
-- `published_message_id`;
-- `confirmed`;
-- `verification_status`;
-- `destination_chat_id`;
-- `destination_topic_id`;
-- `verified_at`;
-- timestamps.
+Uma publicação só pode ser considerada confirmada de acordo com a regra de confirmação registrada em SQLite + verificação Telegram.
 
-A publicação não é considerada definitivamente concluída apenas porque uma chamada de envio retornou.
+### Coordinator
 
-## 4.4 sync_topics
-
-Mantém os checkpoints persistentes do monitoramento Telegram.
-
-Um restart não depende do estado da memória do processo.
-
-## 4.5 WAL e fechamento
-
-O SQLite permanece em WAL.
-
-O fechamento foi tornado seguro para cenários em que ainda exista outra conexão SQLite durante shutdown. O checkpoint WAL pode ser adiado quando outra conexão estiver aberta; a conexão atual ainda é fechada corretamente.
+É a autoridade de composição e sequência. Não é uma fila paralela, nem um quinto banco de estado.
 
 ---
 
-# 5. Coordinator
+# 4. ArmoredSync
 
-O Coordinator é a **única raiz de composição operacional**.
-
-Responsabilidades:
-
-1. recuperar itens pendentes no startup;
-2. executar CATCH-UP quando necessário;
-3. processar exatamente um item por vez;
-4. entrar no LIVE;
-5. alimentar os mesmos métodos da pipeline;
-6. manter heartbeat/runtime lock;
-7. liberar o lock em shutdown normal ou erro;
-8. manter o processo vivo durante o monitoramento contínuo.
-
-Não existe uma pipeline paralela para LIVE.
-
-## 5.1 Construção
-
-`Coordinator.build(root)` resolve a composição:
-
-- root portátil;
-- arquivos `.env`;
-- SQLite;
-- Storage;
-- fonte Telegram real ou fonte local de laboratório;
-- Vision;
-- Studio;
-- Publisher;
-- Recovery.
-
-O processo real usa:
+Arquivo principal:
 
 ```
-ARMORED_REAL_TELEGRAM=1
+ArmoredSync/service.py
 ```
 
-## 5.2 Startup
+Responsabilidade:
 
-A ordem é:
+- conectar ao Telegram fonte;
+- descobrir tópicos;
+- localizar candidatos históricos;
+- localizar candidatos LIVE;
+- materializar o vídeo diretamente no workspace canônico;
+- preservar `telegram_message_id`;
+- controlar checkpoints;
+- liberar a sessão antes do Hub quando necessário.
+
+O Sync **não executa Vision, Studio ou Hub**.
+
+## 4.1 Identidade do candidato
+
+A identidade canônica é:
 
 ```
-runtime lock
-↓
-startup recovery
-↓
-CATCH-UP, se necessário
-↓
-LIVE contínuo
+telegram_message_id
 ```
 
-Itens recuperáveis são reconciliados antes da coleta/processamento normal.
+Cada item ingerido deriva dessa identidade.
 
-## 5.3 Estados
+## 4.2 Regra vídeo + Shopee
 
-Fluxo normal:
+Um candidato é aceito quando:
+
+1. o vídeo e o link Shopee estão na mesma mensagem; ou
+2. existe um vídeo e a **mensagem imediatamente seguinte** contém o link Shopee.
+
+Não existe busca arbitrária por links várias mensagens depois.
+
+## 4.3 CATCH-UP
+
+No CATCH-UP histórico, a descoberta é progressiva.
+
+O Sync não baixa 10, 50 ou 300 vídeos para uma pasta intermediária.
+
+O contrato é:
+
+```
+candidato 1
+→ materializa
+→ libera Sync
+→ processamento completo
+→ confirmação
+→ cleanup
+
+candidato 2
+→ materializa
+→ ...
+```
+
+O checkpoint histórico só deve avançar depois que o item anterior passou pelo ciclo necessário.
+
+## 4.4 LIVE
+
+O LIVE usa o mesmo contrato de item único.
+
+Depois da correção de polling, ele:
+
+- consulta **um tópico por ciclo**;
+- alterna os tópicos em rodízio;
+- usa o checkpoint persistido daquele tópico;
+- examina no máximo as mensagens necessárias para a regra vídeo + próxima mensagem;
+- não varre novamente os 16 tópicos a cada 2 segundos.
+
+Isso evita sobrecarga desnecessária e reduz a chance de `FloodWait`.
+
+### Importante sobre FloodWait
+
+`FloodWaitError` é uma resposta de rate-limit do Telegram. Não deve ser interpretada como perda de Wi-Fi.
+
+O watchdog `ARMORED_LIVE_DISCOVERY_TIMEOUT` existe para impedir que uma descoberta de rede realmente travada prenda o LIVE indefinidamente, mas **não é um timeout de processamento de vídeo** e não limita RVC/FFmpeg/Studio.
+
+---
+
+# 5. TelegramReader e lifecycle da sessão
+
+Dentro de `ArmoredSync/service.py`, `TelegramReader` é a camada que possui a sessão Telethon do Sync.
+
+Sessão canônica:
+
+```
+storage/credentials/telegram/session/armoredsync
+```
+
+Quando a conexão precisa ser reconstruída:
+
+1. o client anterior é desconectado;
+2. a sessão SQLite do Telethon é fechada;
+3. um novo client é criado;
+4. o login/conexão é refeito;
+5. a reconexão é registrada no log.
+
+Isso corrige o cenário Windows em que dois objetos Telethon poderiam manter a mesma SQLite session aberta e gerar:
+
+```
+sqlite3.OperationalError: database is locked
+```
+
+A reconexão real foi testada desligando e religando o Wi-Fi.
+
+Log esperado:
+
+```
+[SYNC][TELEGRAM] sessão Telegram conectada/reconectada
+```
+
+---
+
+# 6. armored_core
+
+O diretório `armored_core/` contém o núcleo da arquitetura.
+
+## `models.py`
+
+Define os estados e estruturas canônicas.
+
+Estados:
 
 ```
 RECEIVED
-   ↓
 VISION
-   ↓
+WAITING_VISION
 STUDIO
-   ↓
 PUBLISHING
-   ↓
 PUBLISHED
-   ↓
-CLEANUP
-   ↓
-DONE
+RECOVERY
+FAILED
 ```
 
-Também existem:
-
-- `WAITING_VISION`;
-- `FAILED`;
-- `RECOVERY`;
-
-`FAILED` não é automaticamente reprocessado em loop. Recovery manual/determinístico pode reconciliar um item explicitamente.
-
----
-
-# 6. Pipeline
-
-A pipeline é sequencial.
-
-## RECEIVED
-
-Item ingerido e original persistido.
-
-## VISION
-
-Resolve produto, URL Shopee e dados de afiliado.
-
-## STUDIO
-
-Executa o processamento audiovisual.
-
-## PUBLISHING
-
-Existe resultado durável e a publicação está sendo reconciliada/enviada.
-
-## PUBLISHED
-
-Telegram confirmou a publicação.
-
-## CLEANUP
-
-Remove somente artefatos temporários/derivados permitidos.
-
-## DONE
-
-Pipeline encerrada para o item.
-
-## FAILED
-
-Falha persistida. Não deve provocar loop automático infinito.
-
-## RECOVERY
-
-Estado temporário de reconciliação após restart/falha.
-
----
-
-# 7. ArmoredVision
-
-Vision recebe um item já ingerido pelo Sync.
-
-Responsabilidades:
-
-- resolver a URL Shopee;
-- obter dados do produto;
-- obter/generar affiliate URL;
-- determinar `affiliate_name`;
-- persistir os dados no SQLite.
-
-Vision não cria fila física.
-
-A pasta `ArmoredVision/modules/v1` relacionada à integração Shopee não representa uma segunda arquitetura de Studio. A unificação V1/V2 refere-se especificamente ao ArmoredStudio.
-
----
-
-# 8. ArmoredStudio
-
-Existe **um único ArmoredStudio**.
-
-Arquitetura:
-
-```
-ArmoredStudio/
-├── analysis/
-├── processing/
-│   ├── rvc.py
-│   ├── tool_paths.py
-│   └── finalizer.py
-├── runtime/
-│   └── rvc/
-└── unified.py
-```
-
-Não existem mais módulos físicos `Studio/v1` e `Studio/v2` como arquiteturas concorrentes.
-
-## 8.1 Analysis
-
-Inclui os analisadores e planejadores utilizados pelo processamento, como:
-
-- análise de vídeo;
-- black bars;
-- banners;
-- detectores;
-- planejamento de exportação;
-- validação;
-- execução;
-- logging.
-
-## 8.2 Processing
-
-Contém:
-
-- RVC;
-- resolução de ferramentas;
-- finalização.
-
-## 8.3 RVC
-
-RVC é funcionalidade interna do Studio.
-
-Código:
-
-```
-ArmoredStudio/processing/rvc.py
-```
-
-Runtime pesado é local e não deve ser versionado como código do projeto.
-
-A ausência de GPU Nvidia suportada não altera a arquitetura: o processamento pode utilizar fallback CPU.
-
-## 8.4 Working e result
-
-O Studio trabalha dentro do workspace canônico do item.
-
-O Coordinator/Recovery não depende de nomes arbitrários espalhados pelo projeto.
-
----
-
-# 9. ArmoredHub
-
-Hub é responsável pela publicação no destino.
-
-Destino operacional validado:
-
-```
-Telegram destination
-topic = 228
-```
-
-A publicação é idempotente.
-
-A existência de uma tentativa anterior não significa que uma nova mensagem deve ser enviada automaticamente.
-
-Antes de republicar, Recovery verifica a realidade externa.
-
----
-
-# 10. Telegram
-
-Existem duas funções distintas.
-
-## Fonte
-
-Telegram fornece:
-
-- mensagens;
-- vídeos;
-- links;
-- tópicos;
-- IDs;
-- checkpoints.
-
-## Destino
-
-Telegram recebe o resultado processado.
-
-A publicação definitiva exige confirmação.
-
----
-
-# 11. Confirmação determinística
-
-A confirmação real usa MTProto.
-
-A verificação utiliza:
-
-- chat de destino;
-- tópico de destino;
-- identificador/sufixo da URL Shopee;
-- caption esperada.
-
-O resultado é classificado como:
+Verificações de publicação:
 
 ```
 CONFIRMED
@@ -524,154 +277,412 @@ ABSENT
 UNKNOWN
 ```
 
-## CONFIRMED
+A classe `Item` transporta a identidade e os paths canônicos de cada conteúdo.
 
-Existe mensagem correspondente no chat/tópico correto com caption correspondente.
+`item_id` existe como alias compatível, mas a identidade canônica é `content_id`.
 
-O item pode avançar para `PUBLISHED`.
+## `database.py`
 
-## ABSENT
+Responsável pelo SQLite:
 
-Nenhuma publicação correspondente foi encontrada.
+- criação/migração do schema;
+- items;
+- eventos;
+- publications;
+- checkpoints;
+- runtime lock;
+- consultas de estado;
+- persistência das decisões.
 
-Uma publicação pode continuar/recomeçar de forma idempotente conforme o estado persistido.
+Local:
 
-## UNKNOWN
+```
+storage/database/armoredcreator.db
+```
 
-A realidade externa não pôde ser determinada com segurança.
+## `storage.py`
 
-**Não republicar automaticamente.**
+Resolve paths físicos da arquitetura.
 
-Essa regra é fundamental para evitar duplicatas em cenários de timeout/crash.
+Responsabilidade:
 
----
+- root portátil;
+- database;
+- workspaces;
+- logs;
+- backups;
+- paths de item.
 
-# 12. Recovery determinístico
+Não cria filas físicas antigas.
 
-Recovery reconcilia três fontes:
+## `services.py`
+
+Contém os contratos/serviços centrais entre as etapas:
+
+- ingestão;
+- Vision result;
+- Studio result;
+- publication result;
+- exceções específicas.
+
+É a ponte de contrato do Core para os adapters reais.
+
+## `pipeline.py`
+
+Executa o fluxo sequencial de um item:
+
+```
+RECEIVED
+→ VISION
+→ STUDIO
+→ PUBLISHING
+→ PUBLISHED
+```
+
+Cleanup ocorre de forma controlada após publicação confirmada.
+
+O pipeline não cria concorrência de itens.
+
+## `recovery.py`
+
+Faz a reconciliação de item usando:
 
 ```
 SQLite
 +
-Filesystem
+filesystem
 +
-Telegram
+estado de publicação
 ```
 
-A prioridade é sempre preservar a identidade e evitar duplicação.
+Recovery não supõe que um timeout de rede significa ausência de publicação.
 
-## 12.1 STUDIO + working existente
+## `startup_audit.py`
 
-Se o working existe e o item possui dados de Vision:
+Executa a auditoria antes de abrir o fluxo normal:
 
-```
-STUDIO
-→ continuar Studio
-```
+- itens persistidos;
+- estados;
+- workspaces;
+- órfãos;
+- publicações;
+- confirmações;
+- cleanup.
 
-Vision não precisa ser repetido.
+O log de startup é a fotografia inicial da consistência.
 
-## 12.2 STUDIO + working ausente
+## `production_contracts.py`
 
-Se o original imutável existe:
-
-```
-original
-→ reconstruir working
-→ Studio
-```
-
-## 12.3 PUBLISHING + result existente
-
-O resultado durável existe.
-
-Antes de enviar novamente:
-
-```
-result
-→ verificar Telegram
-```
-
-Se confirmado:
-
-```
-PUBLISHED
-→ cleanup
-```
-
-## 12.4 Publicação já confirmada no DB
-
-Se SQLite já possui confirmação:
-
-```
-PUBLISHED
-→ cleanup
-```
-
-Sem nova publicação.
-
-## 12.5 PUBLISHED
-
-Item publicado nunca deve ser republicado.
-
-## 12.6 UNKNOWN
-
-Recovery para.
-
-Não tenta “por garantia” publicar novamente.
+Define os contratos abstratos dos adapters de produção, incluindo a identidade da mensagem fonte.
 
 ---
 
-# 13. Storage canônico
+# 7. Coordinator
 
-Estrutura definitiva:
+Arquivo:
+
+```
+armored_core/coordinator.py
+```
+
+É a **única raiz de composição**.
+
+Responsabilidades:
+
+1. adquirir runtime lock;
+2. executar startup audit/recovery;
+3. iniciar CATCH-UP quando histórico ainda não foi concluído;
+4. manter processamento sequencial;
+5. fazer a transição para LIVE;
+6. continuar vivo durante erros transitórios;
+7. liberar recursos no shutdown.
+
+## 7.1 Execução contínua
+
+A vida útil real usa um único loop asyncio.
+
+Isso é importante para Telethon porque o client não deve ser amarrado a um loop diferente a cada ciclo.
+
+## 7.2 CATCH-UP → LIVE
+
+No fluxo normal:
+
+```
+histórico incompleto
+      ↓
+CATCH-UP
+      ↓
+histórico concluído
+      ↓
+LIVE contínuo
+```
+
+O modo de certificação com limite de 3 itens existe apenas para testar rapidamente a transição. Não deve ser usado para o CATCH-UP histórico de produção.
+
+## 7.3 Runtime lock
+
+Existe um lock persistente para evitar duas instâncias concorrentes do Coordinator.
+
+O lock também possui heartbeat.
+
+---
+
+# 8. ArmoredVision
+
+Arquivos:
+
+```
+ArmoredVision/service.py
+ArmoredVision/modules/v1/shopee_api.py
+ArmoredVision/modules/v1/shopee_resolver.py
+```
+
+Responsabilidade: identidade comercial do produto.
+
+## 8.1 `service.py`
+
+Coordena:
+
+- leitura da URL Shopee;
+- resolução do link;
+- consulta à API de afiliados;
+- obtenção do nome do produto;
+- obtenção/geração da affiliate URL.
+
+A V1 usa resolução exata de `shop_id + item_id`.
+
+## 8.2 `shopee_resolver.py`
+
+Resolve URLs Shopee, incluindo redirecionamento/normalização necessário para obter a identidade do produto.
+
+## 8.3 `shopee_api.py`
+
+Encapsula as chamadas da API de afiliados.
+
+## 8.4 WAITING_VISION
+
+Quando o produto não pode ser resolvido pela V1, o item não deve ser falsamente aprovado nem enviado ao Studio.
+
+Ele pode ficar:
+
+```
+WAITING_VISION
+```
+
+O original permanece preservado.
+
+Isso prepara o caminho para uma futura Vision V2 sem alterar a pipeline.
+
+---
+
+# 9. ArmoredStudio
+
+Arquivos de entrada:
+
+```
+ArmoredStudio/service.py
+ArmoredStudio/unified.py
+```
+
+O projeto usa **um único Studio canônico**.
+
+O Studio executa análise obrigatória seguida de processamento.
+
+## 9.1 `unified.py`
+
+É o motor unificado de processamento.
+
+Responsabilidade:
+
+- receber o `Item`;
+- consumir o original/working adequado;
+- executar análise;
+- executar processamento;
+- produzir o resultado final.
+
+## 9.2 `service.py`
+
+É a fronteira usada pelo Coordinator/Pipeline.
+
+Valida a presença de FFmpeg quando a execução real exige isso e retorna `StudioResult`.
+
+## 9.3 `analysis/`
+
+Módulos presentes:
+
+- `video.py` — metadados/estrutura de vídeo.
+- `blackbar.py` — análise de barras pretas.
+- `banner.py` — regras ligadas a banners.
+- `banner_analyzer.py` — análise de banners.
+- `veo_detector.py` — detector relacionado ao conteúdo/saída VEO.
+- `gemini_detector.py` — detector de marca/artefato Gemini.
+- `export_planner.py` — montagem do plano de exportação.
+- `export_plan_validator.py` — validação do plano.
+- `export_executor.py` — execução da etapa de exportação.
+- `logger.py` — logging especializado da análise.
+
+A pasta `analysis` é análise/plano, não outra pipeline.
+
+## 9.4 `processing/`
+
+Módulos presentes:
+
+- `rvc.py` — wrapper do RVC;
+- `tool_paths.py` — resolução dos binários/ferramentas;
+- `finalizer.py` — finalização/consolidação da saída.
+
+## 9.5 RVC
+
+O RVC é parte do Studio.
+
+Runtime local:
+
+```
+ArmoredStudio/runtime/rvc/env
+```
+
+O código permite resolver runtime externo através de configuração apropriada.
+
+GPU é opcional para a arquitetura; o ambiente testado também possui fallback CPU.
+
+## 9.6 Assets
+
+```
+ArmoredStudio/assets/
+```
+
+Contém os assets necessários ao processamento, como banner e áudio.
+
+---
+
+# 10. ArmoredHub
+
+Arquivos:
+
+```
+ArmoredHub/service.py
+```
+
+O Hub é a fronteira de publicação.
+
+Responsabilidades:
+
+- validar resultado;
+- persistir intenção/registro de publicação;
+- publicar no Telegram;
+- registrar o `message_id` real;
+- confirmar publicação;
+- tratar janela ambígua de timeout;
+- impedir republicação insegura.
+
+## 10.1 Destino
+
+Configuração:
+
+```
+ARMORED_CREATOR_GROUP_ID
+ARMORED_HUB_TOPIC_ID=228
+```
+
+O topic 228 é o destino validado.
+
+## 10.2 Dry-run
+
+```
+ARMORED_HUB_DRY_RUN=1
+```
+
+bloqueia publicação real.
+
+Para operação/certificação real:
+
+```
+ARMORED_HUB_DRY_RUN=0
+```
+
+## 10.3 Idempotência
+
+Antes de uma nova publicação, o Hub considera o registro persistido.
+
+Resultado:
+
+- `CONFIRMED` → não publica novamente;
+- `ABSENT` → publicação ainda pode ser necessária;
+- `UNKNOWN` → não repete cegamente.
+
+## 10.4 Janela crítica pós-envio
+
+Após o Bot API retornar o `message_id`, esse ID é persistido antes de qualquer operação que possa falhar.
+
+Isso cobre:
+
+```
+Telegram aceitou
+↓
+processo caiu antes do restante
+↓
+restart
+↓
+Recovery encontra o message_id
+↓
+verifica Telegram
+↓
+não duplica
+```
+
+---
+
+# 11. Confirmação de publicação
+
+A publicação real não depende somente de “send_video terminou”.
+
+O Hub verifica a mensagem no destino.
+
+A correspondência considera:
+
+- chat de destino;
+- topic;
+- caption/affiliate URL;
+- presença de mídia de vídeo/documento.
+
+Resultado:
+
+```
+CONFIRMED
+ABSENT
+UNKNOWN
+```
+
+### Regra de segurança
+
+> **UNKNOWN nunca vira republicação automática.**
+
+Esse princípio protege contra duplicatas quando a rede falha depois que o Telegram já recebeu a mídia.
+
+---
+
+# 12. Storage canônico
+
+Estrutura esperada:
 
 ```
 storage/
 ├── database/
 │   └── armoredcreator.db
 ├── videos/
-│   └── {telegram_message_id}/
+│   └── {item_id}/
+│       ├── original.*
+│       ├── working.*
+│       └── result.*
 ├── logs/
 └── backups/
 ```
 
-Cada item possui exatamente um workspace:
+O nome exato dos arquivos derivados pode variar, mas o workspace pertence exclusivamente ao item.
 
-```
-storage/videos/{telegram_message_id}/
-```
+## Não recriar filas físicas
 
-Exemplo:
-
-```
-storage/videos/1383/1383_8KolJcZrfU.mp4
-```
-
-## Original
-
-- permanente;
-- imutável;
-- nunca sobrescrito;
-- referência de recuperação.
-
-## Working
-
-Artefato intermediário.
-
-## Result
-
-Resultado final pronto para publicação.
-
-## Cleanup
-
-Só ocorre depois da confirmação de publicação.
-
-O original permanece.
-
-### Diretórios proibidos na arquitetura final
-
-Não recriar:
+Não utilizar como arquitetura:
 
 ```
 storage/sync/
@@ -679,7 +690,6 @@ storage/queue/
 storage/publish_queue/
 storage/pipeline/
 storage/hub/
-storage/products/
 storage/generated/
 storage/rejected/
 storage/archive/
@@ -688,683 +698,916 @@ storage/output/
 storage/temp/
 ```
 
+O script de reset pode remover resíduos legados conhecidos; isso não significa que eles façam parte da arquitetura.
+
 ---
 
-# 14. Portabilidade
+# 13. Checkpoints
 
-Não existem caminhos fixos como:
+Os checkpoints LIVE ficam persistidos por tópico no SQLite.
 
-```
-C:\Users\Administrador\...
-```
-
-A raiz é resolvida a partir do projeto:
+Princípio:
 
 ```
-ARMORED_ROOT
+checkpoint
+=
+último ponto confirmado até onde o processamento foi realmente concluído
 ```
 
-O launcher utiliza `%~dp0`, permitindo mover o projeto para outra máquina/local.
+Materialização antecipada não pode criar um checkpoint falso.
+
+Após restart, o processo não depende do checkpoint em RAM.
+
+---
+
+# 14. Recovery
+
+Recovery é parte da arquitetura, não uma ferramenta opcional externa.
+
+## Situações
+
+### RECEIVED + original ausente
+
+Pode significar download interrompido.
+
+O `.part` deve ser tratado como incompleto e o candidato precisa ser redescoberto/materializado novamente.
+
+### STUDIO + working presente
+
+Pode continuar/reusar o artefato durável, conforme o contrato do Studio.
+
+### STUDIO + working ausente + original presente
+
+O original é a fonte para reconstrução.
+
+### PUBLISHING + result presente
+
+Não publicar cegamente. Primeiro verificar o estado externo.
+
+### PUBLISHED
+
+Não republicar.
+
+### UNKNOWN
+
+Parar a decisão automática e manter o item recuperável.
 
 ---
 
 # 15. START_ALL.bat
 
-Existe um único launcher operacional:
+Arquivo:
 
 ```
 START_ALL.bat
 ```
 
-Ele:
+É o launcher operacional único.
 
-1. entra na raiz do projeto;
-2. resolve Python;
-3. define `ARMORED_ROOT`;
-4. define `PYTHONPATH`;
-5. executa `run_coordinator.py`;
-6. devolve o código de saída do Coordinator.
-
-O launcher não inicia cinco pipelines independentes.
-
-A composição é:
+Fluxo:
 
 ```
-START_ALL
-    ↓
+START_ALL.bat
+   ↓
+run_coordinator.py
+   ↓
 Coordinator
-    ↓
+   ↓
 Sync + Vision + Studio + Hub
 ```
 
-Launchers obsoletos foram removidos.
+Não iniciar manualmente cinco pipelines para produção.
 
 ---
 
-# 16. Process restart lab
+# 16. run_coordinator.py
 
-Existe um laboratório específico para provar comportamento entre processos reais.
+Define as condições de entrada do processo:
 
-O teste executa o Coordinator em processos Python separados utilizando o mesmo SQLite.
+- root;
+- Telegram real;
+- logging;
+- Coordinator;
+- poll interval;
+- `ARMORED_MAX_CYCLES` quando explicitamente usado em laboratório.
 
-Primeira execução:
-
-```
-STATE=PUBLISHED
-CHECKPOINT=100
-PUBLICATIONS=['lab-live-1']
-```
-
-Segunda execução, contra o mesmo estado:
+Padrão real:
 
 ```
-STATE=PUBLISHED
-CHECKPOINT=100
-PUBLICATIONS=['lab-live-1']
+ARMORED_REAL_TELEGRAM=1
 ```
-
-Isso comprova no laboratório:
-
-- persistência entre processos;
-- persistência de checkpoint;
-- deduplicação;
-- publicação idempotente;
-- reconhecimento de publicação existente;
-- ausência de republicação após restart.
 
 ---
 
-# 17. Testes automatizados
+# 17. Configuração relevante
 
-O número de testes deve ser considerado válido somente quando reproduzido no HEAD atual. O README não congela mais um contador histórico como prova de fechamento.
+```
+ARMORED_ROOT=.
+ARMORED_REAL_TELEGRAM=1
 
-A certificação deve registrar a saída real de `python -m pytest -q` do commit testado.
+ARMORED_HUB_DRY_RUN=0
 
-Os testes cobrem, entre outros:
+ARMORED_SYNC_SOURCE=-1003788989075
+ARMORED_SYNC_SOURCE_ID=-1003788989075
+
+ARMORED_CREATOR_GROUP_ID=-1004341972306
+ARMORED_HUB_TOPIC_ID=228
+
+TELEGRAM_API_ID=...
+TELEGRAM_API_HASH=...
+ARMORED_CREATOR_BOT_TOKEN=...
+
+SHOPEE_APP_ID=...
+SHOPEE_SECRET_KEY=...
+SHOPEE_AFFILIATE_API_URL=https://open-api.affiliate.shopee.com.br/graphql
+```
+
+### Certificação limitada
+
+Somente para o teste rápido CATCH-UP → LIVE:
+
+```
+ARMORED_SYNC_CATCHUP_LIMIT=3
+ARMORED_CERT_CATCHUP_THEN_LIVE=1
+```
+
+### Produção/CATCH-UP histórico completo
+
+Remover essas duas variáveis:
+
+```
+Remove-Item Env:ARMORED_SYNC_CATCHUP_LIMIT -ErrorAction SilentlyContinue
+Remove-Item Env:ARMORED_CERT_CATCHUP_THEN_LIVE -ErrorAction SilentlyContinue
+```
+
+Assim o CATCH-UP não fica artificialmente limitado.
+
+### Watchdog de descoberta LIVE
+
+```
+ARMORED_LIVE_DISCOVERY_TIMEOUT=30
+```
+
+Esse valor limita apenas uma descoberta Telegram LIVE que ficou travada. Não limita download de vídeo nem processamento Studio.
+
+---
+
+# 18. Laboratório de reset
+
+Arquivo:
+
+```
+scripts/reset_certification_lab.ps1
+```
+
+Uso:
+
+```
+.\scripts\reset_certification_lab.ps1
+```
+
+O script apaga apenas o estado de laboratório:
 
 - SQLite;
-- migração de schema;
-- publicação;
-- idempotência;
+- workspaces de vídeo;
+- logs;
+- diretórios legados conhecidos.
+
+Preserva:
+
+- credentials;
+- sessão Telegram;
+- assets;
+- código.
+
+Ele exige:
+
+```
+RESET ARMORED
+```
+
+### Observação Git
+
+O reset pode remover `.gitkeep` de:
+
+```
+storage/logs/.gitkeep
+storage/videos/.gitkeep
+```
+
+Se o Git ficar sujo somente por esses arquivos, restaurar:
+
+```
+git restore storage/logs/.gitkeep storage/videos/.gitkeep
+```
+
+Não commitar estado de laboratório.
+
+---
+
+# 19. Testes automatizados
+
+O projeto usa o workflow:
+
+```
+.github/workflows/tests.yml
+```
+
+que executa:
+
+```
+python -m unittest discover -s tests -v
+```
+
+A suíte cobre áreas como:
+
+- arquitetura;
+- invariantes;
+- SQLite;
+- pipeline;
 - recovery;
-- Studio;
-- lifecycle de Sync;
+- startup audit;
+- runtime lock;
+- Sync lifecycle;
 - CATCH-UP;
-- LIVE;
-- reconnect;
-- Coordinator contínuo;
-- runtime lock;
-- process restart;
-- contratos da arquitetura;
-- launcher único.
+- restart;
+- publication;
+- Telegram verification;
+- Telegram session reconnect;
+- LIVE reconnect;
+- LIVE polling rate;
+- RVC wrapper;
+- Vision/Studio contract;
+- WAITING_VISION.
 
-O CI do HEAD ainda precisa ser executado/revalidado após as correções desta rodada; não declarar a suíte verde até reproduzir o resultado no HEAD atual.
-
----
-
-# 18. Correções arquiteturais importantes
-
-Principais correções consolidadas durante a reconstrução:
-
-- migração correta do schema SQLite;
-- migração de publication schema legado;
-- fechamento seguro de SQLite com conexões concorrentes;
-- Coordinator contínuo com runtime lock;
-- liberação do lock após falha operacional;
-- detecção correta da conexão Telethon através do client;
-- CATCH-UP sequencial de um candidato por vez;
-- lifecycle correto da sessão Telegram durante CATCH-UP;
-- release explícito da conexão direta de batch;
-- LIVE sequencial de um candidato por vez;
-- persistência de checkpoints;
-- process restart lab;
-- remoção de launcher duplicado;
-- remoção de demo entrypoint obsoleto;
-- enforcement de launcher operacional único.
-
----
-
-# 19. O que foi removido
-
-A reconstrução removeu a dependência operacional de:
-
-- filas físicas;
-- diretórios de pipeline antigos;
-- cópias intermediárias espalhadas;
-- launcher duplicado;
-- demo entrypoint;
-- arquitetura antiga de múltiplos Studios;
-- referências a caminhos fixos da máquina;
-- componentes antigos que não pertencem à composição canônica.
-
----
-
-# 20. O que foi preservado
-
-Foi preservado o comportamento funcional considerado necessário:
-
-- coleta Telegram;
-- descoberta por tópicos;
-- regra de associação vídeo/Shopee;
-- identidade por Telegram ID;
-- processamento sequencial;
-- publicação Telegram;
-- topic de destino;
-- confirmação externa;
-- original permanente;
-- recovery;
-- deduplicação;
-- idempotência.
-
----
-
-# 21. O que foi recriado
-
-Foi recriada a arquitetura física de execução:
-
-- Storage único;
-- SQLite central;
-- Coordinator;
-- Pipeline sequencial;
-- Recovery determinístico;
-- lifecycle CATCH-UP/LIVE;
-- publicação persistente;
-- confirmação independente;
-- launcher único;
-- laboratório de restart.
-
----
-
-# 22. O que foi implementado
-
-Implementado e coberto por testes:
-
-- estados;
-- transições;
-- eventos;
-- publication records;
-- checkpoints;
-- recovery;
-- storage canônico;
-- idempotência;
-- runtime lock;
-- CATCH-UP sequencial;
-- LIVE sequencial;
-- restart lab;
-- contratos de processamento.
-
----
-
-# 23. Prova real já realizada — item 557
-
-O item real `557` foi usado para validar recovery + publicação real.
-
-Resultado documentado:
+Também existem testes E2E sob:
 
 ```
-state: PUBLISHED
-cleanup_completed: True
-recovery_count: 4
-attempts: 6
-
-publication_message_id: 772
-confirmed: 1
-verification_status: CONFIRMED
-
-destination_chat_id: -1004341972306
-destination_topic_id: 228
+tests/e2e/
 ```
 
-A mensagem foi efetivamente recebida no Telegram.
+e scripts específicos em:
 
-Também foi demonstrado:
-
-- recovery de item FAILED;
-- reutilização de resultado durável;
-- ausência de rerun desnecessário de Vision/Studio;
-- publicação real;
-- persistência do message ID;
-- confirmação independente via MTProto;
-- confirmação do tópico 228;
-- cleanup após confirmação;
-- preservação do original;
-- ausência de duplicação.
-
-Esse é um **marco real de integração**, mas não substitui a certificação do fluxo contínuo completo desde a fonte.
+```
+scripts/
+```
 
 ---
 
-# 24. Estado atual do laboratório
+# 20. Testes reais já executados
 
-O banco atual ainda contém evidências dos testes anteriores.
+## 20.1 Três itens reais
 
-Existem itens históricos e estados como:
-
-- PUBLISHED;
-- FAILED;
-- RECEIVED.
-
-Existem também workspaces de testes anteriores.
-
-Isso é proposital neste momento.
-
-**Não apagar o banco ou storage antes de concluir a certificação operacional.**
-
-Há também artefatos de migração/backup no ambiente local que serão tratados somente no reset final.
-
----
-
-# 25. O que ainda NÃO está certificado
-
-A suíte automatizada estar verde não significa que toda a operação real está certificada.
-
-Ainda falta provar no ambiente Windows/Telegram real:
-
-### 25.1 Coordinator contínuo real
-
-O processo precisa permanecer vivo efetivamente em:
+Foram processados no Telegram real:
 
 ```
-startup
-→ recovery
-→ CATCH-UP
+1383
+1174
+823
+```
+
+Todos chegaram a publicação confirmada e cleanup.
+
+Estado observado no restart:
+
+```
+1383 → PUBLISHED → CONFIRMED#870 → cleanup OK
+1174 → PUBLISHED → CONFIRMED#872 → cleanup OK
+823  → PUBLISHED → CONFIRMED#873 → cleanup OK
+```
+
+Auditoria:
+
+```
+itens=3
+publicados=3
+pendentes=0
+falhos=0
+limpos=3
+workspaces=3
+órfãos=0
+publicações_confirmadas=3
+ambíguas=0
+```
+
+## 20.2 CATCH-UP limitado → LIVE
+
+O teste de certificação com limite 3 foi executado em Telegram real.
+
+Sequência comprovada:
+
+```
+3 itens completos
+→ cutover histórico seguro
 → LIVE
-→ polling contínuo
 ```
 
-### 25.2 Restart real durante LIVE
+## 20.3 Restart em LIVE
 
-É necessário:
-
-1. iniciar o Coordinator;
-2. entrar em LIVE;
-3. receber/processar estado;
-4. encerrar/reiniciar o processo;
-5. confirmar persistência;
-6. confirmar que não duplica;
-7. confirmar que o checkpoint continua correto.
-
-### 25.3 START_ALL operacional
-
-O launcher precisa iniciar a composição real sem intervenção manual adicional.
-
-### 25.4 E2E real completo
-
-A certificação definitiva deve demonstrar:
+Após reiniciar:
 
 ```
-Telegram fonte
-→ Sync
-→ SQLite
-→ Vision
-→ Studio/RVC
-→ Hub
-→ Telegram destino
-→ confirmação
-→ cleanup
+Modo SQLite: LIVE
+startup audit consistente
+3 itens PUBLISHED
+0 pendentes
+0 falhos
+0 órfãos
+→ LIVE
 ```
 
-### 25.5 Segundo item sequencial
+Nenhum dos três foi republicado.
 
-Após o primeiro item:
+## 20.4 Queda de Wi-Fi
+
+O teste real mostrou:
 
 ```
-item A
-→ publicação
-→ confirmação
-→ cleanup
-→ item B
+queda de rede
+→ erro de transporte
+→ Coordinator continua vivo
+→ sessão é liberada/reconstruída
+→ novas tentativas
+→ conexão restaurada
 ```
 
-O segundo item precisa realmente entrar na mesma pipeline sem concorrência e sem travamento.
+Foi observada a mensagem:
+
+```
+[SYNC][TELEGRAM] sessão Telegram conectada/reconectada
+```
+
+O antigo erro:
+
+```
+sqlite3.OperationalError: database is locked
+```
+
+não reapareceu após a correção de lifecycle do Telethon.
+
+## 20.5 FloodWait
+
+Durante um teste anterior, o Telegram retornou:
+
+```
+FloodWaitError
+```
+
+porque a implementação anterior varria os tópicos repetidamente.
+
+Isso foi corrigido com polling LIVE round-robin de um tópico por ciclo.
+
+O cenário de ausência de conteúdo novo deve ser considerado **idle operation**, não falha.
 
 ---
 
-# 26. Critério de encerramento definitivo
+# 21. O que NÃO foi certificado ainda
 
-O projeto pode ser considerado operacionalmente fechado quando todos os seguintes forem verdadeiros:
+### CATCH-UP histórico completo
 
-- [x] suíte automatizada verde;
-- [x] SQLite central;
-- [x] storage único;
-- [x] pipeline sequencial;
-- [x] recovery determinístico;
-- [x] publicação idempotente;
-- [x] confirmação Telegram;
-- [x] process restart lab;
-- [x] publicação real validada no item 557;
-- [x] launcher único;
-- [x] remoção das estruturas obsoletas;
-- [ ] Coordinator contínuo real;
-- [ ] restart real em LIVE;
-- [ ] START_ALL real;
-- [ ] E2E fonte → destino completo;
-- [ ] segundo item sequencial real;
-- [ ] reset final;
-- [ ] CATCH-UP limpo;
-- [ ] LIVE limpo;
-- [ ] certificação final.
+A fonte conhecida possui aproximadamente **308 conteúdos monitorados**.
+
+Ainda falta executar a coleta/processamento histórico completo em um laboratório limpo.
+
+### Novo candidato durante LIVE
+
+Não é possível inserir manualmente um vídeo no grupo fonte porque o grupo pertence a terceiros.
+
+Por isso, a chegada de um conteúdo novo enquanto o processo está em LIVE não pode ser forçada manualmente neste ambiente.
+
+### Perda abrupta de energia
+
+Ainda não foi realizado teste físico de desligamento da máquina no meio do processamento.
+
+Esse cenário é diferente de `CTRL+C`.
 
 ---
 
-# 27. Plano final de fechamento
+# 22. Certificação histórica — procedimento oficial
 
-A partir daqui **não é necessário reconstruir novamente a arquitetura**.
+Este é o próximo teste.
 
-A sequência correta é operacional:
-
-## Fase A — certificação do processo
-
-Executar:
-
-```
-START_ALL.bat
-```
-
-Verificar:
-
-```
-Coordinator iniciou
-runtime lock
-startup recovery
-CATCH-UP
-LIVE
-processo permanece vivo
-```
-
-## Fase B — LIVE real
-
-Com o Coordinator vivo:
-
-- inserir/receber um novo candidato real;
-- observar ingestão;
-- observar processamento;
-- observar publicação;
-- confirmar Telegram;
-- confirmar cleanup.
-
-## Fase C — restart
-
-Com LIVE ativo:
-
-- interromper o processo;
-- iniciar novamente;
-- confirmar checkpoint;
-- confirmar ausência de duplicação;
-- confirmar continuidade.
-
-## Fase D — segundo item
-
-Enviar/obter dois candidatos distintos e confirmar:
-
-```
-A → completo
-B → completo
-```
-
-sem processamento concorrente.
-
-## Fase E — CATCH-UP limpo
-
-Depois das provas, resetar o laboratório e executar um CATCH-UP controlado.
-
-Confirmar:
-
-- candidatos corretos;
-- originals no workspace correto;
-- nenhum diretório legado;
-- nenhum download duplicado;
-- processamento 1 por vez.
-
-## Fase F — LIVE limpo
-
-Com banco limpo e CATCH-UP concluído:
-
-- entrar em LIVE;
-- receber novo item;
-- processar;
-- publicar;
-- confirmar;
-- cleanup;
-- permanecer aguardando novos itens.
-
-## Fase G — certificação
-
-Executar novamente:
-
-```
-python -m pytest -q
-```
-
-e registrar:
-
-- commit;
-- branch;
-- resultado dos testes;
-- prova E2E;
-- prova restart;
-- prova sequencial;
-- estado final do storage;
-- estado final do SQLite.
-
-Somente então executar o **reset final definitivo** dos artefatos de laboratório.
-
----
-
-# 28. Operação normal
-
-Para iniciar:
-
-```
-START_ALL.bat
-```
-
-Para shutdown controlado:
+## Etapa 1 — parar o processo atual
 
 ```
 CTRL+C
 ```
 
-O processo operacional deve ser o Coordinator.
+## Etapa 2 — garantir o commit congelado
 
-Não executar launchers antigos.
+```powershell
+cd C:\Users\Administrador\Downloads\ArmoredCreator
 
-Não iniciar Vision, Studio ou Hub separadamente para operação normal.
-
----
-
-# 29. Regra de ouro da reconstrução
-
-O ArmoredCreator final não deve depender de memória do processo, nomes físicos arbitrários ou suposições sobre o que aconteceu antes do crash.
-
-A pergunta para cada item deve poder ser respondida deterministically:
-
-```
-Quem é?
-→ telegram_message_id
-
-Qual é o estado?
-→ SQLite
-
-Qual é o original?
-→ original_path
-
-Existe working?
-→ filesystem + DB
-
-Existe resultado?
-→ filesystem + DB
-
-Foi publicado?
-→ SQLite + Telegram
-
-Foi confirmado?
-→ publication + verificação externa
-
-Pode limpar?
-→ somente após confirmação
-
-Pode republicar?
-→ somente se a reconciliação determinar que é seguro
+git fetch origin
+git reset --hard origin/main
+git log -1 --oneline
 ```
 
-Essa é a base da recuperação e da operação contínua.
+O commit exibido deve ser o **commit de congelamento documentado após este README**.
+
+## Etapa 3 — retirar limites artificiais
+
+```powershell
+Remove-Item Env:ARMORED_SYNC_CATCHUP_LIMIT -ErrorAction SilentlyContinue
+Remove-Item Env:ARMORED_CERT_CATCHUP_THEN_LIVE -ErrorAction SilentlyContinue
+
+$env:ARMORED_REAL_TELEGRAM="1"
+$env:ARMORED_HUB_DRY_RUN="0"
+```
+
+## Etapa 4 — reset limpo
+
+```powershell
+.\scripts\reset_certification_lab.ps1
+```
+
+Confirmar:
+
+```
+RESET ARMORED
+```
+
+Esse reset não apaga a sessão autenticada nem os assets.
+
+## Etapa 5 — iniciar CATCH-UP completo
+
+```powershell
+$env:ARMORED_REAL_TELEGRAM="1"
+$env:ARMORED_HUB_DRY_RUN="0"
+
+.\START_ALL.bat
+```
+
+### Não definir
+
+```
+ARMORED_SYNC_CATCHUP_LIMIT
+ARMORED_CERT_CATCHUP_THEN_LIVE
+```
+
+O CATCH-UP deverá ser ilimitado.
 
 ---
 
-# 30. Estado de fechamento
+# 23. O que observar durante os ~308 conteúdos
 
-**Arquitetura reconstruída:** SIM  
-**Testes automatizados:** pendente de execução no HEAD atual `fd84af1`  
-**CI:** pendente de revalidação  
-**Recovery determinístico:** implementado e testado  
-**Publicação real:** comprovada  
-**Confirmação Telegram real:** comprovada  
-**Process restart lab:** comprovado  
-**Storage único:** implementado  
-**Coordinator contínuo:** implementado em código, certificação real pendente  
-**E2E contínuo real:** certificação pendente  
-**Processamento sequencial 1-item:** regra operacional corrigida e checkpoint pós-conclusão nesta branch  
-**Materialização em lote:** proibida pela arquitetura definitiva  
-**Reset final:** pendente
+A certificação histórica não é apenas “chegou ao LIVE”.
 
-O próximo trabalho não é mais reconstrução arquitetural.
+Precisamos observar:
 
-É **certificação operacional real e fechamento do laboratório**.
+### Descoberta
 
----
+Cada candidato deve ter:
 
-# 31. Estratégia futura — ArmoredVision V2
+- Telegram ID válido;
+- tópico correto;
+- URL Shopee identificável.
 
-A V2 será uma evolução interna da resolução de identidade, não uma segunda pipeline.
+### Materialização
 
-Fluxo futuro:
+O vídeo deve cair diretamente no workspace canônico.
 
-WAITING_VISION → busca de candidatos Shopee → reconciliação → revalidação → STUDIO
+Não devem aparecer lotes em:
 
-Se nenhum candidato for seguro, o item continua em WAITING_VISION.
+```
+storage/sync
+storage/queue
+storage/sync video
+```
 
-## 31.1 Problema que a V2 resolve
+### Processamento
 
-A V1 consulta o par exato shop_id + item_id. Se a Shopee deixar de retornar essa oferta, isso significa somente que a V1 não conseguiu resolver a identidade naquele momento. Não devemos interpretar isso como prova de que o produto deixou de existir para sempre.
+Para cada item:
 
-Possíveis causas incluem indisponibilidade da oferta, produto fora do catálogo de afiliados, relistagem, mudança de identidade ou indisponibilidade transitória da API.
+```
+Vision
+→ Studio
+→ RVC/FFmpeg quando aplicável
+→ resultado
+```
 
-Não assumir que uma futura relistagem reutilizará o mesmo item_id. A V2 precisa conseguir encontrar uma nova identidade candidata.
+### Publicação
 
-## 31.2 Capacidade da API Shopee
+```
+PUBLISHING
+→ Telegram
+→ message_id
+→ confirmação
+→ PUBLISHED
+```
 
-A investigação realizada encontrou suporte documentado para productOfferV2 com busca por keyword e filtros como shopId, itemId e categoria, além de campos como productName, imageUrl, productLink, offerLink, priceMin, priceMax, sales, ratingStar, commissionRate, shopId e shopName. A fonte consultada é uma documentação pública não oficial baseada na documentação da Shopee; portanto, os contratos finais deverão ser validados contra a documentação/Explorer oficial quando a V2 for implementada. citeturn0search0turn0search1
+### Cleanup
 
-Isso torna a V2 tecnicamente viável para descoberta de candidatos, mas a API não prova sozinha que um candidato é o mesmo produto do vídeo. A reconciliação de identidade pertence à ArmoredVision.
+Somente depois da confirmação.
 
-## 31.3 Regra fundamental: não aceitar o primeiro resultado
+### Sequência
 
-A V2 nunca deve fazer keyword → primeiro resultado → publicação. Ela deve gerar candidatos, comparar evidências, eliminar incompatibilidades, revalidar o candidato escolhido por shop_id + item_id e somente então retornar VisionResult.
+Nunca:
 
-## 31.4 Evidências de identidade a preservar
+```
+item A processando
++
+item B materializando
+```
 
-Quando disponíveis, devem ser preservados: URL Shopee original; shop_id; item_id; nome; productLink; imagem; categorias; nome da loja; preço observado; sinais de oferta/comissão; timestamp da tentativa; versão da Vision; erro de resolução; e histórico dos candidatos avaliados.
+O esperado é:
 
-A identidade antiga é evidência histórica. Uma eventual identidade nova é a identidade resolvida pela reconciliação.
-
-## 31.5 Sinais de correspondência
-
-- Nome: normalização, tokens e similaridade textual.
-- Loja: shop_id e shopName são sinais fortes quando disponíveis; mudança de loja exige análise, não aceitação automática.
-- Categoria: compatibilidade aumenta a evidência.
-- Preço: somente evidência auxiliar, nunca identidade.
-- Imagem: comparação visual entre a imagem original e a imagem do candidato.
-- URL/IDs: quando a identidade exata ainda existe, shop_id + item_id continua sendo a confirmação mais forte.
-
-O projeto já possui capacidade CLIP em ArmoredVision. Ela poderá ser usada como sinal visual da V2, mas CLIP sozinho nunca deve autorizar publicação.
-
-## 31.6 Decisão da V2
-
-A V2 deve produzir uma decisão explícita: RESOLVED, UNRESOLVED ou AMBIGUOUS.
-
-RESOLVED: registrar identidade antiga e nova, revalidar a nova identidade, obter/generar affiliate URL e seguir para STUDIO.
-UNRESOLVED: permanecer em WAITING_VISION.
-AMBIGUOUS: permanecer em WAITING_VISION e não escolher arbitrariamente.
-
-## 31.7 Versionamento da resolução
-
-A resolução deve distinguir estratégias como VISION_V1_EXACT e VISION_V2_CANDIDATE. Isso permite auditar qual estratégia resolveu o produto, qual identidade foi usada, quando ocorreu e por quê.
-
-## 31.8 A V2 não altera a pipeline
-
-A V2 entra no mesmo contrato: WAITING_VISION → Vision V2 → STUDIO → PUBLISHING → PUBLISHED → cleanup.
-
-Não criar queue de Vision, processo paralelo, novo banco, novo storage ou nova pipeline. V2 é evolução interna do estágio Vision.
-
-## 31.9 Retry futuro
-
-Não implementar retry infinito. Erros transitórios podem ter retry limitado com backoff. Produto não resolvido deve permanecer em WAITING_VISION. Candidato ambíguo também permanece em WAITING_VISION.
-
-## 31.10 Scheduler futuro
-
-Quando V2 estiver ativa, o Coordinator poderá consultar WAITING_VISION de forma controlada, respeitando intervalo mínimo, limite de tentativas, backoff, rate limit, prioridade e versionamento. Um item preso em Vision nunca pode bloquear os demais.
-
-## 31.11 Persistência futura recomendada
-
-Recomenda-se uma tabela própria vision_resolutions, separada de items, contendo pelo menos: content_id, vision_version, identidade original, identidade candidata, nomes, imagens, categorias, score, decisão, motivo e timestamp.
-
-Isso permite auditar cada tentativa sem transformar items em tabela de histórico.
-
-## 31.12 Testes obrigatórios da V2
-
-1. V1 resolve normalmente.
-2. V1 retorna zero produtos → WAITING_VISION.
-3. WAITING_VISION sobrevive a restart.
-4. Coordinator continua com outros itens.
-5. V2 encontra candidato único.
-6. V2 rejeita nome incompatível.
-7. V2 rejeita categoria incompatível.
-8. V2 considera loja.
-9. V2 usa preço apenas como evidência.
-10. V2 usa similaridade de imagem.
-11. V2 não aceita CLIP sozinho.
-12. V2 rejeita empate/ambiguidade.
-13. V2 revalida shop_id + item_id.
-14. V2 gera affiliate URL válida.
-15. V2 não cria duplicata.
-16. V2 mantém o original.
-17. V2 registra identidade antiga e nova.
-18. V2 respeita rate limit/backoff.
-19. V2 não cria pipeline paralela.
-20. V2 continua compatível com Recovery.
-
-## 31.13 Critério de segurança
-
-A V2 deve errar para o lado da não resolução, nunca para o lado de associar silenciosamente um produto diferente.
-
-Regra: dúvida → WAITING_VISION.
+```
+A completo
+↓
+B começa
+↓
+B completo
+↓
+C começa
+```
 
 ---
 
-# 32. Conclusão da investigação da API
+# 24. Critérios de sucesso do CATCH-UP histórico
 
-Há base técnica suficiente para desenvolver a Vision V2 porque productOfferV2 oferece descoberta por palavra-chave e dados de produto que permitem construir uma camada própria de reconciliação. Isso não significa que a API forneça prova automática de identidade; essa responsabilidade continua no ArmoredVision. A documentação consultada deve ser tratada como referência de viabilidade, e os campos/limites finais devem ser confirmados contra a fonte oficial no início da implementação. citeturn0search0turn0search1
+O teste será considerado concluído quando:
 
-# 33. Situação da Vision após esta correção
+- o histórico elegível for totalmente percorrido;
+- nenhum item ficar bloqueado sem motivo conhecido;
+- cada item concluído tiver identidade persistida;
+- checkpoints estiverem persistidos;
+- publicações confirmadas estiverem registradas;
+- cleanup estiver correto;
+- originais permanecerem preservados;
+- não houver cópias em filas físicas antigas;
+- não houver republicação duplicada;
+- o último ciclo concluir o histórico;
+- o Coordinator entrar automaticamente em LIVE.
 
-A V1 continua sendo a estratégia ativa. Resolução exata bem-sucedida segue para STUDIO. Falha específica de produto não encontrado agora vai para WAITING_VISION, preserva o original, não chama Studio/Hub e não vira FAILED. Nenhuma V2 é ativada automaticamente neste momento.
+O estado esperado no fim é conceitualmente:
 
-# 34. Critérios adicionais de fechamento
+```
+CATCH-UP
+   ↓
+último candidato histórico concluído
+   ↓
+checkpoints persistidos
+   ↓
+historical_complete = true
+   ↓
+LIVE
+```
 
-- [x] produto não resolvido pela V1 não é descartado;
-- [x] produto não resolvido não segue para Studio;
-- [x] produto não resolvido não segue para Hub;
-- [x] WAITING_VISION persiste no SQLite;
-- [x] erro de resolução fica auditável;
-- [x] Coordinator continua com os demais itens;
-- [x] arquitetura futura da V2 está documentada;
-- [x] V2 não cria pipeline paralela;
-- [x] V2 possui estratégia de reconciliação de identidade;
-- [x] V2 possui estratégia de ambiguidade;
-- [x] V2 possui estratégia de retry limitado;
-- [x] V2 possui plano de persistência de evidências;
-- [x] V2 possui matriz mínima de testes definida;
-- [ ] implementação da V2;
-- [ ] validação da V2 contra a API real;
-- [ ] ativação operacional da V2.
+---
+
+# 25. Regra de falha durante CATCH-UP
+
+Uma falha em um item não pode ser mascarada.
+
+O item deve permanecer rastreável no SQLite.
+
+O Coordinator deve preservar o máximo de informação possível:
+
+```
+content_id
+telegram_message_id
+state
+error
+workspace
+original
+attempts
+recovery_count
+```
+
+Não avançar o checkpoint como se o item tivesse terminado quando isso não aconteceu.
+
+---
+
+# 26. Regra de crash/restart durante CATCH-UP
+
+Em caso de:
+
+- queda do processo;
+- reinício;
+- perda de rede;
+- falha do Studio;
+- falha do Hub;
+- timeout ambíguo;
+
+o próximo startup deve usar:
+
+```
+SQLite
++
+workspace
++
+publication
++
+Telegram
+```
+
+para decidir o que fazer.
+
+Não usar apenas:
+
+```
+"qual foi o último arquivo criado?"
+```
+
+---
+
+# 27. Pós-CATCH-UP
+
+Quando o CATCH-UP completo terminar, o processo deve permanecer rodando:
+
+```
+[COORDINATOR][LIVE] ... monitoramento contínuo iniciado
+```
+
+Nesse estágio não se espera atividade constante.
+
+Pode haver:
+
+```
+horas
+ou
+dias
+```
+
+sem novo conteúdo.
+
+Isso é operação normal.
+
+Não devemos provocar atividade artificial só para produzir logs.
+
+O sistema deve permanecer aguardando mensagens posteriores aos checkpoints.
+
+---
+
+# 28. Diferença entre certificação rápida e produção
+
+## Certificação rápida
+
+```
+ARMORED_SYNC_CATCHUP_LIMIT=3
+ARMORED_CERT_CATCHUP_THEN_LIVE=1
+```
+
+Objetivo: comprovar rapidamente a transição CATCH-UP → LIVE.
+
+## CATCH-UP real
+
+```
+sem limite
+```
+
+Objetivo: processar o histórico inteiro.
+
+## LIVE real
+
+```
+histórico concluído
++
+checkpoints persistidos
++
+polling contínuo
+```
+
+Objetivo: monitoramento permanente.
+
+As variáveis de certificação não devem permanecer habilitadas por engano numa operação de histórico completo.
+
+---
+
+# 29. Regras que não devem ser reintroduzidas
+
+Não voltar a:
+
+- múltiplos Coordenators;
+- múltiplos processos Studio concorrentes;
+- fila física de vídeos;
+- pasta de Sync separada;
+- cópias intermediárias espalhadas;
+- timeout total fixo para downloads;
+- timeout de 120/180 segundos para considerar download morto;
+- republicação por “garantia”;
+- promoção de UNKNOWN para ABSENT;
+- checkpoint antes da conclusão;
+- scan completo dos 16 tópicos a cada poll curto;
+- criação de novo event loop por ciclo de Telethon;
+- login interativo no Hub;
+- caminhos absolutos dependentes da máquina.
+
+---
+
+# 30. Segurança operacional das credenciais
+
+Segredos devem ficar fora do código:
+
+- Telegram API ID/hash;
+- Bot token;
+- Shopee App ID;
+- Shopee Secret Key.
+
+A sessão Telegram existente pode ser preservada pelo reset de certificação.
+
+Nunca gravar tokens em README, testes ou commits.
+
+---
+
+# 31. Estrutura resumida do repositório
+
+```
+ArmoredCreator/
+├── ArmoredSync/
+│   └── service.py
+├── ArmoredVision/
+│   ├── service.py
+│   └── modules/v1/
+│       ├── shopee_api.py
+│       └── shopee_resolver.py
+├── ArmoredStudio/
+│   ├── analysis/
+│   │   ├── video.py
+│   │   ├── blackbar.py
+│   │   ├── banner.py
+│   │   ├── banner_analyzer.py
+│   │   ├── veo_detector.py
+│   │   ├── gemini_detector.py
+│   │   ├── export_planner.py
+│   │   ├── export_plan_validator.py
+│   │   ├── export_executor.py
+│   │   └── logger.py
+│   ├── processing/
+│   │   ├── rvc.py
+│   │   ├── tool_paths.py
+│   │   └── finalizer.py
+│   ├── assets/
+│   ├── service.py
+│   └── unified.py
+├── ArmoredHub/
+│   └── service.py
+├── armored_core/
+│   ├── coordinator.py
+│   ├── database.py
+│   ├── models.py
+│   ├── pipeline.py
+│   ├── recovery.py
+│   ├── production_contracts.py
+│   ├── services.py
+│   ├── startup_audit.py
+│   └── storage.py
+├── scripts/
+│   ├── reset_certification_lab.ps1
+│   └── retest_telegram_video_metadata.py
+├── tests/
+│   ├── e2e/
+│   └── test_*.py
+├── START_ALL.bat
+├── run_coordinator.py
+├── requirements.txt
+└── README.md
+```
+
+---
+
+# 32. Mapa mental da operação
+
+```
+START_ALL
+   │
+   ▼
+Coordinator
+   │
+   ├── Startup Audit
+   │       │
+   │       └── Recovery
+   │
+   ├── CATCH-UP
+   │       │
+   │       ├── Sync
+   │       ├── Vision
+   │       ├── Studio
+   │       ├── Hub
+   │       ├── Confirm
+   │       └── Cleanup
+   │
+   └── LIVE
+           │
+           ├── 1 tópico/ciclo
+           ├── 1 candidato
+           ├── 1 item ativo
+           └── volta ao início
+```
+
+---
+
+# 33. Definição de “fechado”
+
+A reconstrução arquitetural está em estado de certificação final quando:
+
+- a composição canônica está estável;
+- o armazenamento é único;
+- o SQLite é a verdade interna;
+- o Coordinator é a única raiz;
+- CATCH-UP e LIVE usam a mesma pipeline;
+- processamento é sequencial;
+- publicação é idempotente;
+- confirmação é independente;
+- Recovery é determinístico;
+- restart preserva estado;
+- reconexão Telegram não gera lock;
+- polling LIVE não agride o rate limit desnecessariamente.
+
+A partir deste README, o trabalho passa de **reconstrução** para **certificação do histórico completo**.
+
+---
+
+# 34. Próximo marco: CATCH-UP histórico completo
+
+O próximo teste oficial é:
+
+```
+RESET LIMPO
+      ↓
+CATCH-UP ILIMITADO
+      ↓
+~308 conteúdos elegíveis
+      ↓
+Vision
+      ↓
+Studio/RVC
+      ↓
+Hub
+      ↓
+Telegram destino
+      ↓
+confirmação
+      ↓
+cleanup
+      ↓
+checkpoints
+      ↓
+LIVE
+```
+
+Durante esse teste, o código deve ser tratado como congelado.
+
+O relatório final deve registrar:
+
+- commit exato usado;
+- quantidade de itens descobertos;
+- quantidade concluída;
+- quantidade publicada;
+- quantidade confirmada;
+- quantidade com cleanup;
+- falhas;
+- itens em recovery/WAITING_VISION;
+- checkpoints finais;
+- existência/ausência de órfãos;
+- diretórios legados encontrados;
+- estado final do Coordinator.
+
+---
+
+## Status de certificação
+
+| Área | Estado |
+|---|---|
+| Arquitetura canônica | ✅ implementada |
+| SQLite central | ✅ |
+| Storage único | ✅ |
+| Pipeline sequencial | ✅ |
+| ArmoredSync real | ✅ validado |
+| ArmoredVision V1 | ✅ integrada |
+| ArmoredStudio/RVC | ✅ validado |
+| ArmoredHub Telegram | ✅ publicação real validada |
+| Confirmação Telegram | ✅ |
+| Recovery determinístico | ✅ |
+| Restart LIVE | ✅ |
+| Wi-Fi OFF/ON | ✅ |
+| Reconexão Telethon | ✅ |
+| FloodWait por polling excessivo | ✅ corrigido |
+| CATCH-UP limitado → LIVE | ✅ comprovado |
+| CATCH-UP histórico completo (~308) | ⏳ próximo teste |
+| Novo vídeo forçado no LIVE | ⏳ indisponível com fonte de terceiros |
+| Queda física de energia | ⏳ não testada |
+| Certificação final do projeto | ⏳ após CATCH-UP histórico |
+
+---
+
+# 35. Regra final
+
+**Não alterar a arquitetura durante o CATCH-UP histórico.**
+
+Primeiro medir.
+
+Depois, somente se o teste encontrar um defeito real e reproduzível, abrir uma correção isolada com novo commit e nova certificação.
+
+O objetivo agora é simples:
+
+```
+congelar
+→ resetar laboratório
+→ coletar o histórico inteiro
+→ processar sequencialmente
+→ confirmar tudo
+→ entrar em LIVE
+→ registrar o resultado
+```
