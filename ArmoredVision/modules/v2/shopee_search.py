@@ -79,7 +79,6 @@ class ShopeeCandidateAPI:
     def _post_product_search_with_fallback(
         self,
         variables: dict[str, Any],
-        *,
         fallback_variables: dict[str, Any],
     ) -> dict[str, Any]:
         try:
