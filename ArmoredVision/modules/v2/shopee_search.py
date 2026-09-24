@@ -22,6 +22,19 @@ query ProductSearch($keyword: String, $productCatId: Int, $shopId: Int64, $itemI
 class ShopeeCandidateAPIError(RuntimeError):
     pass
 
+MINIMAL_PRODUCT_SEARCH_QUERY = """
+query ProductSearchMinimal($keyword: String, $productCatId: Int, $shopId: Int64, $itemId: Int64, $page: Int, $limit: Int) {
+  productOfferV2(keyword: $keyword, productCatId: $productCatId, shopId: $shopId, itemId: $itemId, page: $page, limit: $limit) {
+    nodes {
+      itemId productCatIds imageUrl productName shopId shopName
+      productLink offerLink priceMin priceMax
+    }
+    pageInfo { page limit hasNextPage }
+  }
+}
+"""
+
+
 class ShopeeCandidateAPI:
     """V2-only Shopee client; ArmoredVision V1 remains untouched."""
 
@@ -56,16 +69,52 @@ class ShopeeCandidateAPI:
                     time.sleep(float(os.getenv("SHOPEE_API_RETRY_BASE_SECONDS", "2")) * attempt)
         raise ShopeeCandidateAPIError(f"Falha Shopee V2: {last}")
 
+    def _post_product_search_with_fallback(
+        self,
+        variables: dict[str, Any],
+        *,
+        fallback_variables: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return self._post(PRODUCT_SEARCH_QUERY, variables)
+        except ShopeeCandidateAPIError as exc:
+            # Shopee sometimes returns GraphQL 10010 ("got null for non-null")
+            # for otherwise valid productOfferV2 filter/sort combinations.
+            # Retry with the minimal stable argument set instead of aborting V2.
+            if "10010" not in str(exc):
+                raise
+            return self._post(MINIMAL_PRODUCT_SEARCH_QUERY, fallback_variables)
+
+    @staticmethod
+    def _nodes(data: dict[str, Any]) -> list[dict[str, Any]]:
+        return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
+
     def search_products(self, keyword: str, *, page: int = 1, limit: int = 20, sort_type: int = 1) -> list[dict[str, Any]]:
+        variables = {
+            "keyword": str(keyword),
+            "page": int(page),
+            "limit": min(50, int(limit)),
+            "sortType": int(sort_type),
+        }
+        data = self._post_product_search_with_fallback(
+            variables,
+            fallback_variables={
+                "keyword": str(keyword),
+                "page": int(page),
+                "limit": min(50, int(limit)),
+            },
+        )
+        return self._nodes(data)
+
         data = self._post(PRODUCT_SEARCH_QUERY, {"keyword": str(keyword), "page": int(page), "limit": min(50, int(limit)), "sortType": int(sort_type)})
         return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
 
     def search_shop_products(self, shop_id: str, *, page: int = 1, limit: int = 50) -> list[dict[str, Any]]:
-        data = self._post(
-            PRODUCT_SEARCH_QUERY,
+        data = self._post_product_search_with_fallback(
             {"shopId": str(shop_id), "page": int(page), "limit": min(50, int(limit)), "sortType": 1},
+            {"shopId": str(shop_id), "page": int(page), "limit": min(50, int(limit))},
         )
-        return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
+        return self._nodes(data)
 
     def search_shop_products_sorted(
         self,
@@ -75,8 +124,7 @@ class ShopeeCandidateAPI:
         limit: int = 50,
         sort_type: int = 1,
     ) -> list[dict[str, Any]]:
-        data = self._post(
-            PRODUCT_SEARCH_QUERY,
+        data = self._post_product_search_with_fallback(
             {
                 "shopId": str(shop_id),
                 "listType": 5,
@@ -85,8 +133,9 @@ class ShopeeCandidateAPI:
                 "limit": min(50, int(limit)),
                 "sortType": int(sort_type),
             },
+            {"shopId": str(shop_id), "page": int(page), "limit": min(50, int(limit))},
         )
-        return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
+        return self._nodes(data)
 
     def search_category_products(
         self,
@@ -96,8 +145,7 @@ class ShopeeCandidateAPI:
         limit: int = 50,
         list_type: int = 4,
     ) -> list[dict[str, Any]]:
-        data = self._post(
-            PRODUCT_SEARCH_QUERY,
+        data = self._post_product_search_with_fallback(
             {
                 "productCatId": int(category_id),
                 "listType": int(list_type),
@@ -106,8 +154,9 @@ class ShopeeCandidateAPI:
                 "limit": min(50, int(limit)),
                 "sortType": 1,
             },
+            {"productCatId": int(category_id), "page": int(page), "limit": min(50, int(limit))},
         )
-        return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
+        return self._nodes(data)
 
     def generate_short_link(self, origin_url: str) -> str:
         q = f"""mutation {{ generateShortLink(input: {{ originUrl: {json.dumps(str(origin_url))} }}) {{ shortLink }} }}"""
@@ -126,8 +175,11 @@ class ShopeeCandidateAPI:
         return self.generate_short_link(product_link)
 
     def get_exact_product(self, shop_id: str, item_id: str) -> dict[str, Any]:
-        data = self._post(PRODUCT_SEARCH_QUERY, {"shopId": str(shop_id), "itemId": str(item_id), "page": 1, "limit": 1, "sortType": 1})
-        nodes = list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
+        data = self._post_product_search_with_fallback(
+            {"shopId": str(shop_id), "itemId": str(item_id), "page": 1, "limit": 1, "sortType": 1},
+            {"shopId": str(shop_id), "itemId": str(item_id), "page": 1, "limit": 1},
+        )
+        nodes = self._nodes(data)
         if not nodes:
             raise ShopeeCandidateAPIError(f"V2 candidato não encontrado: {shop_id}:{item_id}")
         product = nodes[0]
