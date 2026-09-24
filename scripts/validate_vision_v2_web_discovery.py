@@ -5,7 +5,7 @@ import json
 import re
 import time
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 try:
     from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -41,12 +41,23 @@ def clean(text: str | None) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def extract_page(page, url: str) -> dict:
+def pause(seconds: float, reason: str) -> None:
+    if seconds <= 0:
+        return
+    print(f"[WEB-DISCOVERY] pause {seconds:.1f}s: {reason}", flush=True)
+    time.sleep(seconds)
+
+
+def extract_page(page, url: str, delay: float = 0.0, label: str = "") -> dict:
+    if label:
+        print(f"[WEB-DISCOVERY] opening {label}: {url}", flush=True)
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    pause(delay, "DOM carregado; visualizacao da pagina")
     try:
         page.wait_for_load_state("networkidle", timeout=10000)
     except PlaywrightTimeoutError:
         pass
+    pause(delay, "pagina estabilizada; antes da extracao")
 
     title = clean(page.title())
     h1 = clean(page.locator("h1").first.inner_text(timeout=3000)) if page.locator("h1").count() else ""
@@ -106,7 +117,9 @@ def extract_page(page, url: str) -> dict:
     }
 
 
-def discover_from_search(page, query: str, pages: int, max_candidates: int) -> list[dict]:
+def discover_from_search(
+    page, query: str, pages: int, max_candidates: int, delay: float = 0.0
+) -> list[dict]:
     candidates: dict[str, dict] = {}
 
     for page_number in range(0, pages):
@@ -117,14 +130,17 @@ def discover_from_search(page, query: str, pages: int, max_candidates: int) -> l
         print(f"[WEB-DISCOVERY] search page={page_number + 1}: {query!r}", flush=True)
         try:
             page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+            pause(delay, f"busca page={page_number + 1} apos DOM")
             try:
                 page.wait_for_load_state("networkidle", timeout=8000)
             except PlaywrightTimeoutError:
                 pass
+            pause(delay, f"busca page={page_number + 1} estabilizada")
         except Exception as exc:
             print(f"[WEB-DISCOVERY] search failed: {exc}", flush=True)
             continue
 
+        found_on_page = 0
         for anchor in page.locator("a").all():
             try:
                 href = anchor.get_attribute("href") or ""
@@ -132,6 +148,8 @@ def discover_from_search(page, query: str, pages: int, max_candidates: int) -> l
                 key = product_key(absolute)
                 if not key:
                     continue
+                if key not in candidates:
+                    found_on_page += 1
                 candidates.setdefault(key, {
                     "key": key,
                     "url": absolute.split("?")[0],
@@ -141,6 +159,13 @@ def discover_from_search(page, query: str, pages: int, max_candidates: int) -> l
                 })
             except Exception:
                 pass
+
+        print(
+            f"[WEB-DISCOVERY] page={page_number + 1}: "
+            f"{found_on_page} novos candidatos; total={len(candidates)}",
+            flush=True,
+        )
+        pause(delay, f"antes da proxima busca")
 
         if len(candidates) >= max_candidates:
             break
@@ -158,13 +183,39 @@ def main() -> int:
     parser.add_argument("--pages", type=int, default=3)
     parser.add_argument("--max-candidates", type=int, default=60)
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument(
+        "--slow",
+        action="store_true",
+        help="modo visual: pausa apos navegacao e entre paginas/candidatos",
+    )
+    parser.add_argument(
+        "--delay-seconds",
+        type=float,
+        default=4.0,
+        help="segundos de pausa usados com --slow (default: 4)",
+    )
+    parser.add_argument(
+        "--keep-open",
+        action="store_true",
+        help="mantem o navegador aberto no final ate ENTER",
+    )
     parser.add_argument("--output", default="storage/vision_v2_web_discovery.json")
     args = parser.parse_args()
+
+    delay = max(0.0, args.delay_seconds) if args.slow else 0.0
+    if args.slow and not args.headed:
+        print("[WEB-DISCOVERY] --slow requer navegador visivel; ativando --headed", flush=True)
+        args.headed = True
 
     started = time.monotonic()
     print("[WEB-DISCOVERY] isolated experiment", flush=True)
     print(f"[WEB-DISCOVERY] reference: {args.url}", flush=True)
     print("[WEB-DISCOVERY] imports from V2: NONE", flush=True)
+    print(
+        f"[WEB-DISCOVERY] visual mode: {'ON' if args.slow else 'OFF'} "
+        f"(delay={delay:.1f}s)",
+        flush=True,
+    )
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=not args.headed)
@@ -179,9 +230,11 @@ def main() -> int:
         )
         page = context.new_page()
 
-        reference = extract_page(page, args.url)
+        reference = extract_page(
+            page, args.url, delay=delay, label="reference"
+        )
         candidates = discover_from_search(
-            page, args.query, args.pages, args.max_candidates
+            page, args.query, args.pages, args.max_candidates, delay=delay
         )
 
         hydrated = []
@@ -190,11 +243,27 @@ def main() -> int:
                 f"[WEB-DISCOVERY] candidate {index}/{len(candidates)}: {candidate['key']}",
                 flush=True,
             )
+            pause(delay, f"antes do candidato {index}")
             try:
-                hydrated.append(extract_page(page, candidate["url"]))
+                hydrated.append(
+                    extract_page(
+                        page,
+                        candidate["url"],
+                        delay=delay,
+                        label=f"candidate {index}/{len(candidates)}",
+                    )
+                )
             except Exception as exc:
                 candidate["page_error"] = str(exc)
                 hydrated.append(candidate)
+
+        if args.keep_open:
+            print(
+                "[WEB-DISCOVERY] navegador mantido aberto. "
+                "Inspecione visualmente e pressione ENTER para finalizar.",
+                flush=True,
+            )
+            input()
 
         browser.close()
 
@@ -211,6 +280,10 @@ def main() -> int:
         "reference": reference,
         "query": args.query,
         "pages": args.pages,
+        "max_candidates": args.max_candidates,
+        "slow": args.slow,
+        "delay_seconds": delay,
+        "keep_open": args.keep_open,
         "candidate_count": len(hydrated),
         "known_positive": {
             "expected": sorted(KNOWN_POSITIVE),
