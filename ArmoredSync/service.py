@@ -150,6 +150,7 @@ class TelegramSource:
         self._historical_limit_reached = False
         self._historical_materialization_failed = False
         self._historical_scan_exhausted = False
+        self._live_topic_index = 0
 
     @property
     def mode(self) -> str:
@@ -701,12 +702,13 @@ class TelegramSource:
             raise
 
     async def fetch_live_candidate_async(self) -> tuple[SyncMessage | None, dict[int, int]]:
-        """Discover exactly one LIVE candidate without collecting a batch.
+        """Discover one LIVE candidate using a round-robin topic poll.
 
-        The compatibility path previously called fetch_live_batch_async(limit=1),
-        which still accumulated Telegram messages into a Python list before
-        returning the first candidate. LIVE now streams the topic and returns
-        immediately when the first eligible candidate is found.
+        LIVE must not sweep every monitored topic on every poll. That pattern
+        can trigger Telegram FloodWait even when no new source video exists.
+        Poll exactly one topic per cycle, in rotation, and inspect at most the
+        two messages after the persisted checkpoint so the video + following
+        Shopee URL association remains deterministic.
         """
         source = (os.getenv("ARMORED_SYNC_SOURCE") or "-1003788989075").strip()
         source_id = (os.getenv("ARMORED_SYNC_SOURCE_ID") or source).strip()
@@ -721,77 +723,56 @@ class TelegramSource:
                     f"Nenhum tópico de fórum encontrado na fonte Telegram {source}."
                 )
 
-            for topic_id, topic_name in self._topics:
-                checkpoint = (
-                    self.db.sync_topic_checkpoint(topic_id)
-                    if self.db is not None else 0
+            topic_id, topic_name = self._topics[self._live_topic_index % len(self._topics)]
+            self._live_topic_index = (self._live_topic_index + 1) % len(self._topics)
+
+            checkpoint = (
+                self.db.sync_topic_checkpoint(topic_id)
+                if self.db is not None else 0
+            )
+
+            messages = []
+            async for message in self.reader.client.iter_messages(
+                source_ref,
+                reply_to=topic_id,
+                min_id=max(0, checkpoint),
+                reverse=True,
+                limit=2,
+            ):
+                messages.append(message)
+
+            if not messages:
+                return None, {}
+
+            for index, message in enumerate(messages):
+                message_id = int(getattr(message, "id", 0) or 0)
+                if message_id <= checkpoint or message_id in self._seen:
+                    continue
+                if not getattr(message, "video", None):
+                    continue
+
+                original_url = self._shopee_url(message)
+                if original_url is None and index + 1 < len(messages):
+                    next_message = messages[index + 1]
+                    if not getattr(next_message, "video", None):
+                        original_url = self._shopee_url(next_message)
+
+                if original_url is None:
+                    continue
+
+                return (
+                    SyncMessage(
+                        telegram_message_id=str(message_id),
+                        source_id=source_id,
+                        topic_id=topic_id,
+                        topic_name=topic_name,
+                        original_url=original_url,
+                        materialize=lambda target, m=message:
+                            self._download_to(m, target),
+                    ),
+                    {topic_id: message_id},
                 )
-                min_id = max(0, checkpoint - 1)
-                pending_video = None
 
-                async for message in self.reader.client.iter_messages(
-                    source_ref, reply_to=topic_id, min_id=min_id, reverse=True
-                ):
-                    message_id = int(getattr(message, "id", 0) or 0)
-                    if message_id <= 0:
-                        continue
-
-                    if pending_video is not None:
-                        pending_id, pending_message = pending_video
-                        if (
-                            pending_id > checkpoint
-                            and pending_id not in self._seen
-                        ):
-                            original_url = self._shopee_url(pending_message)
-                            if (
-                                original_url is None
-                                and not getattr(message, "video", None)
-                            ):
-                                original_url = self._shopee_url(message)
-                            if original_url is not None:
-                                return (
-                                    SyncMessage(
-                                        telegram_message_id=str(pending_id),
-                                        source_id=source_id,
-                                        topic_id=topic_id,
-                                        topic_name=topic_name,
-                                        original_url=original_url,
-                                        materialize=lambda target, m=pending_message:
-                                            self._download_to(m, target),
-                                    ),
-                                    {topic_id: pending_id},
-                                )
-                        pending_video = None
-
-                    if not getattr(message, "video", None):
-                        continue
-
-                    if message_id <= checkpoint or message_id in self._seen:
-                        continue
-
-                    original_url = self._shopee_url(message)
-                    if original_url is not None:
-                        return (
-                            SyncMessage(
-                                telegram_message_id=str(message_id),
-                                source_id=source_id,
-                                topic_id=topic_id,
-                                topic_name=topic_name,
-                                original_url=original_url,
-                                materialize=lambda target, m=message:
-                                    self._download_to(m, target),
-                            ),
-                            {topic_id: message_id},
-                        )
-
-                    # Keep exactly one look-ahead candidate. If the next
-                    # Telegram message contains the Shopee URL, the video is
-                    # the candidate; otherwise it is discarded and scanning
-                    # continues.
-                    pending_video = (message_id, message)
-
-            # No eligible candidate was found. Do not manufacture a checkpoint
-            # past a trailing video: the next poll may contain its URL.
             return None, {}
         except Exception:
             await self.reader.disconnect()
