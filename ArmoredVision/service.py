@@ -50,7 +50,34 @@ class ArmoredVision:
             or f"{resolved.shop_id}_{resolved.item_id}"
         )
 
-        return VisionResult(identifier, affiliate_url)
+        affiliate_urls = (affiliate_url,)
+        candidate_records: tuple[dict, ...] = ()
+        if os.getenv("ARMORED_VISION_V2_ENABLED", "0") == "1":
+            discovery = self.candidate_discovery or CandidateDiscovery()
+            try:
+                affiliate_urls, candidate_records = discovery.discover(
+                    product,
+                    original_affiliate_url=affiliate_url,
+                    original_url=original,
+                )
+            except VisionCandidateError as exc:
+                raise VisionUnresolvedError(str(exc)) from exc
+
+        publication_caption = None
+        if os.getenv("ARMORED_CAPTION_ENABLED", "0") == "1":
+            generator = self.caption_generator or CaptionGenerator()
+            try:
+                publication_caption = generator.generate(product)
+            except CaptionGenerationError as exc:
+                raise VisionUnresolvedError(str(exc)) from exc
+
+        return VisionResult(
+            identifier,
+            affiliate_url,
+            affiliate_urls=tuple(affiliate_urls),
+            publication_caption=publication_caption,
+            candidate_records=tuple(candidate_records),
+        )
 
 
 def build(**_kwargs):
