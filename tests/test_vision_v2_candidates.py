@@ -132,6 +132,22 @@ class VisionV2CandidateTests(unittest.TestCase):
         self.assertIn("quantity", evidence["attribute_conflicts"])
         self.assertIn("incompatível", reason)
 
+    def test_discovery_explores_multiple_query_families_before_capping(self):
+        os.environ["ARMORED_VISION_V2_TARGET_CANDIDATES"] = "12"
+        os.environ["ARMORED_VISION_V2_MIN_ACCEPTED"] = "2"
+        api = FakeAPI()
+        discovery = CandidateDiscovery(
+            api=api,
+            reconciler=CandidateReconciler(image_scorer=lambda *_: 1.0),
+        )
+        discovery.discover(
+            product(100, "Bancada Suspensa Barbearia 90cm Com Gaveta", 1),
+            original_affiliate_url="https://s.shopee.com.br/original",
+            original_url="https://shopee.com.br/product/1/100",
+        )
+        self.assertGreaterEqual(len(api.search_calls), 4)
+        self.assertTrue(any("90cm" in call and "gaveta" in call for call in api.search_calls))
+
     def test_discovery_keeps_original_and_caps_at_six_accepted(self):
         os.environ["ARMORED_VISION_V2_TARGET_CANDIDATES"] = "12"
         os.environ["ARMORED_VISION_V2_MIN_ACCEPTED"] = "2"
