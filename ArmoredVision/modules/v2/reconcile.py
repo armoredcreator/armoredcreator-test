@@ -90,7 +90,7 @@ class CandidateReconciler:
         for key in set(original_facts) & set(candidate_facts):
             ov, ou = original_facts[key]
             cv, cu = candidate_facts[key]
-            tolerance = max(1.0, abs(ov) * 0.01)
+            tolerance = 0.0 if key == "quantity" else abs(ov) * 0.01
             if abs(ov - cv) > tolerance or ou != cu:
                 conflicts.append(key)
             else:
