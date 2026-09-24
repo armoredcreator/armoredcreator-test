@@ -57,7 +57,14 @@ class ShopeeCandidateAPI:
         raise ShopeeCandidateAPIError(f"Falha Shopee V2: {last}")
 
     def search_products(self, keyword: str, *, page: int = 1, limit: int = 20, sort_type: int = 1) -> list[dict[str, Any]]:
-        data = self._post(PRODUCT_SEARCH_QUERY, {"keyword": str(keyword), "page": int(page), "limit": min(20, int(limit)), "sortType": int(sort_type)})
+        data = self._post(PRODUCT_SEARCH_QUERY, {"keyword": str(keyword), "page": int(page), "limit": min(50, int(limit)), "sortType": int(sort_type)})
+        return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
+
+    def search_shop_products(self, shop_id: str, *, page: int = 1, limit: int = 50) -> list[dict[str, Any]]:
+        data = self._post(
+            PRODUCT_SEARCH_QUERY,
+            {"shopId": str(shop_id), "page": int(page), "limit": min(50, int(limit)), "sortType": 1},
+        )
         return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
 
     def generate_short_link(self, origin_url: str) -> str:
