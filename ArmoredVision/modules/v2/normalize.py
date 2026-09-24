@@ -86,39 +86,39 @@ def structural_facts(text: str) -> dict[str, object]:
     if size:
         facts["size_cm"] = round(float(size[0]), 3)
 
-    door = re.search(r"(?<!\\w)(\\d+)\\s*(?:portas?|porta)\\b", normalized)
+    door = re.search(r"(?<!\w)(\d+)\s*(?:portas?|porta)\b", normalized)
     if door:
         facts["doors"] = int(door.group(1))
-    elif re.search(r"\\b(?:com|c)\\s+porta\\b|\\bporta\\s+basculhante\\b", normalized):
+    elif re.search(r"\b(?:com|c)\s+porta\b|\bporta\s+basculhante\b", normalized):
         facts["doors"] = 1
-    elif re.search(r"\\bsem\\s+portas?\\b", normalized):
+    elif re.search(r"\bsem\s+portas?\b", normalized):
         facts["doors"] = 0
 
-    drawer = re.search(r"(?<!\\w)(\\d+)\\s*(?:gavetas?|gaveta)\\b", normalized)
+    drawer = re.search(r"(?<!\w)(\d+)\s*(?:gavetas?|gaveta)\b", normalized)
     if drawer:
         facts["drawers"] = int(drawer.group(1))
-    elif re.search(r"\\b(?:com|c)\\s+gaveta\\b", normalized):
+    elif re.search(r"\b(?:com|c)\s+gaveta\b", normalized):
         facts["drawers"] = 1
-    elif re.search(r"\\bsem\\s+gavetas?\\b", normalized):
+    elif re.search(r"\bsem\s+gavetas?\b", normalized):
         facts["drawers"] = 0
 
-    if re.search(r"\\bnicho\\b", normalized):
+    if re.search(r"\bnicho\b", normalized):
         facts["niches"] = True
-    elif re.search(r"\\bsem\\s+nicho\\b", normalized):
+    elif re.search(r"\bsem\s+nicho\b", normalized):
         facts["niches"] = False
-    if re.search(r"\\bbasculhante\\b", normalized):
+    if re.search(r"\bbasculhante\b", normalized):
         facts["basculhante"] = True
-    elif re.search(r"\\b(?:sem|nao)\\s+basculhante\\b", normalized):
+    elif re.search(r"\b(?:sem|nao)\s+basculhante\b", normalized):
         facts["basculhante"] = False
-    if re.search(r"\\bripado\\b", normalized):
+    if re.search(r"\bripado\b", normalized):
         facts["ripado"] = True
-    elif re.search(r"\\b(?:sem|nao)\\s+ripado\\b", normalized):
+    elif re.search(r"\b(?:sem|nao)\s+ripado\b", normalized):
         facts["ripado"] = False
 
     model_hits = []
-    for match in re.finditer(r"\\b(?:modelo|linha)\\s+([a-z0-9][a-z0-9\\-]{2,})\\b", normalized):
+    for match in re.finditer(r"\b(?:modelo|linha)\s+([a-z0-9][a-z0-9\-]{2,})\b", normalized):
         model_hits.append(match.group(1))
-    for match in re.finditer(r"\\b(vegas|life)\\s*([0-9]+(?:[\\.,][0-9]+)?)?\\b", normalized):
+    for match in re.finditer(r"\b(vegas|life)\s*([0-9]+(?:[\.,][0-9]+)?)?\b", normalized):
         value, suffix = match.group(1), match.group(2)
         model_hits.append(value if not suffix else f"{value}{suffix}")
     facts["models"] = tuple(sorted(set(model_hits)))
