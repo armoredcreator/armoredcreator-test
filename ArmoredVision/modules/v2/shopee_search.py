@@ -56,7 +56,10 @@ class ShopeeCandidateAPI:
                     os.getenv("SHOPEE_AFFILIATE_API_URL", "https://open-api.affiliate.shopee.com.br/graphql"),
                     data=payload.encode(),
                     headers={"Content-Type": "application/json", "Authorization": f"SHA256 Credential={self.app_id},Timestamp={timestamp},Signature={signature}"},
-                    timeout=int(os.getenv("SHOPEE_API_TIMEOUT", "30")),
+                    timeout=(
+                        float(os.getenv("SHOPEE_API_CONNECT_TIMEOUT", os.getenv("SHOPEE_API_TIMEOUT", "10"))),
+                        float(os.getenv("SHOPEE_API_READ_TIMEOUT", os.getenv("SHOPEE_API_TIMEOUT", "20"))),
+                    ),
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -65,6 +68,10 @@ class ShopeeCandidateAPI:
                 return data
             except (requests.RequestException, ValueError, ShopeeCandidateAPIError) as exc:
                 last = exc
+                # GraphQL application errors are deterministic for this request;
+                # retrying the identical payload only multiplies latency.
+                if isinstance(exc, ShopeeCandidateAPIError):
+                    raise
                 if attempt < retries:
                     time.sleep(float(os.getenv("SHOPEE_API_RETRY_BASE_SECONDS", "2")) * attempt)
         raise ShopeeCandidateAPIError(f"Falha Shopee V2: {last}")
@@ -83,7 +90,12 @@ class ShopeeCandidateAPI:
             # Retry with the minimal stable argument set instead of aborting V2.
             if "10010" not in str(exc):
                 raise
-            return self._post(MINIMAL_PRODUCT_SEARCH_QUERY, fallback_variables)
+            try:
+                return self._post(MINIMAL_PRODUCT_SEARCH_QUERY, fallback_variables)
+            except ShopeeCandidateAPIError as fallback_exc:
+                raise ShopeeCandidateAPIError(
+                    f"Falha Shopee V2 após fallback mínimo: {fallback_exc}"
+                ) from fallback_exc
 
     @staticmethod
     def _nodes(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -106,8 +118,6 @@ class ShopeeCandidateAPI:
         )
         return self._nodes(data)
 
-        data = self._post(PRODUCT_SEARCH_QUERY, {"keyword": str(keyword), "page": int(page), "limit": min(50, int(limit)), "sortType": int(sort_type)})
-        return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
 
     def search_shop_products(self, shop_id: str, *, page: int = 1, limit: int = 50) -> list[dict[str, Any]]:
         data = self._post_product_search_with_fallback(
