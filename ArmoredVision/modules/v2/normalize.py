@@ -67,7 +67,7 @@ def quantity_facts(text: str) -> dict[str, tuple[float, str]]:
         facts[key] = (value, unit)
 
     count_pattern = re.compile(
-        r"(?<!\\w)(\\d+)\\s+(?:" + "|".join(sorted(COUNT_WORDS, key=len, reverse=True)) + r")\\b"
+        r"(?<!\w)(\d+)\s+(?:" + "|".join(sorted(COUNT_WORDS, key=len, reverse=True)) + r")\b"
     )
     for match in count_pattern.finditer(normalized):
         facts["quantity"] = (float(match.group(1)), "un")
