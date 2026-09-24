@@ -80,16 +80,24 @@ class CandidateDiscovery:
         # Keep a large discovery pool before reconciliation.
         raw_pool_limit = max(target * 10, 100)
         # Search multiple independent families and two pages before capping.
-        for keyword in _query_terms(str(reference.get("productName") or "")):
-            for page in (1, 2):
-                products = self.api.search_products(keyword, page=page, limit=50, sort_type=1)
-                for product in products:
-                    key = candidate_key(product)
-                    if not key[0] or not key[1]:
-                        continue
-                    if str(product.get("shopId")) == str(reference.get("shopId")) and str(product.get("itemId")) == str(reference.get("itemId")):
-                        continue
-                    records.setdefault(key, product)
+        base_terms = _query_terms(str(reference.get("productName") or ""))
+        for keyword in base_terms:
+            for sort_type in (1, 2):
+                for page in (1, 2, 3):
+                    products = self.api.search_products(keyword, page=page, limit=50, sort_type=sort_type)
+                    for product in products:
+                        key = candidate_key(product)
+                        if not key[0] or not key[1] or key == candidate_key(reference):
+                            continue
+                        records.setdefault(key, product)
+                        if len(records) >= raw_pool_limit:
+                            break
+                    if len(records) >= raw_pool_limit:
+                        break
+                if len(records) >= raw_pool_limit:
+                    break
+            if len(records) >= raw_pool_limit:
+                break
 
         # Category expansion is discovery only; category never proves identity.
         search_category = getattr(self.api, "search_category_products", None)
@@ -123,6 +131,26 @@ class CandidateDiscovery:
                 and ref_facts.get(field) != cand_facts.get(field)
             )
             return matches, conflicts
+
+        seed_candidates = []
+        for product in records.values():
+            matches, conflicts = structural_profile(product)
+            if conflicts == 0 and matches >= 2:
+                seed_candidates.append(product)
+        for seed in seed_candidates[:3]:
+            for keyword in _query_terms(str(seed.get("productName") or ""))[:6]:
+                products = self.api.search_products(keyword, page=1, limit=50, sort_type=1)
+                for product in products:
+                    key = candidate_key(product)
+                    if not key[0] or not key[1] or key == candidate_key(reference):
+                        continue
+                    records.setdefault(key, product)
+                    if len(records) >= raw_pool_limit:
+                        break
+                if len(records) >= raw_pool_limit:
+                    break
+            if len(records) >= raw_pool_limit:
+                break
 
         shop_search = getattr(self.api, "search_shop_products", None)
         if callable(shop_search):
