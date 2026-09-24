@@ -53,8 +53,8 @@ class ArmoredVision:
         affiliate_urls = (affiliate_url,)
         candidate_records: tuple[dict, ...] = ()
         if os.getenv("ARMORED_VISION_V2_ENABLED", "0") == "1":
-            discovery = self.candidate_discovery or CandidateDiscovery()
             try:
+                discovery = self.candidate_discovery or CandidateDiscovery()
                 affiliate_urls, candidate_records = discovery.discover(
                     product,
                     original_affiliate_url=affiliate_url,
@@ -62,14 +62,22 @@ class ArmoredVision:
                 )
             except VisionCandidateError as exc:
                 raise VisionUnresolvedError(str(exc)) from exc
+            except Exception as exc:
+                raise VisionUnresolvedError(
+                    f"Vision V2 indisponível: {type(exc).__name__}: {exc}"
+                ) from exc
 
         publication_caption = None
         if os.getenv("ARMORED_CAPTION_ENABLED", "0") == "1":
-            generator = self.caption_generator or CaptionGenerator()
             try:
+                generator = self.caption_generator or CaptionGenerator()
                 publication_caption = generator.generate(product)
             except CaptionGenerationError as exc:
                 raise VisionUnresolvedError(str(exc)) from exc
+            except Exception as exc:
+                raise VisionUnresolvedError(
+                    f"Caption Generator indisponível: {type(exc).__name__}: {exc}"
+                ) from exc
 
         return VisionResult(
             identifier,
