@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import sqlite3
 from pathlib import Path
 from .models import Item, State
@@ -28,6 +29,8 @@ class Database:
             result_path TEXT,
             affiliate_name TEXT,
             affiliate_url TEXT,
+            publication_caption TEXT,
+            affiliate_urls_json TEXT NOT NULL DEFAULT '[]',
             attempts INTEGER NOT NULL DEFAULT 0,
             recovery_count INTEGER NOT NULL DEFAULT 0,
             cleanup_completed INTEGER NOT NULL DEFAULT 0,
@@ -43,6 +46,32 @@ class Database:
             reason TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS vision_candidates (
+            candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_id TEXT NOT NULL,
+            candidate_order INTEGER NOT NULL,
+            source_type TEXT NOT NULL,
+            source_url TEXT,
+            product_link TEXT,
+            affiliate_url TEXT,
+            shop_id TEXT,
+            item_id TEXT,
+            product_name TEXT,
+            shop_name TEXT,
+            image_url TEXT,
+            category_ids_json TEXT NOT NULL DEFAULT '[]',
+            price_min REAL,
+            price_max REAL,
+            score REAL NOT NULL DEFAULT 0,
+            decision TEXT NOT NULL,
+            reason TEXT,
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(content_id, candidate_order)
+        );
+        CREATE INDEX IF NOT EXISTS idx_vision_candidates_content
+            ON vision_candidates(content_id);
+
         CREATE TABLE IF NOT EXISTS publications (
             content_id TEXT PRIMARY KEY,
             idempotency_key TEXT NOT NULL UNIQUE,
@@ -84,6 +113,8 @@ class Database:
                 ("topic_name", "ALTER TABLE items ADD COLUMN topic_name TEXT"),
                 ("original_url", "ALTER TABLE items ADD COLUMN original_url TEXT"),
                 ("original_sha256", "ALTER TABLE items ADD COLUMN original_sha256 TEXT"),
+                ("publication_caption", "ALTER TABLE items ADD COLUMN publication_caption TEXT"),
+                ("affiliate_urls_json", "ALTER TABLE items ADD COLUMN affiliate_urls_json TEXT NOT NULL DEFAULT '[]'"),
                 ("attempts", "ALTER TABLE items ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"),
                 ("recovery_count", "ALTER TABLE items ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0"),
                 ("cleanup_completed", "ALTER TABLE items ADD COLUMN cleanup_completed INTEGER NOT NULL DEFAULT 0"),
@@ -228,6 +259,8 @@ class Database:
             row["affiliate_name"], row["affiliate_url"],
             row["source_id"], row["original_url"], row["topic_id"], row["topic_name"],
             row["original_sha256"], row["attempts"], row["recovery_count"], bool(row["cleanup_completed"]),
+            row["publication_caption"],
+            tuple(json.loads(row["affiliate_urls_json"] or "[]")),
         )
 
     def record_attempt(self, item_id: str) -> None:
@@ -268,12 +301,70 @@ class Database:
         )
         self.conn.commit()
 
-    def set_vision(self, item_id: str, affiliate_name: str, affiliate_url: str) -> None:
+    def set_vision(
+        self,
+        item_id: str,
+        affiliate_name: str,
+        affiliate_url: str,
+        affiliate_urls=(),
+        publication_caption: str | None = None,
+        candidate_records=(),
+    ) -> None:
+        links = [str(link).strip() for link in (affiliate_urls or ()) if str(link).strip()]
+        if not links and affiliate_url:
+            links = [str(affiliate_url).strip()]
+
         self.conn.execute(
-            "UPDATE items SET affiliate_name=?, affiliate_url=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
-            (affiliate_name, affiliate_url, item_id),
+            "UPDATE items SET affiliate_name=?, affiliate_url=?, publication_caption=?, "
+            "affiliate_urls_json=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+            (
+                affiliate_name,
+                affiliate_url,
+                publication_caption,
+                json.dumps(list(dict.fromkeys(links)), ensure_ascii=False),
+                item_id,
+            ),
         )
+        self.conn.execute(
+            "DELETE FROM vision_candidates WHERE content_id=?",
+            (str(item_id),),
+        )
+        for record in candidate_records or ():
+            self.conn.execute(
+                "INSERT INTO vision_candidates("
+                "content_id,candidate_order,source_type,source_url,product_link,"
+                "affiliate_url,shop_id,item_id,product_name,shop_name,image_url,"
+                "category_ids_json,price_min,price_max,score,decision,reason,evidence_json"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    str(item_id),
+                    int(record.get("candidate_order", 0)),
+                    str(record.get("source_type", "")),
+                    str(record.get("source_url", "")),
+                    str(record.get("product_link", "")),
+                    str(record.get("affiliate_url", "")),
+                    str(record.get("shop_id", "")),
+                    str(record.get("item_id", "")),
+                    str(record.get("product_name", "")),
+                    str(record.get("shop_name", "")),
+                    str(record.get("image_url", "")),
+                    json.dumps(record.get("category_ids", []), ensure_ascii=False),
+                    record.get("price_min"),
+                    record.get("price_max"),
+                    float(record.get("score", 0.0)),
+                    str(record.get("decision", "DISCOVERED")),
+                    str(record.get("reason", "")),
+                    json.dumps(record.get("evidence", {}), ensure_ascii=False),
+                ),
+            )
         self.conn.commit()
+
+    def vision_candidates(self, item_id: str):
+        rows = self.conn.execute(
+            "SELECT * FROM vision_candidates WHERE content_id=? ORDER BY candidate_order",
+            (str(item_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def set_working(self, item_id: str, path: Path | None) -> None:
         self.conn.execute(
