@@ -46,7 +46,7 @@ class CaptionGenerator:
                 )
             raise CaptionGenerationError("GEMINI_API_KEY não configurada")
 
-        model = os.getenv("ARMORED_CAPTION_MODEL", "gemini-3.6-flash")
+        model = os.getenv("ARMORED_CAPTION_MODEL", "gemini-3.8-flash")
         prompt = """
 Crie uma legenda em português do Brasil para um vídeo curto de descoberta.
 Ela deve soar como uma reação espontânea a um detalhe visual, acabamento ou
@@ -90,7 +90,7 @@ Retorne somente as duas linhas finais, sem aspas e sem explicações.
             headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
             json={
                 "contents": [{"parts": parts}],
-                "generationConfig": {"temperature": 1.0, "maxOutputTokens": 80},
+                "generationConfig": {"maxOutputTokens": 80},
             },
             timeout=int(os.getenv("ARMORED_CAPTION_API_TIMEOUT", "30")),
         )
