@@ -1,22 +1,7 @@
-"""
-ArmoredVision V2 — final Shopee Affiliate feed capability probe.
+"""ArmoredVision V2 — isolated Shopee Affiliate feed capability probe.
 
-This is an isolated lab probe. It does not modify Vision V1/V2.
-It uses the configured BR Affiliate Open API credentials and performs only
-GraphQL schema inspection for listItemFeeds/getItemFeedData. It never prints
-the secret.
-
-Environment:
-  SHOPEE_APP_ID
-  SHOPEE_SECRET_KEY
-  SHOPEE_AFFILIATE_API_URL (optional; defaults to BR GraphQL endpoint)
-
-Usage:
-  python scripts/probe_shopee_affiliate_feeds.py
-
-The probe first asks the live GraphQL schema whether the feed operations exist.
-Only if they exist does it attempt a minimal listItemFeeds query using the
-arguments exposed by the schema. No bulk feed is downloaded.
+This probe only inspects the live BR Affiliate GraphQL feed schema and reads
+the first five rows of the first FULL feed. It does not modify Vision V1/V2.
 """
 
 from __future__ import annotations
@@ -43,15 +28,8 @@ query ProbeSchema {
     queryType {
       fields {
         name
-        args {
-          name
-          type { kind name ofType { kind name ofType { kind name } } }
-        }
-        type {
-          kind
-          name
-          ofType { kind name ofType { kind name } }
-        }
+        args { name type { kind name ofType { kind name ofType { kind name } } } }
+        type { kind name ofType { kind name ofType { kind name } } }
       }
     }
   }
@@ -73,16 +51,13 @@ def type_text(node: dict[str, Any] | None) -> str:
         return str(node["name"])
     inner = node.get("ofType")
     if inner:
-        prefix = node.get("kind", "")
-        return f"{prefix}({type_text(inner)})"
+        return f'{node.get("kind", "")}({type_text(inner)})'
     return str(node.get("kind", ""))
 
 
 def signed_post(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
     if not APP_ID or not SECRET:
-        raise RuntimeError(
-            "Missing SHOPEE_APP_ID or SHOPEE_SECRET_KEY in environment."
-        )
+        raise RuntimeError("Missing SHOPEE_APP_ID or SHOPEE_SECRET_KEY in environment.")
 
     payload = json.dumps(
         {"query": query, "variables": variables or {}},
@@ -94,31 +69,24 @@ def signed_post(query: str, variables: dict[str, Any] | None = None) -> dict[str
         (APP_ID + timestamp + payload + SECRET).encode("utf-8")
     ).hexdigest()
 
-    headers = {
-        "Authorization": (
-            f"SHA256 Credential={APP_ID}, "
-            f"Timestamp={timestamp}, Signature={signature}"
-        ),
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
     response = requests.post(
         ENDPOINT,
         data=payload.encode("utf-8"),
-        headers=headers,
+        headers={
+            "Authorization": (
+                f"SHA256 Credential={APP_ID}, "
+                f"Timestamp={timestamp}, Signature={signature}"
+            ),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
         timeout=30,
     )
-
     try:
         body = response.json()
     except Exception:
         body = {"raw": response.text[:4000]}
-
-    return {
-        "http_status": response.status_code,
-        "body": body,
-    }
+    return {"http_status": response.status_code, "body": body}
 
 
 def main() -> int:
@@ -151,26 +119,18 @@ def main() -> int:
         "graphql_errors": body.get("errors") if isinstance(body, dict) else None,
     }
 
-    fields = []
-    if isinstance(body, dict):
-        fields = (
-            body.get("data", {})
-            .get("__schema", {})
-            .get("queryType", {})
-            .get("fields", [])
-            or []
-        )
-
+    fields = (
+        body.get("data", {}).get("__schema", {}).get("queryType", {}).get("fields", [])
+        if isinstance(body, dict)
+        else []
+    )
     wanted = {"listItemFeeds", "getItemFeedData"}
     for field in fields:
         if field.get("name") in wanted:
             result["feed_operations"][field["name"]] = {
                 "return_type": type_text(field.get("type")),
                 "args": [
-                    {
-                        "name": arg.get("name"),
-                        "type": type_text(arg.get("type")),
-                    }
+                    {"name": arg.get("name"), "type": type_text(arg.get("type"))}
                     for arg in field.get("args", [])
                 ],
             }
@@ -180,20 +140,13 @@ def main() -> int:
     elif "listItemFeeds" not in result["feed_operations"]:
         result["status"] = "LIST_ITEM_FEEDS_NOT_EXPOSED"
     else:
-        # Resolve the live connection/node schema before selecting any feed fields.
         connection_query = """
         query ProbeFeedTypes {
           connection: __type(name: "ItemFeedListConnection") {
-            fields {
-              name
-              type { kind name ofType { kind name ofType { kind name } } }
-            }
+            fields { name type { kind name ofType { kind name ofType { kind name } } } }
           }
           feed: __type(name: "ItemFeed") {
-            fields {
-              name
-              type { kind name ofType { kind name ofType { kind name } } }
-            }
+            fields { name type { kind name ofType { kind name ofType { kind name } } } }
           }
         }
         """
@@ -202,23 +155,17 @@ def main() -> int:
         result["feed_type_schema"] = {
             "http_status": type_probe["http_status"],
             "graphql_errors": type_body.get("errors") if isinstance(type_body, dict) else None,
-            "connection_fields": (
-                type_body.get("data", {}).get("connection", {}).get("fields", [])
-                if isinstance(type_body, dict) else []
-            ),
-            "item_feed_fields": (
-                type_body.get("data", {}).get("feed", {}).get("fields", [])
-                if isinstance(type_body, dict) else []
-            ),
+            "connection_fields": type_body.get("data", {}).get("connection", {}).get("fields", [])
+            if isinstance(type_body, dict) else [],
+            "item_feed_fields": type_body.get("data", {}).get("feed", {}).get("fields", [])
+            if isinstance(type_body, dict) else [],
         }
 
         connection_fields = {
-            field.get("name")
-            for field in result["feed_type_schema"].get("connection_fields", [])
+            field.get("name") for field in result["feed_type_schema"].get("connection_fields", [])
         }
         item_fields = {
-            field.get("name")
-            for field in result["feed_type_schema"].get("item_feed_fields", [])
+            field.get("name") for field in result["feed_type_schema"].get("item_feed_fields", [])
         }
 
         if "feeds" in connection_fields:
@@ -244,10 +191,8 @@ def main() -> int:
                 result["feed_query"] = {
                     "http_status": feed_result["http_status"],
                     "graphql_errors": feed_body.get("errors") if isinstance(feed_body, dict) else None,
-                    "data": (
-                        feed_body.get("data", {}).get("listItemFeeds")
-                        if isinstance(feed_body, dict) else None
-                    ),
+                    "data": feed_body.get("data", {}).get("listItemFeeds")
+                    if isinstance(feed_body, dict) else None,
                     "selected_fields": preferred,
                 }
 
@@ -258,22 +203,13 @@ def main() -> int:
         data_query = """
         query ProbeFeedDataTypes {
           connection: __type(name: "ItemFeedDataConnection") {
-            fields {
-              name
-              type { kind name ofType { kind name ofType { kind name } } }
-            }
+            fields { name type { kind name ofType { kind name ofType { kind name } } } }
           }
           page: __type(name: "ItemFeedPageInfo") {
-            fields {
-              name
-              type { kind name ofType { kind name ofType { kind name } } }
-            }
+            fields { name type { kind name ofType { kind name ofType { kind name } } } }
           }
           row: __type(name: "ItemFeedDataRow") {
-            fields {
-              name
-              type { kind name ofType { kind name ofType { kind name } } }
-            }
+            fields { name type { kind name ofType { kind name ofType { kind name } } } }
           }
         }
         """
@@ -282,32 +218,40 @@ def main() -> int:
         result["datafeed_schema"] = {
             "http_status": data_schema_result["http_status"],
             "graphql_errors": data_schema_body.get("errors") if isinstance(data_schema_body, dict) else None,
-            "connection_fields": (
-                data_schema_body.get("data", {}).get("connection", {}).get("fields", [])
-                if isinstance(data_schema_body, dict) else []
-            ),
-            "page_info_fields": (
-                data_schema_body.get("data", {}).get("page", {}).get("fields", [])
-                if isinstance(data_schema_body, dict) else []
-            ),
-            "row_fields": (
-                data_schema_body.get("data", {}).get("row", {}).get("fields", [])
-                if isinstance(data_schema_body, dict) else []
-            ),
+            "connection_fields": data_schema_body.get("data", {}).get("connection", {}).get("fields", [])
+            if isinstance(data_schema_body, dict) else [],
+            "page_info_fields": data_schema_body.get("data", {}).get("page", {}).get("fields", [])
+            if isinstance(data_schema_body, dict) else [],
+            "row_fields": data_schema_body.get("data", {}).get("row", {}).get("fields", [])
+            if isinstance(data_schema_body, dict) else [],
         }
 
-        connection_data_fields = {field.get("name") for field in result["datafeed_schema"].get("connection_fields", [])}
-        row_fields = {field.get("name") for field in result["datafeed_schema"].get("row_fields", [])}
-        page_fields = {field.get("name") for field in result["datafeed_schema"].get("page_info_fields", [])}
-        if "rows" in connection_data_fields and "columns" in row_fields and result["feed_query"] and result["feed_query"].get("data", {}).get("feeds"):
-            datafeed_id = result["feed_query"]["data"]["feeds"][0].get("datafeedId")
+        connection_data_fields = {
+            field.get("name")
+            for field in result["datafeed_schema"].get("connection_fields", [])
+        }
+        row_fields = {
+            field.get("name")
+            for field in result["datafeed_schema"].get("row_fields", [])
+        }
+        page_fields = {
+            field.get("name")
+            for field in result["datafeed_schema"].get("page_info_fields", [])
+        }
+
+        feeds = (result["feed_query"] or {}).get("data", {}).get("feeds", [])
+        if "rows" in connection_data_fields and "columns" in row_fields and feeds:
+            datafeed_id = feeds[0].get("datafeedId")
             if datafeed_id:
-                page_selection = "\n".join(f"              {name}" for name in page_fields)
+                page_selection = "\n".join(
+                    f"              {name}" for name in page_fields
+                )
+                page_block = f"pageInfo {{ {page_selection} }}" if page_selection else "pageInfo"
                 datafeed_query = f"""
         query ProbeItemFeedData {{
           getItemFeedData(datafeedId: "{datafeed_id}", offset: 0, limit: 5) {{
             rows {{ columns updateType }}
-            pageInfo {{ {page_selection} }}
+            {page_block}
           }}
         }}
                 """
@@ -316,13 +260,12 @@ def main() -> int:
                 result["datafeed_probe"] = {
                     "http_status": data_result["http_status"],
                     "graphql_errors": data_body.get("errors") if isinstance(data_body, dict) else None,
-                    "data": (
-                        data_body.get("data", {}).get("getItemFeedData")
-                        if isinstance(data_body, dict) else None
-                    ),
+                    "data": data_body.get("data", {}).get("getItemFeedData")
+                    if isinstance(data_body, dict) else None,
                     "datafeed_id": datafeed_id,
-                    "selected_fields": row_selection,
-                    "container": container,
+                    "selected_fields": ["rows.columns", "rows.updateType", *[
+                        f"pageInfo.{name}" for name in page_fields
+                    ]],
                 }
 
     with open(OUTPUT, "w", encoding="utf-8") as f:
