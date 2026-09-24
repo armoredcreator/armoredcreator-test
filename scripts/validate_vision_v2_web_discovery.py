@@ -215,7 +215,8 @@ def main() -> int:
     parser.add_argument("--query", default="bancada suspensa barbearia cabeleireiro 90cm gaveta")
     parser.add_argument("--pages", type=int, default=3)
     parser.add_argument("--max-candidates", type=int, default=60)
-    parser.add_argument("--headed", action="store_true")\n    parser.add_argument("--manual-step", action="store_true", help="pausa no navegador antes de cada etapa")
+    parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--manual-step", action="store_true", help="pausa no navegador antes de cada etapa")
     parser.add_argument(
         "--slow",
         action="store_true",
@@ -235,7 +236,8 @@ def main() -> int:
     parser.add_argument("--output", default="storage/vision_v2_web_discovery.json")
     args = parser.parse_args()
 
-    delay = max(0.0, args.delay_seconds) if args.slow else 0.0\n    args_manual_step = args.manual_step
+    delay = max(0.0, args.delay_seconds) if args.slow else 0.0
+    args_manual_step = args.manual_step
     if args.slow and not args.headed:
         print("[WEB-DISCOVERY] --slow requer navegador visivel; ativando --headed", flush=True)
         args.headed = True
@@ -276,7 +278,9 @@ def main() -> int:
                 f"[WEB-DISCOVERY] candidate {index}/{len(candidates)}: {candidate['key']}",
                 flush=True,
             )
-            if args_manual_step:\n                manual_step(page, f"antes do candidato {index}")\n            pause(delay, f"antes do candidato {index}")
+            if args_manual_step:
+                manual_step(page, f"antes do candidato {index}")
+            pause(delay, f"antes do candidato {index}")
             try:
                 hydrated.append(
                     extract_page(
