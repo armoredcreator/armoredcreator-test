@@ -92,8 +92,16 @@ class CandidateDiscovery:
                     affiliate_url = ""
             if is_valid and affiliate_url:
                 try:
-                    product = self.api.get_exact_product(str(product.get("shopId")), str(product.get("itemId")))
+                    product = self.api.get_exact_product(
+                        str(product.get("shopId")),
+                        str(product.get("itemId")),
+                    )
                     is_valid, score, reason, evidence = self.reconciler.compare(reference, product)
+                    affiliate_url = str(product.get("offerLink") or "").strip()
+                    if is_valid and not affiliate_url:
+                        affiliate_url = self.api.generate_short_link(
+                            str(product.get("productLink") or "")
+                        )
                 except Exception as exc:
                     is_valid = False
                     reason = f"revalidação falhou: {type(exc).__name__}: {exc}"
