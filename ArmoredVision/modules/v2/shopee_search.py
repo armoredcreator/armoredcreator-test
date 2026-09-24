@@ -7,8 +7,8 @@ from typing import Any
 import requests
 
 PRODUCT_SEARCH_QUERY = """
-query ProductSearch($keyword: String, $productCatId: Int, $shopId: Int64, $itemId: Int64, $sortType: Int, $page: Int, $limit: Int) {
-  productOfferV2(keyword: $keyword, productCatId: $productCatId, shopId: $shopId, itemId: $itemId, sortType: $sortType, page: $page, limit: $limit) {
+query ProductSearch($keyword: String, $productCatId: Int, $shopId: Int64, $itemId: Int64, $listType: Int, $matchId: Int64, $sortType: Int, $page: Int, $limit: Int) {
+  productOfferV2(keyword: $keyword, productCatId: $productCatId, shopId: $shopId, itemId: $itemId, listType: $listType, matchId: $matchId, sortType: $sortType, page: $page, limit: $limit) {
     nodes {
       itemId commissionRate sellerCommissionRate shopeeCommissionRate commission sales
       priceMin priceMax productCatIds ratingStar priceDiscountRate imageUrl productName
@@ -67,10 +67,52 @@ class ShopeeCandidateAPI:
         )
         return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
 
+    def search_shop_products_sorted(
+        self,
+        shop_id: str,
+        *,
+        page: int = 1,
+        limit: int = 50,
+        sort_type: int = 1,
+    ) -> list[dict[str, Any]]:
+        data = self._post(
+            PRODUCT_SEARCH_QUERY,
+            {
+                "shopId": str(shop_id),
+                "listType": 5,
+                "matchId": int(shop_id),
+                "page": int(page),
+                "limit": min(50, int(limit)),
+                "sortType": int(sort_type),
+            },
+        )
+        return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
+
     def search_category_products(self, category_id: str, *, page: int = 1, limit: int = 50) -> list[dict[str, Any]]:
         data = self._post(
             PRODUCT_SEARCH_QUERY,
             {"productCatId": int(category_id), "page": int(page), "limit": min(50, int(limit)), "sortType": 1},
+        )
+        return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
+
+    def search_category_products(
+        self,
+        category_id: str,
+        *,
+        page: int = 1,
+        limit: int = 50,
+        list_type: int = 4,
+    ) -> list[dict[str, Any]]:
+        data = self._post(
+            PRODUCT_SEARCH_QUERY,
+            {
+                "productCatId": int(category_id),
+                "listType": int(list_type),
+                "matchId": int(category_id),
+                "page": int(page),
+                "limit": min(50, int(limit)),
+                "sortType": 1,
+            },
         )
         return list((data.get("data", {}).get("productOfferV2", {}) or {}).get("nodes") or [])
 
