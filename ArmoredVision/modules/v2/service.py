@@ -29,6 +29,12 @@ def _query_terms(product_name: str) -> list[str]:
         " ".join(x for x in ("bancada", size, "gaveta") if x),
         " ".join(x for x in ("bancada", "barbearia", size, "gaveta") if x),
         " ".join(x for x in ("bancada", "cabeleireiro", size, "gaveta") if x),
+        " ".join(x for x in ("bancada", "suspensa", size, "com gaveta") if x),
+        " ".join(x for x in ("bancada", size, "1 gaveta") if x),
+        " ".join(x for x in ("bancada", size, "gaveteiro") if x),
+        " ".join(x for x in ("barbearia", size, "gaveta") if x),
+        " ".join(x for x in ("cabeleireiro", size, "gaveta") if x),
+        " ".join(x for x in ("bancada", "suspensa", "gaveta") if x),
         " ".join(x for x in (" ".join(parts[:5]), size) if x),
         " ".join(words[:6]),
         " ".join(distinctive[:5]),
@@ -71,20 +77,56 @@ class CandidateDiscovery:
 
         records: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
         reference_cats = {str(x) for x in (reference.get("productCatIds") or [])}
+        # Search multiple independent families and two pages before capping.
         for keyword in _query_terms(str(reference.get("productName") or "")):
-            products = self.api.search_products(keyword, page=1, limit=50, sort_type=1)
-            for product in products:
-                key = candidate_key(product)
-                if not key[0] or not key[1]:
-                    continue
-                if str(product.get("shopId")) == str(reference.get("shopId")) and str(product.get("itemId")) == str(reference.get("itemId")):
-                    continue
-                records.setdefault(key, product)
+            for page in (1, 2):
+                products = self.api.search_products(keyword, page=page, limit=50, sort_type=1)
+                for product in products:
+                    key = candidate_key(product)
+                    if not key[0] or not key[1]:
+                        continue
+                    if str(product.get("shopId")) == str(reference.get("shopId")) and str(product.get("itemId")) == str(reference.get("itemId")):
+                        continue
+                    records.setdefault(key, product)
+
+        ref_facts = structural_facts(str(reference.get("productName") or ""))
+
+        def structural_profile(product: dict[str, Any]) -> tuple[int, int]:
+            cand_facts = structural_facts(str(product.get("productName") or ""))
+            matches = sum(
+                1 for field in ("size_cm", "doors", "drawers", "niches", "basculhante", "ripado", "models")
+                if ref_facts.get(field) is not None and cand_facts.get(field) is not None
+                and ref_facts.get(field) == cand_facts.get(field)
+            )
+            conflicts = sum(
+                1 for field in ("size_cm", "doors", "drawers", "niches", "basculhante", "ripado", "models")
+                if ref_facts.get(field) is not None and cand_facts.get(field) is not None
+                and ref_facts.get(field) != cand_facts.get(field)
+            )
+            return matches, conflicts
+
+        shop_search = getattr(self.api, "search_shop_products", None)
+        if callable(shop_search):
+            preliminary = sorted(records.values(), key=structural_profile, reverse=True)
+            shops: list[str] = []
+            for product in preliminary:
+                matches, conflicts = structural_profile(product)
+                shop_id = str(product.get("shopId") or "")
+                if matches >= 1 and conflicts == 0 and shop_id and shop_id not in shops:
+                    shops.append(shop_id)
+                if len(shops) >= 3:
+                    break
+            for shop_id in shops:
+                for page in (1, 2):
+                    for product in shop_search(shop_id, page=page, limit=50):
+                        key = candidate_key(product)
+                        if not key[0] or not key[1] or key == candidate_key(reference):
+                            continue
+                        records.setdefault(key, product)
 
         def discovery_score(product: dict[str, Any]) -> tuple[float, int, float]:
             cats = {str(x) for x in (product.get("productCatIds") or [])}
             category_overlap = len(reference_cats & cats) / max(1, len(reference_cats | cats))
-            ref_facts = structural_facts(str(reference.get("productName") or ""))
             cand_facts = structural_facts(str(product.get("productName") or ""))
             matches = sum(
                 1 for field in ("size_cm", "doors", "drawers", "niches", "basculhante", "ripado", "models")
