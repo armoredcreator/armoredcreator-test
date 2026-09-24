@@ -77,6 +77,8 @@ class CandidateDiscovery:
 
         records: "OrderedDict[tuple[str, str], dict[str, Any]]" = OrderedDict()
         reference_cats = {str(x) for x in (reference.get("productCatIds") or [])}
+        # Keep a large discovery pool before reconciliation.
+        raw_pool_limit = max(target * 10, 100)
         # Search multiple independent families and two pages before capping.
         for keyword in _query_terms(str(reference.get("productName") or "")):
             for page in (1, 2):
@@ -88,6 +90,23 @@ class CandidateDiscovery:
                     if str(product.get("shopId")) == str(reference.get("shopId")) and str(product.get("itemId")) == str(reference.get("itemId")):
                         continue
                     records.setdefault(key, product)
+
+        # Category expansion is discovery only; category never proves identity.
+        search_category = getattr(self.api, "search_category_products", None)
+        if callable(search_category):
+            for category_id in sorted(reference_cats):
+                for page in (1, 2):
+                    for product in search_category(category_id, page=page, limit=50):
+                        key = candidate_key(product)
+                        if not key[0] or not key[1] or key == candidate_key(reference):
+                            continue
+                        records.setdefault(key, product)
+                        if len(records) >= raw_pool_limit:
+                            break
+                    if len(records) >= raw_pool_limit:
+                        break
+                if len(records) >= raw_pool_limit:
+                    break
 
         ref_facts = structural_facts(str(reference.get("productName") or ""))
 
@@ -141,7 +160,21 @@ class CandidateDiscovery:
             return category_overlap * 0.55 + matches * 0.15 - conflicts * 0.30, matches, category_overlap
 
         ranked = sorted(records.values(), key=discovery_score, reverse=True)
-        records = OrderedDict((candidate_key(product), product) for product in ranked[:target])
+
+        # Explicit structural conflicts cannot crowd compatible candidates out.
+        compatible = []
+        neutral = []
+        conflicting = []
+        for product in ranked:
+            matches, conflicts = structural_profile(product)
+            if conflicts == 0 and matches >= 1:
+                compatible.append(product)
+            elif conflicts == 0:
+                neutral.append(product)
+            else:
+                conflicting.append(product)
+        shortlist = (compatible + neutral + conflicting)[: max(target * 2, target)]
+        records = OrderedDict((candidate_key(product), product) for product in shortlist)
 
 
         evaluated: list[CandidateRecord] = [
