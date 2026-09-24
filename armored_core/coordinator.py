@@ -333,13 +333,44 @@ class Coordinator:
         # resume from the persisted checkpoint.
         return processed
 
+    async def _fetch_live_candidate_with_watchdog(self, fetch_candidate):
+        """Bound one LIVE Telegram discovery operation and force a clean reconnect on stall."""
+        try:
+            timeout = max(
+                0.1,
+                float(os.getenv("ARMORED_LIVE_DISCOVERY_TIMEOUT", "30")),
+            )
+        except ValueError:
+            timeout = 30.0
+
+        try:
+            return await asyncio.wait_for(fetch_candidate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            import logging
+
+            logging.getLogger(__name__).error(
+                "[COORDINATOR][LIVE] Descoberta Telegram excedeu %.1fs; "
+                "forçando desconexão para permitir reconexão limpa no próximo ciclo.",
+                timeout,
+            )
+            try:
+                await self._release_source_connection()
+            except Exception as release_exc:
+                logging.getLogger(__name__).warning(
+                    "[COORDINATOR][LIVE] Falha ao liberar sessão após timeout: %s",
+                    release_exc,
+                )
+            raise
+
     async def run_live_once_async(self) -> list[str]:
         """Discover, materialize, release Sync, and process exactly one LIVE item."""
         source = self.source
         fetch_candidate = getattr(source, "fetch_live_candidate_async", None)
 
         if fetch_candidate is not None:
-            message, checkpoints = await fetch_candidate()
+            message, checkpoints = await self._fetch_live_candidate_with_watchdog(
+                fetch_candidate
+            )
             messages = [] if message is None else [message]
         else:
             # Compatibility for lab sources that still expose the old method.

@@ -112,6 +112,11 @@ class TelegramReader:
         except Exception:
             await self._close_client()
             raise
+        else:
+            import logging
+            logging.getLogger(__name__).info(
+                "[SYNC][TELEGRAM] sessão Telegram conectada/reconectada"
+            )
 
     async def disconnect(self):
         await self._close_client()
