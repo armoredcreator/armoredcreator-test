@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 import urllib.parse
 import urllib.request
 from html import unescape
@@ -21,7 +20,10 @@ KNOWN = {
     "382998202:23198215253",
 }
 
-PRODUCT_RE = re.compile(r"https?://(?:www\\.)?shopee\\.com\\.br/product/(\\d+)/(\\d+)", re.I)
+PRODUCT_RE = re.compile(
+    r"https?://(?:www\.)?shopee\.com\.br/product/(\d+)/(\d+)",
+    re.I,
+)
 
 def fetch(url: str) -> str:
     req = urllib.request.Request(
