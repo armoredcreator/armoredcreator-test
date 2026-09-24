@@ -1588,32 +1588,30 @@ O relatório final deve registrar:
 | Reconexão Telethon | ✅ |
 | FloodWait por polling excessivo | ✅ corrigido |
 | CATCH-UP limitado → LIVE | ✅ comprovado |
-| CATCH-UP histórico completo (~308) | ⏳ próximo teste |
+| Vision V2 | ⏳ implementação planejada antes do CATCH-UP |
+| CATCH-UP histórico completo (~308) | ⏳ aguardando Vision V2 |
 | Novo vídeo forçado no LIVE | ⏳ indisponível com fonte de terceiros |
-| Queda física de energia | ⏳ não testada |
-| Certificação final do projeto | ⏳ após CATCH-UP histórico |
+| Queda física de energia | ✅ certificada ponta a ponta |
+| Certificação final do projeto | ⏳ após Vision V2 + CATCH-UP histórico |
 
 ---
 
 # 35. Regra final
 
-**Não alterar a arquitetura durante o CATCH-UP histórico.**
+A arquitetura Core/Sync/Studio/Hub está congelada. Antes do CATCH-UP histórico completo, a única implementação funcional prevista é a ArmoredVision V2, já especificada neste README.
 
-Primeiro medir.
+Depois do merge e da validação da V2:
 
-Depois, somente se o teste encontrar um defeito real e reproduzível, abrir uma correção isolada com novo commit e nova certificação.
+1. congelar novamente o código;
+2. resetar o laboratório;
+3. executar o CATCH-UP histórico completo;
+4. processar sequencialmente;
+5. confirmar publicação e cleanup;
+6. verificar checkpoints e ausência de órfãos;
+7. confirmar entrada automática em LIVE;
+8. registrar o relatório final.
 
-O objetivo agora é simples:
-
-```
-congelar
-→ resetar laboratório
-→ coletar o histórico inteiro
-→ processar sequencialmente
-→ confirmar tudo
-→ entrar em LIVE
-→ registrar o resultado
-```
+Durante o CATCH-UP histórico, qualquer mudança de código deve ser tratada como correção bloqueadora e exigir nova certificação.
 
 
 ---
