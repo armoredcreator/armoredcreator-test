@@ -6,6 +6,7 @@ import os
 import time
 from pathlib import Path
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -123,12 +124,27 @@ def main() -> int:
     log(f"C: visual-first sobre {len(visual_pool)} candidatos")
 
     visual_rank = []
-    for index, product in enumerate(visual_pool.values(), 1):
-        score = reconciler.image_scorer(str(original.get("imageUrl") or ""), str(product.get("imageUrl") or ""))
-        if score is not None:
-            visual_rank.append((float(score), product))
-        if index % 25 == 0:
-            log(f"  imagem {index}/{len(visual_pool)} | pontuáveis={len(visual_rank)}")
+    products = list(visual_pool.values())
+    workers = max(2, min(12, int(os.getenv("ARMORED_VISION_V2_IMAGE_WORKERS", "8"))))
+    log(f"  comparação visual paralela: {workers} workers")
+
+    def score_one(product: dict):
+        score = reconciler.image_scorer(
+            str(original.get("imageUrl") or ""),
+            str(product.get("imageUrl") or ""),
+        )
+        return score, product
+
+    completed = 0
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(score_one, product) for product in products]
+        for future in as_completed(futures):
+            completed += 1
+            score, product = future.result()
+            if score is not None:
+                visual_rank.append((float(score), product))
+            if completed % 10 == 0 or completed == len(products):
+                log(f"  imagem {completed}/{len(products)} | pontuáveis={len(visual_rank)}")
 
     visual_rank.sort(key=lambda row: (-row[0], str(row[1].get("shopId") or ""), str(row[1].get("itemId") or "")))
     results = []
