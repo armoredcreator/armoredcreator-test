@@ -2448,6 +2448,32 @@ GEMINI_API_KEY=
 
 Isso permite validar primeiro o motor sem alterar o comportamento da V1 certificada.
 
+## 44.8.1 Auditoria real de candidatos
+
+O branch também inclui `scripts/validate_vision_v2_real.py`.
+
+Ele usa o link original, consulta a V1, executa a expansão V2 e imprime:
+- identidade original;
+- quantidade descoberta;
+- quantidade aceita;
+- quantidade rejeitada;
+- todos os links finais;
+- evidências registradas por candidato.
+
+A execução é somente de auditoria: não escreve no SQLite e não publica no Telegram.
+
+Exemplo PowerShell:
+
+```powershell
+$env:ARMORED_VISION_V2_TARGET_CANDIDATES="12"
+$env:ARMORED_VISION_V2_MIN_ACCEPTED="2"
+$env:ARMORED_VISION_V2_MAX_ACCEPTED="6"
+
+python .\scripts\validate_vision_v2_real.py --url "COLE_AQUI_O_LINK_ORIGINAL"
+```
+
+Credenciais Shopee já configuradas no ambiente local devem permanecer em `.env`/arquivo de credenciais e nunca no Git.
+
 ## 44.8 Status do PR #19
 
 Implementado no branch:
