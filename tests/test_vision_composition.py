@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import unittest
+
 from ArmoredVision.service import ArmoredVision
 
 
@@ -100,37 +103,41 @@ class FailingCaption:
         raise RuntimeError("gemini-temporarily-unavailable")
 
 
-def test_v2_runtime_failure_maps_to_waiting_vision(monkeypatch):
-    monkeypatch.setenv("ARMORED_VISION_V2_ENABLED", "1")
-    monkeypatch.delenv("ARMORED_CAPTION_ENABLED", raising=False)
-    vision = ArmoredVision(api=V1FakeAPI(), candidate_discovery=FailingV2())
+class VisionCompositionTests(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop("ARMORED_VISION_V2_ENABLED", None)
+        os.environ.pop("ARMORED_CAPTION_ENABLED", None)
 
-    try:
-        vision.identify(type("ItemStub", (), {
-            "original_url": "https://shopee.com.br/product/456/123",
-        })())
-    except Exception as exc:
+    def test_v2_runtime_failure_maps_to_waiting_vision(self):
+        os.environ["ARMORED_VISION_V2_ENABLED"] = "1"
+        vision = ArmoredVision(
+            api=V1FakeAPI(),
+            candidate_discovery=FailingV2(),
+        )
+
         from armored_core.services import VisionUnresolvedError
-        assert isinstance(exc, VisionUnresolvedError)
-        assert "V2 indisponível" in str(exc)
-    else:
-        raise AssertionError("V2 failure deveria virar VisionUnresolvedError")
+        with self.assertRaises(VisionUnresolvedError) as ctx:
+            vision.identify(type("ItemStub", (), {
+                "original_url": "https://shopee.com.br/product/456/123",
+            })())
 
+        self.assertIn("V2 indisponível", str(ctx.exception))
 
-def test_caption_runtime_failure_maps_to_waiting_vision(monkeypatch):
-    monkeypatch.delenv("ARMORED_VISION_V2_ENABLED", raising=False)
-    monkeypatch.setenv("ARMORED_CAPTION_ENABLED", "1")
-    vision = ArmoredVision(api=V1FakeAPI(), caption_generator=FailingCaption())
+    def test_caption_runtime_failure_maps_to_waiting_vision(self):
+        os.environ["ARMORED_CAPTION_ENABLED"] = "1"
+        vision = ArmoredVision(
+            api=V1FakeAPI(),
+            caption_generator=FailingCaption(),
+        )
 
-    try:
-        vision.identify(type("ItemStub", (), {
-            "original_url": "https://shopee.com.br/product/456/123",
-        })())
-    except Exception as exc:
         from armored_core.services import VisionUnresolvedError
-        assert isinstance(exc, VisionUnresolvedError)
-        assert "Caption Generator indisponível" in str(exc)
-    else:
-        raise AssertionError("Caption failure deveria virar VisionUnresolvedError")
+        with self.assertRaises(VisionUnresolvedError) as ctx:
+            vision.identify(type("ItemStub", (), {
+                "original_url": "https://shopee.com.br/product/456/123",
+            })())
+
+        self.assertIn("Caption Generator indisponível", str(ctx.exception))
 
 
+if __name__ == "__main__":
+    unittest.main()
