@@ -154,13 +154,13 @@ class CandidateDiscovery:
                         records.setdefault(key, product)
                         if len(records) >= raw_pool_limit:
                             break
-                    if len(records) >= raw_pool_limit:
+                    if len(records) >= raw_pool_limit and keyword not in identity_terms:
                         break
-                if len(records) >= raw_pool_limit:
+                if len(records) >= raw_pool_limit and keyword not in identity_terms:
                     break
-            if len(records) >= raw_pool_limit:
-                # The anchor terms were deliberately placed first. Once the
-                # pool is full, remaining broad discovery is unnecessary.
+            if len(records) >= raw_pool_limit and keyword not in identity_terms:
+                # Identity anchors are always exhausted before broad queries
+                # are allowed to stop on the pool cap.
                 break
 
         # Category expansion is discovery only; category never proves identity.
