@@ -219,7 +219,7 @@ def main() -> int:
             for field in result["feed_type_schema"].get("item_feed_fields", [])
         }
 
-        if "nodes" in connection_fields:
+        if "feeds" in connection_fields:
             preferred = [
                 name for name in (
                     "datafeedId", "feedMode", "createdAt", "updatedAt",
@@ -231,7 +231,7 @@ def main() -> int:
                 feed_query = f"""
         query ProbeItemFeeds {{
           listItemFeeds(feedMode: FULL) {{
-            nodes {{
+            feeds {{
 {selection}
             }}
           }}
