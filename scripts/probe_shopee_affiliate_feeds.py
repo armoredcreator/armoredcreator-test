@@ -24,7 +24,7 @@ SECRET = os.getenv("SHOPEE_SECRET_KEY", "")
 OUTPUT = "storage/vision_v2_source_lab/shopee_affiliate_feeds_probe.json"
 PAGE_LIMIT = 200
 MAX_ROWS_PER_FEED = 10000
-PRODUCT_RE = re.compile(r"/product/(\\d+)/(\\d+)")
+PRODUCT_RE = re.compile(r"/product/(\d+)/(\d+)")
 
 INTROSPECTION = """
 query ProbeSchema {
