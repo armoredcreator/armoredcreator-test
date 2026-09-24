@@ -128,6 +128,8 @@ def main() -> int:
         "credentials_present": bool(APP_ID and SECRET),
         "introspection": None,
         "feed_operations": {},
+        "feed_type_schema": {},
+        "feed_query": None,
         "benchmark_policy": {
             "known_ids": sorted(KNOWN),
             "ids_are_labels_only": True,
@@ -176,7 +178,80 @@ def main() -> int:
     elif "listItemFeeds" not in result["feed_operations"]:
         result["status"] = "LIST_ITEM_FEEDS_NOT_EXPOSED"
     else:
-        result["status"] = "FEED_SCHEMA_VISIBLE"
+        # Resolve the live connection/node schema before selecting any feed fields.
+        connection_query = """
+        query ProbeFeedTypes {
+          connection: __type(name: "ItemFeedListConnection") {
+            fields {
+              name
+              type { kind name ofType { kind name ofType { kind name } } }
+            }
+          }
+          feed: __type(name: "ItemFeed") {
+            fields {
+              name
+              type { kind name ofType { kind name ofType { kind name } } }
+            }
+          }
+        }
+        """
+        type_probe = signed_post(connection_query)
+        type_body = type_probe["body"]
+        result["feed_type_schema"] = {
+            "http_status": type_probe["http_status"],
+            "graphql_errors": type_body.get("errors") if isinstance(type_body, dict) else None,
+            "connection_fields": (
+                type_body.get("data", {}).get("connection", {}).get("fields", [])
+                if isinstance(type_body, dict) else []
+            ),
+            "item_feed_fields": (
+                type_body.get("data", {}).get("feed", {}).get("fields", [])
+                if isinstance(type_body, dict) else []
+            ),
+        }
+
+        connection_fields = {
+            field.get("name")
+            for field in result["feed_type_schema"].get("connection_fields", [])
+        }
+        item_fields = {
+            field.get("name")
+            for field in result["feed_type_schema"].get("item_feed_fields", [])
+        }
+
+        if "nodes" in connection_fields:
+            preferred = [
+                name for name in (
+                    "datafeedId", "feedMode", "createdAt", "updatedAt",
+                    "status", "fileSize", "itemCount"
+                ) if name in item_fields
+            ]
+            if preferred:
+                selection = "\n".join(f"          {name}" for name in preferred)
+                feed_query = f"""
+        query ProbeItemFeeds {{
+          listItemFeeds(feedMode: FULL) {{
+            nodes {{
+{selection}
+            }}
+          }}
+        }}
+                """
+                feed_result = signed_post(feed_query)
+                feed_body = feed_result["body"]
+                result["feed_query"] = {
+                    "http_status": feed_result["http_status"],
+                    "graphql_errors": feed_body.get("errors") if isinstance(feed_body, dict) else None,
+                    "data": (
+                        feed_body.get("data", {}).get("listItemFeeds")
+                        if isinstance(feed_body, dict) else None
+                    ),
+                    "selected_fields": preferred,
+                }
+
+        result["status"] = (
+            "FEED_QUERY_EXECUTED" if result["feed_query"] else "FEED_SCHEMA_VISIBLE"
+        )
 
     with open(OUTPUT, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
