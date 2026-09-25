@@ -25,7 +25,7 @@ Este README descreve o estado do código no **main após o merge da correção d
 
 ### Regra de congelamento
 
-A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A única camada adicional ativa antes do CATCH-UP é o **Caption Generator**, que produz legenda + hashtags após a resolução V1. A descoberta de candidatos V2 não faz parte do fluxo operacional atual.
+A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A **Caption** está integrada estruturalmente à V1, mas permanece desativada no rollout até a auditoria real de saída. A descoberta de candidatos V2 não faz parte do fluxo operacional atual.
 
 ### Decisão operacional — 25/09/2026
 
