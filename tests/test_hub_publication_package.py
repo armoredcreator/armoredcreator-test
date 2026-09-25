@@ -8,6 +8,7 @@ from armored_core.database import Database
 
 from ArmoredHub.service import ArmoredHub
 from armored_core.models import Item, State
+from armored_core.services import PublicationUnknownError
 
 
 def make_item(**kwargs):
@@ -71,6 +72,35 @@ class HubPublicationPackageTests(unittest.TestCase):
                     hub.check_publication(item),
                     __import__("armored_core.models", fromlist=["PublicationCheck"]).PublicationCheck.UNKNOWN,
                 )
+            finally:
+                db.close()
+
+    def test_ambiguous_send_is_not_republished_after_recovery(self):
+        with TemporaryDirectory() as td:
+            db = Database(Path(td) / "armoredcreator.db")
+            try:
+                item = make_item()
+                hub = ArmoredHub(Path(td), db)
+                calls = []
+
+                def fake_publish(_item):
+                    calls.append("send")
+                    db.publication_send_started(item.item_id)
+                    raise PublicationUnknownError("simulated ambiguous Telegram send")
+
+                hub._publish_telegram = fake_publish
+                hub._find_telegram_publications = lambda _item: []
+
+                with self.assertRaises(PublicationUnknownError):
+                    hub.publish_once(item)
+
+                with self.assertRaises(PublicationUnknownError):
+                    hub.publish_once(item)
+
+                self.assertEqual(calls, ["send"])
+                record = db.publication(item.item_id)
+                self.assertIsNotNone(record)
+                self.assertEqual(record["verification_status"], "SENT_UNVERIFIED")
             finally:
                 db.close()
 
