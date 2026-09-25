@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import unittest
 
-from ArmoredVision.modules.caption.generator import CaptionGenerator
-from ArmoredVision.modules.caption.policy import CaptionPolicyError, validate_caption
+from ArmoredVision.modules.v1.caption.generator import CaptionGenerator
+from ArmoredVision.modules.v1.caption.policy import CaptionPolicyError, validate_caption
 
 
 class CaptionPolicyTests(unittest.TestCase):
