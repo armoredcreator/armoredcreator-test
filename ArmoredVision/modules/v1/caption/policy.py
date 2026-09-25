@@ -42,8 +42,14 @@ def _meaningful_product_token_sequences(product_name: str) -> set[str]:
     ]
     sequences: set[str] = set()
     for size in range(2, len(tokens) + 1):
-        for start in range(len(tokens) - size + 1):
-            sequences.add("".join(tokens[start:start + size]))
+        def add_subsequences(start: int, chosen: list[str]) -> None:
+            if len(chosen) == size:
+                sequences.add("".join(chosen))
+                return
+            for index in range(start, len(tokens)):
+                add_subsequences(index + 1, chosen + [tokens[index]])
+
+        add_subsequences(0, [])
     return sequences
 
 def validate_caption(caption: str, *, product_name: str = "") -> str:
