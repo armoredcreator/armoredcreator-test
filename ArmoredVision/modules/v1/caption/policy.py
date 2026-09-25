@@ -63,9 +63,13 @@ def validate_caption(caption: str, *, product_name: str = "") -> str:
         raise CaptionPolicyError("texto principal deve conter 2 ou 3 palavras")
 
     product_tokens = _meaningful_product_tokens(product_name)
-    main_tokens = set(re.findall(r"[a-z0-9]+", _fold(EMOJI_RE.sub("", main))))
-    overlap = main_tokens & product_tokens
-    if len(overlap) >= 2 or (product_tokens and len(overlap) / len(product_tokens) >= 0.60):
+    caption_tokens = set(re.findall(r"[a-z0-9]+", _fold(EMOJI_RE.sub("", text))))
+    overlap = caption_tokens & product_tokens
+    if overlap:
         raise CaptionPolicyError("legenda menciona explicitamente o produto")
+
+    hashtag_tokens = {_fold(tag) for tag in hashtags}
+    if hashtag_tokens & product_tokens:
+        raise CaptionPolicyError("hashtag menciona explicitamente o produto")
 
     return f"{main}\n{' '.join('#' + tag for tag in hashtags)}"
