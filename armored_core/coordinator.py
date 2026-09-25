@@ -256,6 +256,28 @@ class Coordinator:
                     self.run(item_id)
                     current = self.db.get(item_id)
 
+                    # WAITING_VISION is an unresolved candidate, not a successful
+                    # pipeline attempt. Re-enter the durable recovery path once.
+                    # If Vision remains unresolved, stop CATCH-UP here: the current
+                    # candidate owns the checkpoint and the next candidate must not
+                    # be silently consumed.
+                    if current.state == State.WAITING_VISION:
+                        try:
+                            self.recover(item_id)
+                        except Exception as recovery_exc:
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                "[COORDINATOR][CATCH-UP] Item %s permanece em WAITING_VISION; "
+                                "não avançará para o próximo candidato: %s",
+                                item_id,
+                                recovery_exc,
+                            )
+                        current = self.db.get(item_id)
+                        if current.state == State.WAITING_VISION:
+                            processed.append(item_id)
+                            self._last_catch_up_completed_count = completed_count
+                            return processed
+
                     # RECOVERY is an active unresolved state. Never allow
                     # CATCH-UP to advance to another Telegram candidate while
                     # publication reality is still ambiguous. Reconcile the
@@ -608,8 +630,9 @@ class Coordinator:
 
     def recover_pending(self):
         states = (
-            State.RECEIVED.value, State.VISION.value, State.STUDIO.value,
-            State.PUBLISHING.value, State.RECOVERY.value, State.FAILED.value,
+            State.RECEIVED.value, State.VISION.value, State.WAITING_VISION.value,
+            State.STUDIO.value, State.PUBLISHING.value, State.RECOVERY.value,
+            State.FAILED.value,
         )
         placeholders = ",".join("?" for _ in states)
         rows = self.db.conn.execute(
@@ -645,7 +668,13 @@ class Coordinator:
                     continue
             try:
                 self.recover(item_id)
+                current = self.db.get(item_id)
                 recovered.append(item_id)
+                if current.state in (State.WAITING_VISION, State.RECOVERY):
+                    # Startup recovery is ordered. An unresolved current item
+                    # blocks progression to later candidates for the same reason
+                    # CATCH-UP is blocked: its checkpoint must remain authoritative.
+                    break
             except Exception as exc:
                 # A single unrecoverable item must not terminate the Coordinator.
                 # Pipeline failures are persisted in SQLite; startup continues
