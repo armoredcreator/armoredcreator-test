@@ -32,7 +32,7 @@ class V1FakeAPI:
 class FakeCaption:
     def generate(self, product):
         assert product["productName"] == "Produto Exemplo 1L"
-        return "Olha esse charme ✨\\n#casa"
+        return "Olha esse charme ✨\n#casa"
 
 
 def test_v1_contract_remains_usable_when_new_layers_are_disabled(monkeypatch):
@@ -68,7 +68,7 @@ def test_v2_and_caption_are_composed_after_v1_without_changing_v1(monkeypatch):
 
     assert result.affiliate_url == "https://s.shopee.com.br/original"
     assert result.affiliate_urls == ("https://s.shopee.com.br/original",)
-    assert result.publication_caption == "Olha esse charme ✨\\n#casa"
+    assert result.publication_caption == "Olha esse charme ✨\n#casa"
     assert result.candidate_records == ()
     assert api.exact_calls == [("456", "123")]
 
