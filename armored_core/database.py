@@ -416,6 +416,15 @@ class Database:
         )
         self.conn.commit()
 
+    def publication_send_started(self, item_id: str) -> None:
+        """Persist that the external Telegram send has entered its side-effect window."""
+        self.conn.execute(
+            "UPDATE publications SET verification_status='SENT_UNVERIFIED', updated_at=CURRENT_TIMESTAMP "
+            "WHERE content_id=?",
+            (str(item_id),),
+        )
+        self.conn.commit()
+
     def publication_message_sent(self, item_id: str, message_id: str) -> None:
         """Persist the Telegram message ID before any post-send failure window."""
         self.conn.execute(
