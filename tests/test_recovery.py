@@ -28,6 +28,18 @@ class CrashStudio(Studio):
     def process(self, item):
         raise RuntimeError("simulated studio crash")
 
+
+class VisionWaitThenResolve:
+    def __init__(self):
+        self.calls = 0
+
+    def identify(self, item):
+        self.calls += 1
+        if self.calls == 1:
+            from armored_core.services import VisionUnresolvedError
+            raise VisionUnresolvedError("simulated unresolved vision")
+        return VisionResult("recover-final", "https://example.invalid/a")
+
 class Publisher:
     def __init__(self):
         self.ids = set()
@@ -55,6 +67,24 @@ class RecoveryTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
         self.td.cleanup()
+
+    def test_recovery_retries_waiting_vision(self):
+        vision = VisionWaitThenResolve()
+        pipeline = Pipeline(self.db, self.storage, vision, Studio(self.storage), self.pub)
+
+        # First Vision attempt is unresolved and must become a durable
+        # WAITING_VISION state rather than being treated as completed.
+        pipeline.run(self.item)
+        self.assertEqual(self.db.get(self.item).state, State.WAITING_VISION)
+
+        # Recovery owns the retry. It must re-enter VISION and continue the
+        # same item through Studio and publication when Vision resolves.
+        Recovery(self.db, self.storage, vision, Studio(self.storage), self.pub).reconcile(self.item)
+
+        row = self.db.get(self.item)
+        self.assertEqual(row.state, State.PUBLISHED)
+        self.assertEqual(vision.calls, 2)
+        self.assertEqual(self.pub.count, 1)
 
     def test_rebuilds_after_studio_crash(self):
         with self.assertRaises(RuntimeError):
