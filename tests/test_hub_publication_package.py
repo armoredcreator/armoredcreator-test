@@ -86,7 +86,7 @@ class HubPublicationPackageTests(unittest.TestCase):
                 hub = ArmoredHub(Path(td), db)
                 calls = []
 
-                def fake_publish(_item):
+                def fake_publish(_item, _output):
                     calls.append("send")
                     db.publication_send_started(item.item_id)
                     raise PublicationUnknownError("simulated ambiguous Telegram send")
