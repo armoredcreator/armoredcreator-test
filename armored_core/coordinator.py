@@ -36,14 +36,19 @@ class Coordinator:
     @classmethod
     def build(cls, root: Path | None = None, bindings: Any | None = None):
         storage = Storage(root)
-        for credential_file in (
-            storage.root / "credentials" / "telegram" / "user.env",
-            storage.root / "credentials" / "telegram" / "bot.env",
-            storage.root / "credentials" / "shopee" / "affiliate.env",
-            storage.root / ".env",
-        ):
-            if credential_file.exists():
-                load_dotenv(credential_file, override=False)
+        # Project-local credential source of truth.
+        # Secrets live only in credentials/project.env; runtime modules continue
+        # consuming them through os.getenv() and do not know the file location.
+        project_credentials = storage.root / "credentials" / "project.env"
+        if project_credentials.exists():
+            load_dotenv(project_credentials, override=True)
+
+        # .env contains project configuration, not secrets. Keep externally
+        # supplied configuration compatible while preventing it from replacing
+        # the project credential source above.
+        project_config = storage.root / ".env"
+        if project_config.exists():
+            load_dotenv(project_config, override=False)
 
         db = Database(storage.database / "armoredcreator.db")
         if bindings is None:
