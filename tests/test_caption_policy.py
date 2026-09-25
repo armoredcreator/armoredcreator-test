@@ -27,13 +27,20 @@ class CaptionPolicyTests(unittest.TestCase):
             "Olha esse charme 😍✨\n#casa",
             "Olha esse charme ✨\n#casa #rotina #achadinhos",
             "Olha esse charme demais ✨\n#casa",
-            "Batom lindo ✨\n#beleza",
-            "Olha isso ✨\n#batommatte",
         )
         for caption in invalid:
             with self.subTest(caption=caption):
                 with self.assertRaises(CaptionPolicyError):
                     validate_caption(caption, product_name="Organizador de cozinha")
+
+        product_leaks = (
+            ("Batom lindo ✨\n#beleza", "Batom Matte Vermelho"),
+            ("Olha isso ✨\n#batommatte", "Batom Matte Vermelho"),
+        )
+        for caption, product_name in product_leaks:
+            with self.subTest(caption=caption):
+                with self.assertRaises(CaptionPolicyError):
+                    validate_caption(caption, product_name=product_name)
 
     def test_generator_falls_back_when_gemini_times_out(self):
         os.environ["ARMORED_CAPTION_ENABLED"] = "1"
