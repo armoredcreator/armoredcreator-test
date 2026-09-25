@@ -13,6 +13,14 @@ class Recovery:
     def reconcile(self, item_id: int) -> None:
         item = self.db.get(item_id)
 
+        # WAITING_VISION is not a completed outcome. It is a durable unresolved
+        # Vision stage and must re-enter the same recovery path used by other
+        # interrupted stages. Recovery either advances the item or leaves it
+        # WAITING_VISION so the Coordinator can block CATCH-UP deterministically.
+        if item.state == State.WAITING_VISION:
+            self.db.transition(item_id, State.VISION, "recovery-retry-waiting-vision")
+            item = self.db.get(item_id)
+
         if item.state == State.PUBLISHED:
             self.pipeline.cleanup(item_id)
             return
