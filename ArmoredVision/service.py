@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from armored_core.models import Item
@@ -8,7 +7,6 @@ from armored_core.services import VisionResult, VisionUnresolvedError
 
 from .modules.v1.shopee_api import ShopeeAffiliateAPI, ShopeeProductNotFoundError
 from .modules.v1.shopee_resolver import resolve_short_url
-from .modules.v2.service import CandidateDiscovery, VisionCandidateError
 from .modules.v1.caption.generator import CaptionGenerator, CaptionGenerationError
 
 
@@ -21,6 +19,8 @@ class ArmoredVision:
 
     def __init__(self, api=None, candidate_discovery=None, caption_generator=None):
         self.api = api
+        # Kept only for constructor compatibility with the frozen V2 surface.
+        # Vision V2 is intentionally not part of the active V1 pipeline.
         self.candidate_discovery = candidate_discovery
         self.caption_generator = caption_generator
 
@@ -36,7 +36,7 @@ class ArmoredVision:
         except ShopeeProductNotFoundError as exc:
             raise VisionUnresolvedError(
                 f"Vision V1 não resolveu o produto Shopee {resolved.shop_id}:{resolved.item_id}; "
-                "item preservado para futura reconciliação Vision V2"
+                "item preservado para futura resolução"
             ) from exc
 
         affiliate_url = str(product.get("offerLink") or "").strip()
@@ -50,22 +50,10 @@ class ArmoredVision:
             or f"{resolved.shop_id}_{resolved.item_id}"
         )
 
+        # V1 remains the sole authority for product identity and affiliate URL.
+        # Vision V2 is frozen and is deliberately not invoked here.
         affiliate_urls = (affiliate_url,)
         candidate_records: tuple[dict, ...] = ()
-        if os.getenv("ARMORED_VISION_V2_ENABLED", "0") == "1":
-            try:
-                discovery = self.candidate_discovery or CandidateDiscovery()
-                affiliate_urls, candidate_records = discovery.discover(
-                    product,
-                    original_affiliate_url=affiliate_url,
-                    original_url=original,
-                )
-            except VisionCandidateError as exc:
-                raise VisionUnresolvedError(str(exc)) from exc
-            except Exception as exc:
-                raise VisionUnresolvedError(
-                    f"Vision V2 indisponível: {type(exc).__name__}: {exc}"
-                ) from exc
 
         publication_caption = None
         if os.getenv("ARMORED_CAPTION_ENABLED", "0") == "1":
