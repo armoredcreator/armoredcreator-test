@@ -2439,7 +2439,7 @@ O Generator possui integração opcional com Gemini e um fallback determinístic
 
 ## 44.6 Pacote enviado pelo Hub
 
-Com a Caption ativa e a descoberta V2 congelada:
+Com a Caption integrada à V1 e a descoberta V2 congelada:
 
 ```text
 VÍDEO
@@ -2457,7 +2457,7 @@ Publicações legadas que possuem apenas o link continuam compatíveis com a ver
 
 ## 44.7 Configuração da Caption
 
-A Caption entra ativa no launcher e no `.env.example`. A descoberta/reconciliação de candidatos continua desativada:
+A Caption está integrada à V1, mas permanece desativada no launcher até a auditoria real. A descoberta/reconciliação de candidatos continua desativada:
 
 ```text
 ARMORED_VISION_V2_ENABLED=0
@@ -2465,7 +2465,7 @@ ARMORED_VISION_V2_TARGET_CANDIDATES=12
 ARMORED_VISION_V2_MIN_ACCEPTED=2
 ARMORED_VISION_V2_MAX_ACCEPTED=6
 
-ARMORED_CAPTION_ENABLED=1
+ARMORED_CAPTION_ENABLED=0
 ARMORED_CAPTION_MODEL=gemini-3.8-flash
 ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK=1
 GEMINI_API_KEY=
