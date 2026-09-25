@@ -356,7 +356,7 @@ class SyncLifecycleTests(unittest.TestCase):
             coordinator.close()
 
 
-    def test_different_telegram_ids_with_same_shopee_url_are_idempotent(self):
+    def test_different_telegram_ids_with_same_shopee_url_remain_distinct(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
@@ -381,12 +381,13 @@ class SyncLifecycleTests(unittest.TestCase):
                 original_url="https://s.shopee.com.br/AUuG5phvYW",
             )
 
-            self.assertEqual(first, second)
+            self.assertNotEqual(first, second)
             self.assertEqual(
                 len(db.conn.execute("SELECT * FROM items").fetchall()),
-                1,
+                2,
             )
             self.assertEqual(db.get(first).telegram_message_id, "100")
+            self.assertEqual(db.get(second).telegram_message_id, "101")
             db.close()
 
 
