@@ -5,7 +5,7 @@
 
 ## 1. Estado do projeto
 
-Este README descreve o estado do código no **main após o merge da correção de RVC/Recovery do PR #16** e consolida a certificação ponta a ponta realizada até **24/09/2026**. Ele é a referência operacional para a certificação final. A única parte da antiga Vision V2 mantida ativa é o **Caption Generator** (legenda + hashtags); descoberta/reconciliação de candidatos permanece congelada.
+Este README descreve o estado do código no **main após o merge da correção de RVC/Recovery do PR #16** e consolida a certificação ponta a ponta realizada até **24/09/2026**. Ele é a referência operacional para a certificação final. **Caption Generator pertence à Vision V1** (legenda + hashtags); descoberta/reconciliação de candidatos da Vision V2 permanece congelada.
 
 ### Marco atual
 
@@ -2315,7 +2315,7 @@ Vision V2
 └── validação real Shopee pendente
 
 CATCH-UP histórico ~308
-└── aguardando validação real da V2 + Caption
+└── V2 congelada; Caption V1 ativa
 
 Novo candidato LIVE
 └── teste manual limitado pela fonte de terceiros
@@ -2528,7 +2528,7 @@ link afiliado
 A V1 continua sendo a única fonte de identidade e de link do produto.
 
 
-# 45. Fase de validação real — Vision V2 + Caption
+# 45. Validação futura da Vision V2
 
 A fundação já está no `main`. A próxima etapa **não é o CATCH-UP**.
 
@@ -2556,7 +2556,7 @@ A auditoria deve responder, com dados reais:
 9. O pacote final fica pronto para o Hub sem geração adicional?
 ```
 
-Somente depois dessa auditoria e dos ajustes necessários a V2 + Caption devem ser ativadas para o histórico.
+A Vision V2 só deverá ser ativada em uma fase futura, após auditoria própria. A Caption V1 já está ativa e não depende da ativação da V2.
 
 
 # 46. Regra de afiliado — URL de entrada nunca é URL final (24/09/2026)
