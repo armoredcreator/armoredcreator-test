@@ -27,6 +27,8 @@ class CaptionPolicyTests(unittest.TestCase):
             "Olha esse charme 😍✨\n#casa",
             "Olha esse charme ✨\n#casa #rotina #achadinhos",
             "Olha esse charme demais ✨\n#casa",
+            "Batom lindo ✨\n#beleza",
+            "Olha isso ✨\n#batommatte",
         )
         for caption in invalid:
             with self.subTest(caption=caption):
