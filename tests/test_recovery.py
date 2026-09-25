@@ -108,6 +108,32 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
         self.assertEqual(self.pub.count, 1)
 
+    def test_unknown_publication_never_resumes_durable_result(self):
+        class AmbiguousPublisher(Publisher):
+            def check_publication(self, item):
+                return PublicationCheck.UNKNOWN
+
+        publisher = AmbiguousPublisher()
+        vision = Vision()
+        studio = Studio(self.storage)
+
+        # First pass reaches publication and becomes RECOVERY after an
+        # ambiguous Telegram outcome, while the durable result remains.
+        pipeline = Pipeline(self.db, self.storage, vision, studio, publisher)
+        pipeline.run(self.item)
+        row = self.db.get(self.item)
+        self.assertEqual(row.state, State.RECOVERY)
+        self.assertTrue(row.result_path.is_file())
+        self.assertEqual(publisher.count, 0)
+
+        # Recovery must stop on UNKNOWN. It must never fall through to the
+        # durable-result path and send the same result a second time.
+        with self.assertRaisesRegex(RuntimeError, "publication-check-uncertain-recovery-stopped"):
+            Recovery(self.db, self.storage, vision, studio, publisher).reconcile(self.item)
+
+        self.assertEqual(self.db.get(self.item).state, State.RECOVERY)
+        self.assertEqual(publisher.count, 0)
+
     def test_cleanup_is_idempotent(self):
         Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub).run(self.item)
         Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item)
