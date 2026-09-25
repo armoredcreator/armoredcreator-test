@@ -72,16 +72,6 @@ class SyncService:
             "SELECT content_id, original_path, original_url FROM items WHERE telegram_message_id=?",
             (message.telegram_message_id,),
         ).fetchone()
-        # Telegram message IDs are not a content identity: the same Shopee
-        # affiliate URL can arrive in more than one Telegram message. Reuse
-        # the first durable item so the publication idempotency key remains
-        # tied to one content item and the duplicate never reaches Hub.
-        if existing is None and message.original_url:
-            existing = self.db.conn.execute(
-                "SELECT content_id, original_path, original_url FROM items "
-                "WHERE original_url=? ORDER BY rowid LIMIT 1",
-                (message.original_url,),
-            ).fetchone()
         if existing:
             item_id = str(existing["content_id"])
             stored_path = str(existing["original_path"] or "").strip()
