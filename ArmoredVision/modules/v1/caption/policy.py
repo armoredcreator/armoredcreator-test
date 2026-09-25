@@ -30,6 +30,22 @@ def _meaningful_product_tokens(product_name: str) -> set[str]:
         if token not in stop and len(token) >= 4
     }
 
+
+def _meaningful_product_token_sequences(product_name: str) -> set[str]:
+    stop = {
+        "a","as","ao","aos","com","da","das","de","do","dos","e","em",
+        "para","por","sem","um","uma","kit","conjunto","original","novo","nova",
+    }
+    tokens = [
+        token for token in re.findall(r"[a-z0-9]+", _fold(product_name))
+        if token not in stop and len(token) >= 4
+    ]
+    sequences: set[str] = set()
+    for size in range(2, len(tokens) + 1):
+        for start in range(len(tokens) - size + 1):
+            sequences.add("".join(tokens[start:start + size]))
+    return sequences
+
 def validate_caption(caption: str, *, product_name: str = "") -> str:
     text = str(caption or "").replace("\r", "").strip()
     text = re.sub(r"^[*_~\s]+|[*_~\s]+$", "", text)
@@ -71,5 +87,9 @@ def validate_caption(caption: str, *, product_name: str = "") -> str:
     hashtag_tokens = {_fold(tag) for tag in hashtags}
     if hashtag_tokens & product_tokens:
         raise CaptionPolicyError("hashtag menciona explicitamente o produto")
+
+    product_sequences = _meaningful_product_token_sequences(product_name)
+    if hashtag_tokens & product_sequences:
+        raise CaptionPolicyError("hashtag recompõe explicitamente o produto")
 
     return f"{main}\n{' '.join('#' + tag for tag in hashtags)}"
