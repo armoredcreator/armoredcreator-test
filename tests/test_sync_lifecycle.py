@@ -244,7 +244,7 @@ class SyncLifecycleTests(unittest.TestCase):
                     return [SyncMessage(
                         value, source_id="telegram", topic_id=228,
                         topic_name="topic",
-                        original_url="https://shopee.com.br/x/live",
+                        original_url=f"https://shopee.com.br/x/live/{value}",
                         materialize=materialize,
                     )], {228: 99 + self.index}
 
