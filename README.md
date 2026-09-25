@@ -20,12 +20,12 @@ Este README descreve o estado do código no **main após o merge da correção d
 - **Recuperação de publicação pendente:** comprovada com item 1174, que foi reencontrado em `PUBLISHING`, publicado e finalizado como `PUBLISHED+cleanup`.
 - **CATCH-UP histórico completo dos ~308 conteúdos:** permanece pendente para a certificação final.
 - **Vision V2 — candidatos:** congelada. Não participa do fluxo operacional atual.
-- **Caption na Vision V1:** integrada estruturalmente, porém permanece desativada até a auditoria real de saída.
+- **Caption na Vision V1:** integrada e ativa no rollout atual.
 - **Novo vídeo inserido manualmente no grupo fonte:** não reproduzível, porque a fonte pertence a terceiros.
 
 ### Regra de congelamento
 
-A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A **Caption** está integrada estruturalmente à V1, mas permanece desativada no rollout até a auditoria real de saída. A descoberta de candidatos V2 não faz parte do fluxo operacional atual.
+A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A **Caption** está integrada à V1 e ativa no rollout atual. A descoberta de candidatos V2 não faz parte do fluxo operacional atual.
 
 ### Decisão operacional — 25/09/2026
 
@@ -46,7 +46,7 @@ Vision V1
 
 A V1 continua sendo a única autoridade sobre identidade e affiliate link. Caption não identifica produto, não altera identidade e não participa da descoberta de candidatos.
 
-A configuração operacional permanece `ARMORED_CAPTION_ENABLED=0` até a auditoria real da saída. Depois da validação, a ativação poderá ser feita separadamente.
+A configuração operacional permanece `ARMORED_CAPTION_ENABLED=1`. A Caption faz parte da V1; a Vision V2 continua congelada.
 
 As seções posteriores que descrevem expansão/reconciliação V2 devem ser lidas como **registro histórico de projeto futuro congelado**, não como requisitos para o fluxo atual.
 
@@ -2457,7 +2457,7 @@ Publicações legadas que possuem apenas o link continuam compatíveis com a ver
 
 ## 44.7 Configuração da Caption
 
-A Caption está integrada à V1, mas permanece desativada no launcher até a auditoria real. A descoberta/reconciliação de candidatos continua desativada:
+A Caption está integrada à V1 e ativa no launcher. A descoberta/reconciliação de candidatos continua desativada:
 
 ```text
 ARMORED_VISION_V2_ENABLED=0
@@ -2465,7 +2465,7 @@ ARMORED_VISION_V2_TARGET_CANDIDATES=12
 ARMORED_VISION_V2_MIN_ACCEPTED=2
 ARMORED_VISION_V2_MAX_ACCEPTED=6
 
-ARMORED_CAPTION_ENABLED=0
+ARMORED_CAPTION_ENABLED=1
 ARMORED_CAPTION_MODEL=gemini-3.8-flash
 ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK=1
 GEMINI_API_KEY=
