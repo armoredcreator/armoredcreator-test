@@ -20,12 +20,35 @@ Este README descreve o estado do código no **main após o merge da correção d
 - **Recuperação de publicação pendente:** comprovada com item 1174, que foi reencontrado em `PUBLISHING`, publicado e finalizado como `PUBLISHED+cleanup`.
 - **CATCH-UP histórico completo dos ~308 conteúdos:** permanece pendente para a certificação final.
 - **Vision V2 — candidatos:** congelada. Não participa do fluxo operacional atual.
-- **Vision V2 — Caption:** ativa e integrada ao pacote de publicação.
+- **Caption na Vision V1:** integrada estruturalmente, porém permanece desativada até a auditoria real de saída.
 - **Novo vídeo inserido manualmente no grupo fonte:** não reproduzível, porque a fonte pertence a terceiros.
 
 ### Regra de congelamento
 
 A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A única camada adicional ativa antes do CATCH-UP é o **Caption Generator**, que produz legenda + hashtags após a resolução V1. A descoberta de candidatos V2 não faz parte do fluxo operacional atual.
+
+### Decisão operacional — 25/09/2026
+
+A Vision V2 está **congelada** e não será trabalhada nesta fase. O código V2 existente permanece apenas como trabalho futuro e não é chamado pelo serviço ativo.
+
+A Caption foi retirada conceitualmente da V2 e pertence à **Vision V1**. O fluxo atual é:
+
+```text
+Vision V1
+→ identificação exata do produto
+→ Caption Generator
+→ validação determinística
+→ VisionResult
+→ Studio
+→ Hub
+→ Telegram
+```
+
+A V1 continua sendo a única autoridade sobre identidade e affiliate link. Caption não identifica produto, não altera identidade e não participa da descoberta de candidatos.
+
+A configuração operacional permanece `ARMORED_CAPTION_ENABLED=0` até a auditoria real da saída. Depois da validação, a ativação poderá ser feita separadamente.
+
+As seções posteriores que descrevem expansão/reconciliação V2 devem ser lidas como **registro histórico de projeto futuro congelado**, não como requisitos para o fluxo atual.
 
 Com a Caption fechada, o código volta a ser tratado como congelado durante o CATCH-UP histórico, salvo correção bloqueadora descoberta pelo próprio teste.
 
