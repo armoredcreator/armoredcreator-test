@@ -641,6 +641,18 @@ class Coordinator:
         recovered = []
         for row in rows:
             item_id = str(row["content_id"])
+
+            # FAILED is terminal when Vision never produced a product identity.
+            # Only failures that already have a durable affiliate identity (or
+            # an existing publication record) are safe to reopen automatically.
+            # This preserves the explicit/manual-retry contract for functional
+            # failures such as "produto não encontrado", while still recovering
+            # failures that happened after Vision had already succeeded.
+            if str(row["state"]) == State.FAILED.value:
+                item = self.db.get(item_id)
+                if not item.affiliate_name and self.db.publication(item_id) is None:
+                    continue
+
             # RECEIVED without an immutable original is a durable Telegram
             # reservation whose download was interrupted. The Sync source must
             # rediscover/materialize it; Recovery cannot invent the missing
