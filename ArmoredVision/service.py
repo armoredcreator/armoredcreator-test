@@ -9,7 +9,7 @@ from armored_core.services import VisionResult, VisionUnresolvedError
 from .modules.v1.shopee_api import ShopeeAffiliateAPI, ShopeeProductNotFoundError
 from .modules.v1.shopee_resolver import resolve_short_url
 from .modules.v2.service import CandidateDiscovery, VisionCandidateError
-from .modules.caption.generator import CaptionGenerator, CaptionGenerationError
+from .modules.v1.caption.generator import CaptionGenerator, CaptionGenerationError
 
 
 class ArmoredVision:
