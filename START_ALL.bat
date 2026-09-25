@@ -4,6 +4,9 @@ cd /d "%~dp0"
 
 set "ARMORED_ROOT=%~dp0"
 set "PYTHONPATH=%~dp0;%PYTHONPATH%"
+rem Caption V2 ativa; descoberta/reconciliacao de candidatos permanece congelada.
+set "ARMORED_CAPTION_ENABLED=1"
+set "ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK=1"
 
 set "ARMORED_PYTHON="
 where py >nul 2>&1
