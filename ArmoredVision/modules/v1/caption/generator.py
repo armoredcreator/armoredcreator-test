@@ -9,12 +9,12 @@ import requests
 from .policy import CaptionPolicyError, validate_caption
 
 DEFAULT_REACTIONS = (
-    ("beleza", ("Olha esse charme ✨", ("#beleza", "#autocuidado"))),
-    ("maqui", ("Fiquei encantada 😍", ("#beleza", "#maquiagem"))),
-    ("casa", ("Que achado lindo ✨", ("#casa", "#decoracao"))),
-    ("decor", ("Que charme aqui ✨", ("#decoracao", "#casa"))),
-    ("moda", ("Olha esse look ✨", ("#moda", "#estilo"))),
-    ("cozinha", ("Olha que pratico ✨", ("#casa", "#cozinha"))),
+    ("beleza", ("Olha esse charme ✨", ("#autocuidado", "#rotina"))),
+    ("maqui", ("Fiquei encantada 😍", ("#autocuidado", "#rotina"))),
+    ("casa", ("Que achado lindo ✨", ("#decoracao", "#rotina"))),
+    ("decor", ("Que charme aqui ✨", ("#decoracao", "#rotina"))),
+    ("moda", ("Olha esse look ✨", ("#estilo", "#rotina"))),
+    ("cozinha", ("Olha que pratico ✨", ("#casa", "#rotina"))),
 )
 
 
@@ -24,10 +24,22 @@ class CaptionGenerationError(RuntimeError):
 
 def _deterministic_caption(product: dict[str, Any]) -> str:
     context = str(product.get("category_name") or product.get("category") or "").casefold()
+    product_name = str(product.get("productName") or "")
+    candidates: list[str] = []
+
     for key, (main, tags) in DEFAULT_REACTIONS:
         if key in context:
-            return main + "\n" + " ".join(tags)
-    return "Olha esse charme ✨\n#achadinhos #rotina"
+            candidates.append(main + "\n" + " ".join(tags))
+
+    candidates.append("Olha esse charme ✨\n#achadinhos #rotina")
+
+    for candidate in candidates:
+        try:
+            return validate_caption(candidate, product_name=product_name)
+        except CaptionPolicyError:
+            continue
+
+    raise CaptionGenerationError("nenhum fallback determinístico passou pela política")
 
 
 class CaptionGenerator:
