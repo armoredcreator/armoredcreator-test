@@ -5,7 +5,7 @@
 
 ## 1. Estado do projeto
 
-Este README descreve o estado do código no **main após o merge da correção de RVC/Recovery do PR #16** e consolida a certificação ponta a ponta realizada até **24/09/2026**. Ele é a referência operacional para a certificação final. A única parte da antiga Vision V2 mantida ativa é o **Caption Generator** (legenda + hashtags); descoberta/reconciliação de candidatos permanece congelada.
+Este README descreve o estado do código no **main após o merge da correção de RVC/Recovery do PR #16** e consolida a certificação ponta a ponta realizada até **24/09/2026**. Ele é a referência operacional para a certificação final. **Caption Generator pertence à Vision V1** (legenda + hashtags); descoberta/reconciliação de candidatos da Vision V2 permanece congelada.
 
 ### Marco atual
 
@@ -20,12 +20,35 @@ Este README descreve o estado do código no **main após o merge da correção d
 - **Recuperação de publicação pendente:** comprovada com item 1174, que foi reencontrado em `PUBLISHING`, publicado e finalizado como `PUBLISHED+cleanup`.
 - **CATCH-UP histórico completo dos ~308 conteúdos:** permanece pendente para a certificação final.
 - **Vision V2 — candidatos:** congelada. Não participa do fluxo operacional atual.
-- **Vision V2 — Caption:** ativa e integrada ao pacote de publicação.
+- **Caption na Vision V1:** integrada e ativa no rollout atual.
 - **Novo vídeo inserido manualmente no grupo fonte:** não reproduzível, porque a fonte pertence a terceiros.
 
 ### Regra de congelamento
 
-A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A única camada adicional ativa antes do CATCH-UP é o **Caption Generator**, que produz legenda + hashtags após a resolução V1. A descoberta de candidatos V2 não faz parte do fluxo operacional atual.
+A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A **Caption** está integrada à V1 e ativa no rollout atual. A descoberta de candidatos V2 não faz parte do fluxo operacional atual.
+
+### Decisão operacional — 25/09/2026
+
+A Vision V2 está **congelada** e não será trabalhada nesta fase. O código V2 existente permanece apenas como trabalho futuro e não é chamado pelo serviço ativo.
+
+A Caption foi retirada conceitualmente da V2 e pertence à **Vision V1**. O fluxo atual é:
+
+```text
+Vision V1
+→ identificação exata do produto
+→ Caption Generator
+→ validação determinística
+→ VisionResult
+→ Studio
+→ Hub
+→ Telegram
+```
+
+A V1 continua sendo a única autoridade sobre identidade e affiliate link. Caption não identifica produto, não altera identidade e não participa da descoberta de candidatos.
+
+A configuração operacional permanece `ARMORED_CAPTION_ENABLED=1`. A Caption faz parte da V1; a Vision V2 continua congelada.
+
+As seções posteriores que descrevem expansão/reconciliação V2 devem ser lidas como **registro histórico de projeto futuro congelado**, não como requisitos para o fluxo atual.
 
 Com a Caption fechada, o código volta a ser tratado como congelado durante o CATCH-UP histórico, salvo correção bloqueadora descoberta pelo próprio teste.
 
@@ -2292,7 +2315,7 @@ Vision V2
 └── validação real Shopee pendente
 
 CATCH-UP histórico ~308
-└── aguardando validação real da V2 + Caption
+└── V2 congelada; Caption V1 ativa
 
 Novo candidato LIVE
 └── teste manual limitado pela fonte de terceiros
@@ -2416,7 +2439,7 @@ O Generator possui integração opcional com Gemini e um fallback determinístic
 
 ## 44.6 Pacote enviado pelo Hub
 
-Com a Caption ativa e a descoberta V2 congelada:
+Com a Caption integrada à V1 e a descoberta V2 congelada:
 
 ```text
 VÍDEO
@@ -2434,7 +2457,7 @@ Publicações legadas que possuem apenas o link continuam compatíveis com a ver
 
 ## 44.7 Configuração da Caption
 
-A Caption entra ativa no launcher e no `.env.example`. A descoberta/reconciliação de candidatos continua desativada:
+A Caption está integrada à V1 e ativa no launcher. A descoberta/reconciliação de candidatos continua desativada:
 
 ```text
 ARMORED_VISION_V2_ENABLED=0
@@ -2505,7 +2528,7 @@ link afiliado
 A V1 continua sendo a única fonte de identidade e de link do produto.
 
 
-# 45. Fase de validação real — Vision V2 + Caption
+# 45. Validação futura da Vision V2
 
 A fundação já está no `main`. A próxima etapa **não é o CATCH-UP**.
 
@@ -2533,7 +2556,7 @@ A auditoria deve responder, com dados reais:
 9. O pacote final fica pronto para o Hub sem geração adicional?
 ```
 
-Somente depois dessa auditoria e dos ajustes necessários a V2 + Caption devem ser ativadas para o histórico.
+A Vision V2 só deverá ser ativada em uma fase futura, após auditoria própria. A Caption V1 já está ativa e não depende da ativação da V2.
 
 
 # 46. Regra de afiliado — URL de entrada nunca é URL final (24/09/2026)

@@ -30,6 +30,28 @@ def _meaningful_product_tokens(product_name: str) -> set[str]:
         if token not in stop and len(token) >= 4
     }
 
+
+def _meaningful_product_token_sequences(product_name: str) -> set[str]:
+    stop = {
+        "a","as","ao","aos","com","da","das","de","do","dos","e","em",
+        "para","por","sem","um","uma","kit","conjunto","original","novo","nova",
+    }
+    tokens = [
+        token for token in re.findall(r"[a-z0-9]+", _fold(product_name))
+        if token not in stop and len(token) >= 4
+    ]
+    sequences: set[str] = set()
+    for size in range(2, len(tokens) + 1):
+        def add_subsequences(start: int, chosen: list[str]) -> None:
+            if len(chosen) == size:
+                sequences.add("".join(chosen))
+                return
+            for index in range(start, len(tokens)):
+                add_subsequences(index + 1, chosen + [tokens[index]])
+
+        add_subsequences(0, [])
+    return sequences
+
 def validate_caption(caption: str, *, product_name: str = "") -> str:
     text = str(caption or "").replace("\r", "").strip()
     text = re.sub(r"^[*_~\s]+|[*_~\s]+$", "", text)
@@ -63,9 +85,17 @@ def validate_caption(caption: str, *, product_name: str = "") -> str:
         raise CaptionPolicyError("texto principal deve conter 2 ou 3 palavras")
 
     product_tokens = _meaningful_product_tokens(product_name)
-    main_tokens = set(re.findall(r"[a-z0-9]+", _fold(EMOJI_RE.sub("", main))))
-    overlap = main_tokens & product_tokens
-    if len(overlap) >= 2 or (product_tokens and len(overlap) / len(product_tokens) >= 0.60):
+    caption_tokens = set(re.findall(r"[a-z0-9]+", _fold(EMOJI_RE.sub("", text))))
+    overlap = caption_tokens & product_tokens
+    if overlap:
         raise CaptionPolicyError("legenda menciona explicitamente o produto")
+
+    hashtag_tokens = {_fold(tag) for tag in hashtags}
+    if hashtag_tokens & product_tokens:
+        raise CaptionPolicyError("hashtag menciona explicitamente o produto")
+
+    product_sequences = _meaningful_product_token_sequences(product_name)
+    if hashtag_tokens & product_sequences:
+        raise CaptionPolicyError("hashtag recompõe explicitamente o produto")
 
     return f"{main}\n{' '.join('#' + tag for tag in hashtags)}"
