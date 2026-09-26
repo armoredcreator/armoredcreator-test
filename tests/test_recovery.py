@@ -28,6 +28,18 @@ class CrashStudio(Studio):
     def process(self, item):
         raise RuntimeError("simulated studio crash")
 
+
+class VisionWaitThenResolve:
+    def __init__(self):
+        self.calls = 0
+
+    def identify(self, item):
+        self.calls += 1
+        if self.calls == 1:
+            from armored_core.services import VisionUnresolvedError
+            raise VisionUnresolvedError("simulated unresolved vision")
+        return VisionResult("recover-final", "https://example.invalid/a")
+
 class Publisher:
     def __init__(self):
         self.ids = set()
@@ -56,6 +68,24 @@ class RecoveryTests(unittest.TestCase):
         self.db.close()
         self.td.cleanup()
 
+    def test_recovery_retries_waiting_vision(self):
+        vision = VisionWaitThenResolve()
+        pipeline = Pipeline(self.db, self.storage, vision, Studio(self.storage), self.pub)
+
+        # First Vision attempt is unresolved and must become a durable
+        # WAITING_VISION state rather than being treated as completed.
+        pipeline.run(self.item)
+        self.assertEqual(self.db.get(self.item).state, State.WAITING_VISION)
+
+        # Recovery owns the retry. It must re-enter VISION and continue the
+        # same item through Studio and publication when Vision resolves.
+        Recovery(self.db, self.storage, vision, Studio(self.storage), self.pub).reconcile(self.item)
+
+        row = self.db.get(self.item)
+        self.assertEqual(row.state, State.PUBLISHED)
+        self.assertEqual(vision.calls, 2)
+        self.assertEqual(self.pub.count, 1)
+
     def test_rebuilds_after_studio_crash(self):
         with self.assertRaises(RuntimeError):
             Pipeline(self.db, self.storage, Vision(), CrashStudio(self.storage), self.pub).run(self.item)
@@ -77,6 +107,32 @@ class RecoveryTests(unittest.TestCase):
         Recovery(self.db, self.storage, Vision(), Studio(self.storage), self.pub).reconcile(self.item)
         self.assertEqual(self.db.get(self.item).state, State.PUBLISHED)
         self.assertEqual(self.pub.count, 1)
+
+    def test_unknown_publication_never_resumes_durable_result(self):
+        class AmbiguousPublisher(Publisher):
+            def check_publication(self, item):
+                return PublicationCheck.UNKNOWN
+
+        publisher = AmbiguousPublisher()
+        vision = Vision()
+        studio = Studio(self.storage)
+
+        # First pass reaches publication and becomes RECOVERY after an
+        # ambiguous Telegram outcome, while the durable result remains.
+        pipeline = Pipeline(self.db, self.storage, vision, studio, publisher)
+        pipeline.run(self.item)
+        row = self.db.get(self.item)
+        self.assertEqual(row.state, State.RECOVERY)
+        self.assertTrue(row.result_path.is_file())
+        self.assertEqual(publisher.count, 0)
+
+        # Recovery must stop on UNKNOWN. It must never fall through to the
+        # durable-result path and send the same result a second time.
+        with self.assertRaisesRegex(RuntimeError, "publication-check-uncertain-recovery-stopped"):
+            Recovery(self.db, self.storage, vision, studio, publisher).reconcile(self.item)
+
+        self.assertEqual(self.db.get(self.item).state, State.RECOVERY)
+        self.assertEqual(publisher.count, 0)
 
     def test_cleanup_is_idempotent(self):
         Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub).run(self.item)

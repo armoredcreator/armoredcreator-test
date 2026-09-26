@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from ArmoredVision.modules.v2.normalize import quantity_facts
+from ArmoredVision.modules.v2.normalize import quantity_facts, structural_facts
 from ArmoredVision.modules.v2.reconcile import CandidateReconciler
 from ArmoredVision.modules.v2.service import CandidateDiscovery
 
@@ -46,6 +46,12 @@ class FakeAPI:
     def generate_short_link(self, origin_url):
         return origin_url + "?affiliate=1"
 
+    def affiliate_link_for_product(self, product):
+        offer = str(product.get("offerLink") or "").strip()
+        if offer:
+            return offer
+        return self.generate_short_link(str(product.get("productLink") or ""))
+
 
 class VisionV2CandidateTests(unittest.TestCase):
     def tearDown(self):
@@ -79,6 +85,44 @@ class VisionV2CandidateTests(unittest.TestCase):
         self.assertGreater(score, 0.5)
         self.assertEqual(evidence["attribute_conflicts"], [])
 
+    def test_structural_facts_capture_identity_features(self):
+        facts = structural_facts(
+            "Bancada Suspensa Barbearia 90cm Com 1 Porta e 1 Gaveta Nicho Ripado"
+        )
+        self.assertEqual(facts["size_cm"], 90.0)
+        self.assertEqual(facts["doors"], 1)
+        self.assertEqual(facts["drawers"], 1)
+        self.assertTrue(facts["niches"])
+        self.assertTrue(facts["ripado"])
+
+    def test_reconciler_rejects_structural_door_drawer_conflict(self):
+        reconciler = CandidateReconciler(image_scorer=lambda *_: 0.99)
+        original = product(
+            100, "Bancada Suspensa Barbearia 90cm Com Gaveta", shop=1
+        )
+        candidate = product(
+            200, "Bancada Suspensa Barbearia 90cm Com 2 Portas", shop=2
+        )
+        accepted, _, reason, evidence = reconciler.compare(original, candidate)
+        self.assertFalse(accepted)
+        self.assertIn("doors", evidence["structural_conflicts"])
+        self.assertIn("drawers", evidence["structural_conflicts"])
+        self.assertIn("incompatível", reason)
+
+    def test_reconciler_accepts_moderate_name_when_multiple_strong_signals_agree(self):
+        reconciler = CandidateReconciler(image_scorer=lambda *_: 0.75)
+        original = product(
+            100, "Bancada Suspensa Barbearia 90cm Com 1 Porta e Nicho", shop=1
+        )
+        candidate = product(
+            200, "Bancada Suspensa 90cm Barbearia Com 1 Porta e Nicho", shop=2
+        )
+        accepted, score, reason, evidence = reconciler.compare(original, candidate)
+        self.assertTrue(accepted)
+        self.assertGreater(score, 0.5)
+        self.assertIn("estrutura forte", reason)
+        self.assertGreaterEqual(len(evidence["structural_matches"]), 2)
+
     def test_reconciler_rejects_explicit_quantity_conflict(self):
         reconciler = CandidateReconciler(image_scorer=lambda *_: 1.0)
         original = product(100, "Kit 3 Potes Herméticos de Vidro 1L", shop=1)
@@ -87,6 +131,22 @@ class VisionV2CandidateTests(unittest.TestCase):
         self.assertFalse(accepted)
         self.assertIn("quantity", evidence["attribute_conflicts"])
         self.assertIn("incompatível", reason)
+
+    def test_discovery_explores_multiple_query_families_before_capping(self):
+        os.environ["ARMORED_VISION_V2_TARGET_CANDIDATES"] = "12"
+        os.environ["ARMORED_VISION_V2_MIN_ACCEPTED"] = "2"
+        api = FakeAPI()
+        discovery = CandidateDiscovery(
+            api=api,
+            reconciler=CandidateReconciler(image_scorer=lambda *_: 1.0),
+        )
+        discovery.discover(
+            product(100, "Bancada Suspensa Barbearia 90cm Com Gaveta", 1),
+            original_affiliate_url="https://s.shopee.com.br/original",
+            original_url="https://shopee.com.br/product/1/100",
+        )
+        queries = [str(call).strip().casefold() for call in api.search_calls]
+        self.assertGreaterEqual(len(set(queries)), 4)
 
     def test_discovery_keeps_original_and_caps_at_six_accepted(self):
         os.environ["ARMORED_VISION_V2_TARGET_CANDIDATES"] = "12"

@@ -94,3 +94,9 @@ def test_production_code_has_no_machine_specific_windows_paths(production_root):
         text = source.read_text(encoding="utf-8")
         for fragment in forbidden_fragments:
             assert fragment not in text, f"{source}: {fragment}"
+
+def test_vision_v2_is_frozen_out_of_active_v1_service():
+    service = (ROOT / "ArmoredVision" / "service.py").read_text(encoding="utf-8")
+    assert "CandidateDiscovery" not in service
+    assert "VisionCandidateError" not in service
+    assert "ARMORED_VISION_V2_ENABLED" not in service

@@ -9,29 +9,52 @@ import requests
 from .policy import CaptionPolicyError, validate_caption
 
 DEFAULT_REACTIONS = (
-    ("beleza", ("Olha esse charme ✨", ("#beleza", "#autocuidado"))),
-    ("maqui", ("Fiquei encantada 😍", ("#beleza", "#maquiagem"))),
-    ("casa", ("Que achado lindo ✨", ("#casa", "#decoracao"))),
-    ("decor", ("Que charme aqui ✨", ("#decoracao", "#casa"))),
-    ("moda", ("Olha esse look ✨", ("#moda", "#estilo"))),
-    ("cozinha", ("Olha que pratico ✨", ("#casa", "#cozinha"))),
+    ("beleza", ("Olha esse charme ✨", ("#autocuidado", "#rotina"))),
+    ("maqui", ("Fiquei encantada 😍", ("#autocuidado", "#rotina"))),
+    ("casa", ("Que achado lindo ✨", ("#decoracao", "#rotina"))),
+    ("decor", ("Que charme aqui ✨", ("#decoracao", "#rotina"))),
+    ("moda", ("Olha esse look ✨", ("#estilo", "#rotina"))),
+    ("cozinha", ("Olha que pratico ✨", ("#casa", "#rotina"))),
 )
+
 
 class CaptionGenerationError(RuntimeError):
     pass
 
+
 def _deterministic_caption(product: dict[str, Any]) -> str:
     context = str(product.get("category_name") or product.get("category") or "").casefold()
+    product_name = str(product.get("productName") or "")
+    candidates: list[str] = []
+
     for key, (main, tags) in DEFAULT_REACTIONS:
         if key in context:
-            return main + "\n" + " ".join(tags)
-    return "Olha esse charme ✨\n#achadinhos #rotina"
+            candidates.append(main + "\n" + " ".join(tags))
+
+    candidates.append("Olha esse charme ✨\n#achadinhos #rotina")
+
+    for candidate in candidates:
+        try:
+            return validate_caption(candidate, product_name=product_name)
+        except CaptionPolicyError:
+            continue
+
+    raise CaptionGenerationError("nenhum fallback determinístico passou pela política")
+
 
 class CaptionGenerator:
-    """Gemini-backed generator with a deterministic fallback and hard validation."""
+    """Optional Gemini generator with a deterministic operational fallback."""
 
     def __init__(self, requester: Callable[..., Any] | None = None):
         self.requester = requester or requests.post
+
+    def _fallback(self, product: dict[str, Any]) -> str:
+        if os.getenv("ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK", "1") != "1":
+            raise CaptionGenerationError("fallback determinístico desativado")
+        return validate_caption(
+            _deterministic_caption(product),
+            product_name=str(product.get("productName") or ""),
+        )
 
     def generate(self, product: dict[str, Any]) -> str:
         if os.getenv("ARMORED_CAPTION_ENABLED", "0") != "1":
@@ -39,12 +62,7 @@ class CaptionGenerator:
 
         api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
         if not api_key:
-            if os.getenv("ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK", "1") == "1":
-                return validate_caption(
-                    _deterministic_caption(product),
-                    product_name=str(product.get("productName") or ""),
-                )
-            raise CaptionGenerationError("GEMINI_API_KEY não configurada")
+            return self._fallback(product)
 
         model = os.getenv("ARMORED_CAPTION_MODEL", "gemini-3.8-flash")
         prompt = """
@@ -86,25 +104,31 @@ Retorne somente as duas linhas finais, sem aspas e sem explicações.
             except requests.RequestException:
                 pass
 
-        response = self.requester(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-            json={
-                "contents": [{"parts": parts}],
-                "generationConfig": {"maxOutputTokens": 80},
-            },
-            timeout=int(os.getenv("ARMORED_CAPTION_API_TIMEOUT", "30")),
-        )
-        response.raise_for_status()
-        data = response.json()
         try:
-            generated = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        except (KeyError, IndexError, TypeError) as exc:
-            raise CaptionGenerationError("Gemini não retornou texto de legenda") from exc
-        try:
-            return validate_caption(
-                generated,
-                product_name=str(product.get("productName") or ""),
+            response = self.requester(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": parts}],
+                    "generationConfig": {"maxOutputTokens": 80},
+                },
+                timeout=int(os.getenv("ARMORED_CAPTION_API_TIMEOUT", "30")),
             )
-        except CaptionPolicyError as exc:
-            raise CaptionGenerationError(f"Gemini gerou legenda fora da política: {exc}") from exc
+            response.raise_for_status()
+            data = response.json()
+            try:
+                generated = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except (KeyError, IndexError, TypeError) as exc:
+                raise CaptionGenerationError("Gemini não retornou texto de legenda") from exc
+
+            try:
+                return validate_caption(
+                    generated,
+                    product_name=str(product.get("productName") or ""),
+                )
+            except CaptionPolicyError as exc:
+                raise CaptionGenerationError(
+                    f"Gemini gerou legenda fora da política: {exc}"
+                ) from exc
+        except (requests.RequestException, CaptionGenerationError):
+            return self._fallback(product)

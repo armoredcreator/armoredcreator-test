@@ -4,6 +4,12 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
+
+# Allow direct execution from scripts\\ to import project packages from the repo root.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from dotenv import load_dotenv
 
@@ -50,9 +56,7 @@ def main() -> int:
     resolved = resolve_short_url(original_url)
     product = api.get_exact_product(resolved.shop_id, resolved.item_id)
 
-    affiliate_url = str(product.get("offerLink") or "").strip()
-    if not affiliate_url:
-        affiliate_url = str(api.generate_short_link(original_url)["short_link"]).strip()
+    affiliate_url = api.affiliate_link_for_product(product)
 
     try:
         links, records = CandidateDiscovery().discover(
@@ -61,6 +65,7 @@ def main() -> int:
             original_url=original_url,
         )
     except VisionCandidateError as exc:
+        records = list(getattr(exc, "records", ()) or ())
         payload = {
             "status": "WAITING_VISION",
             "reason": str(exc),
@@ -69,6 +74,25 @@ def main() -> int:
                 "item_id": resolved.item_id,
                 "product_name": product.get("productName"),
                 "product_link": product.get("productLink"),
+                "affiliate_url": affiliate_url,
+            },
+            "diagnostics": {
+                "discovered": getattr(exc, "discovered_count", len(records)),
+                "accepted": getattr(exc, "accepted_count", 0),
+                "minimum_required": getattr(exc, "minimum_required", None),
+                "candidates": [
+                    {
+                        "order": r.get("candidate_order"),
+                        "shop_id": r.get("shop_id"),
+                        "item_id": r.get("item_id"),
+                        "product_name": r.get("product_name"),
+                        "decision": r.get("decision"),
+                        "reason": r.get("reason"),
+                        "score": r.get("score"),
+                        "evidence": r.get("evidence"),
+                    }
+                    for r in records[1:]
+                ],
             },
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))

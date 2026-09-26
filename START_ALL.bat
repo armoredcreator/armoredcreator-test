@@ -4,6 +4,9 @@ cd /d "%~dp0"
 
 set "ARMORED_ROOT=%~dp0"
 set "PYTHONPATH=%~dp0;%PYTHONPATH%"
+rem Caption integrada a Vision V1; Vision V2 permanece congelada.
+set "ARMORED_CAPTION_ENABLED=1"
+set "ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK=1"
 
 set "ARMORED_PYTHON="
 where py >nul 2>&1

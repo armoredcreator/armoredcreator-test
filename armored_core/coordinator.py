@@ -36,14 +36,19 @@ class Coordinator:
     @classmethod
     def build(cls, root: Path | None = None, bindings: Any | None = None):
         storage = Storage(root)
-        for credential_file in (
-            storage.root / "credentials" / "telegram" / "user.env",
-            storage.root / "credentials" / "telegram" / "bot.env",
-            storage.root / "credentials" / "shopee" / "affiliate.env",
-            storage.root / ".env",
-        ):
-            if credential_file.exists():
-                load_dotenv(credential_file, override=False)
+        # Project-local credential source of truth.
+        # Secrets live only in credentials/project.env; runtime modules continue
+        # consuming them through os.getenv() and do not know the file location.
+        project_credentials = storage.root / "credentials" / "project.env"
+        if project_credentials.exists():
+            load_dotenv(project_credentials, override=True)
+
+        # .env contains project configuration, not secrets. Keep externally
+        # supplied configuration compatible while preventing it from replacing
+        # the project credential source above.
+        project_config = storage.root / ".env"
+        if project_config.exists():
+            load_dotenv(project_config, override=False)
 
         db = Database(storage.database / "armoredcreator.db")
         if bindings is None:
@@ -255,6 +260,28 @@ class Coordinator:
                 if self.db.get(item_id).state != State.FAILED:
                     self.run(item_id)
                     current = self.db.get(item_id)
+
+                    # WAITING_VISION is an unresolved candidate, not a successful
+                    # pipeline attempt. Re-enter the durable recovery path once.
+                    # If Vision remains unresolved, stop CATCH-UP here: the current
+                    # candidate owns the checkpoint and the next candidate must not
+                    # be silently consumed.
+                    if current.state == State.WAITING_VISION:
+                        try:
+                            self.recover(item_id)
+                        except Exception as recovery_exc:
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                "[COORDINATOR][CATCH-UP] Item %s permanece em WAITING_VISION; "
+                                "não avançará para o próximo candidato: %s",
+                                item_id,
+                                recovery_exc,
+                            )
+                        current = self.db.get(item_id)
+                        if current.state == State.WAITING_VISION:
+                            processed.append(item_id)
+                            self._last_catch_up_completed_count = completed_count
+                            return processed
 
                     # RECOVERY is an active unresolved state. Never allow
                     # CATCH-UP to advance to another Telegram candidate while
@@ -608,8 +635,9 @@ class Coordinator:
 
     def recover_pending(self):
         states = (
-            State.RECEIVED.value, State.VISION.value, State.STUDIO.value,
-            State.PUBLISHING.value, State.RECOVERY.value,
+            State.RECEIVED.value, State.VISION.value, State.WAITING_VISION.value,
+            State.STUDIO.value, State.PUBLISHING.value, State.RECOVERY.value,
+            State.FAILED.value,
         )
         placeholders = ",".join("?" for _ in states)
         rows = self.db.conn.execute(
@@ -618,6 +646,18 @@ class Coordinator:
         recovered = []
         for row in rows:
             item_id = str(row["content_id"])
+
+            # FAILED is terminal when Vision never produced a product identity.
+            # Only failures that already have a durable affiliate identity (or
+            # an existing publication record) are safe to reopen automatically.
+            # This preserves the explicit/manual-retry contract for functional
+            # failures such as "produto não encontrado", while still recovering
+            # failures that happened after Vision had already succeeded.
+            if str(row["state"]) == State.FAILED.value:
+                item = self.db.get(item_id)
+                if not item.affiliate_name and self.db.publication(item_id) is None:
+                    continue
+
             # RECEIVED without an immutable original is a durable Telegram
             # reservation whose download was interrupted. The Sync source must
             # rediscover/materialize it; Recovery cannot invent the missing
@@ -645,7 +685,13 @@ class Coordinator:
                     continue
             try:
                 self.recover(item_id)
+                current = self.db.get(item_id)
                 recovered.append(item_id)
+                if current.state in (State.WAITING_VISION, State.RECOVERY):
+                    # Startup recovery is ordered. An unresolved current item
+                    # blocks progression to later candidates for the same reason
+                    # CATCH-UP is blocked: its checkpoint must remain authoritative.
+                    break
             except Exception as exc:
                 # A single unrecoverable item must not terminate the Coordinator.
                 # Pipeline failures are persisted in SQLite; startup continues

@@ -77,6 +77,11 @@ class ArmoredHub:
 
         attempts = max(1, int(os.getenv("ARMORED_TELEGRAM_VERIFY_ATTEMPTS", "3")))
         delay = max(0.0, float(os.getenv("ARMORED_TELEGRAM_VERIFY_RETRY_DELAY", "2")))
+        # Once the external send has started, zero matches are not proof of
+        # absence. Telegram may have accepted the upload while the response
+        # or indexing is delayed. Keep this publication UNKNOWN and never
+        # allow recovery to auto-republish it.
+        send_started = str(record["verification_status"] or "") == "SENT_UNVERIFIED"
         for attempt in range(1, attempts + 1):
             matches = self._find_telegram_publications(item)
             if matches is not None:
@@ -92,7 +97,7 @@ class ArmoredHub:
                 if attempt < attempts and delay:
                     time.sleep(delay)
                     continue
-                return PublicationCheck.ABSENT
+                return PublicationCheck.UNKNOWN if send_started else PublicationCheck.ABSENT
             print(
                 f"[HUB][VERIFY] item={item.content_id} "
                 f"attempt={attempt}/{attempts} returned UNKNOWN"
@@ -530,6 +535,12 @@ class ArmoredHub:
                     )
             finally:
                 await bot.shutdown()
+
+        # Mark the irreversible external side-effect window before the
+        # request starts. If the process/network fails after Telegram accepts
+        # the upload, recovery must reconcile instead of treating zero search
+        # matches as permission to send a second video.
+        self.db.publication_send_started(item.item_id)
 
         try:
             message = self._run_async(send())

@@ -5,7 +5,7 @@
 
 ## 1. Estado do projeto
 
-Este README descreve o estado do código no **main após o merge da correção de RVC/Recovery do PR #16** e consolida a certificação ponta a ponta realizada até **24/09/2026**. Ele é a referência operacional antes da próxima pequena implementação: **ArmoredVision V2**, seguida da certificação do **CATCH-UP histórico completo**.
+Este README descreve o estado do código no **main após o merge da correção de RVC/Recovery do PR #16** e consolida a certificação ponta a ponta realizada até **24/09/2026**. Ele é a referência operacional para a certificação final. **Caption Generator pertence à Vision V1** (legenda + hashtags); descoberta/reconciliação de candidatos da Vision V2 permanece congelada.
 
 ### Marco atual
 
@@ -18,15 +18,39 @@ Este README descreve o estado do código no **main após o merge da correção d
 - **Wi-Fi OFF/ON + reconexão Telegram:** comprovado, incluindo reconstrução da sessão e ausência do antigo `database is locked`.
 - **Recuperação após queda física de energia:** comprovada ponta a ponta com item 1383, do estado persistido em `STUDIO` até RVC → Studio → Hub → confirmação Telegram → cleanup.
 - **Recuperação de publicação pendente:** comprovada com item 1174, que foi reencontrado em `PUBLISHING`, publicado e finalizado como `PUBLISHED+cleanup`.
-- **CATCH-UP histórico completo dos ~308 conteúdos:** ainda não executado nesta certificação limpa; será feito depois da implementação da Vision V2.
-- **Vision V2:** arquitetura e plano de reconciliação estão definidos; implementação operacional ainda não começou.
+- **CATCH-UP histórico completo dos ~308 conteúdos:** permanece pendente para a certificação final.
+- **Vision V2 — candidatos:** congelada. Não participa do fluxo operacional atual.
+- **Caption na Vision V1:** integrada e ativa no rollout atual.
 - **Novo vídeo inserido manualmente no grupo fonte:** não reproduzível, porque a fonte pertence a terceiros.
 
 ### Regra de congelamento
 
-A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A única implementação planejada antes do CATCH-UP completo é a **ArmoredVision V2**, porque ela faz parte da evolução funcional já documentada para itens que não conseguem ser resolvidos pela V1.
+A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A **Caption** está integrada à V1 e ativa no rollout atual. A descoberta de candidatos V2 não faz parte do fluxo operacional atual.
 
-Depois que a V2 for implementada, testada e mergeada, o código volta a ser tratado como congelado durante o CATCH-UP histórico, salvo correção bloqueadora descoberta pelo próprio teste.
+### Decisão operacional — 25/09/2026
+
+A Vision V2 está **congelada** e não será trabalhada nesta fase. O código V2 existente permanece apenas como trabalho futuro e não é chamado pelo serviço ativo.
+
+A Caption foi retirada conceitualmente da V2 e pertence à **Vision V1**. O fluxo atual é:
+
+```text
+Vision V1
+→ identificação exata do produto
+→ Caption Generator
+→ validação determinística
+→ VisionResult
+→ Studio
+→ Hub
+→ Telegram
+```
+
+A V1 continua sendo a única autoridade sobre identidade e affiliate link. Caption não identifica produto, não altera identidade e não participa da descoberta de candidatos.
+
+A configuração operacional permanece `ARMORED_CAPTION_ENABLED=1`. A Caption faz parte da V1; a Vision V2 continua congelada.
+
+As seções posteriores que descrevem expansão/reconciliação V2 devem ser lidas como **registro histórico de projeto futuro congelado**, não como requisitos para o fluxo atual.
+
+Com a Caption fechada, o código volta a ser tratado como congelado durante o CATCH-UP histórico, salvo correção bloqueadora descoberta pelo próprio teste.
 
 ---
 
@@ -2291,7 +2315,7 @@ Vision V2
 └── validação real Shopee pendente
 
 CATCH-UP histórico ~308
-└── aguardando validação real da V2 + Caption
+└── V2 congelada; Caption V1 ativa
 
 Novo candidato LIVE
 └── teste manual limitado pela fonte de terceiros
@@ -2415,7 +2439,7 @@ O Generator possui integração opcional com Gemini e um fallback determinístic
 
 ## 44.6 Pacote enviado pelo Hub
 
-Quando V2 + Caption estiverem ativados:
+Com a Caption integrada à V1 e a descoberta V2 congelada:
 
 ```text
 VÍDEO
@@ -2424,18 +2448,16 @@ LEGENDA
 +
 HASHTAGS
 +
-LINK ORIGINAL
-+
-0–6 LINKS ADICIONAIS
+LINK AFILIADO V1
 ```
 
 O Hub não faz descoberta, reconciliação ou geração de legenda. Ele somente publica o pacote persistido.
 
 Publicações legadas que possuem apenas o link continuam compatíveis com a verificação.
 
-## 44.7 Configuração inicial
+## 44.7 Configuração da Caption
 
-A funcionalidade entra desativada no .env.example durante a fase de validação:
+A Caption está integrada à V1 e ativa no launcher. A descoberta/reconciliação de candidatos continua desativada:
 
 ```text
 ARMORED_VISION_V2_ENABLED=0
@@ -2443,13 +2465,13 @@ ARMORED_VISION_V2_TARGET_CANDIDATES=12
 ARMORED_VISION_V2_MIN_ACCEPTED=2
 ARMORED_VISION_V2_MAX_ACCEPTED=6
 
-ARMORED_CAPTION_ENABLED=0
+ARMORED_CAPTION_ENABLED=1
 ARMORED_CAPTION_MODEL=gemini-3.8-flash
 ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK=1
 GEMINI_API_KEY=
 ```
 
-Isso permite validar primeiro o motor sem alterar o comportamento da V1 certificada.
+Isso mantém a V1 intacta e acrescenta somente o pacote textual de publicação. Se Gemini não estiver disponível, o fallback determinístico validado continua produzindo uma legenda segura.
 
 ## 44.8.1 Auditoria real de candidatos
 
@@ -2477,45 +2499,36 @@ python .\scripts\validate_vision_v2_real.py --url "COLE_AQUI_O_LINK_ORIGINAL" --
 
 Credenciais Shopee já configuradas no ambiente local devem permanecer em `.env`/arquivo de credenciais e nunca no Git.
 
-## 44.8 Status do PR #19
+## 44.8 Status da Vision V2 reduzida
 
-O PR #19 foi mergeado no `main` do repositório de teste.
+A descoberta de candidatos, reconciliação, Image Search e múltiplos links ficam **congelados**.
 
-```text
-merge: 379c964c
-```
+A única parte da V2 mantida no produto é:
 
-O HEAD que recebeu o merge passou a suíte completa de **98 testes unitários**.
+- geração de legenda;
+- validação determinística;
+- 1 emoji;
+- 2–3 palavras no texto principal;
+- 1–2 hashtags;
+- bloqueio de linguagem comercial;
+- bloqueio de termos de embalagem;
+- persistência em SQLite via `publication_caption`;
+- entrega pelo Hub junto do vídeo e link afiliado V1.
 
-Incluído:
-
-- Candidate Discovery;
-- reconciliação conservadora;
-- revalidação;
-- até 6 candidatos adicionais aceitos;
-- persistência de candidatos/evidências;
-- persistência de até 7 affiliate links;
-- Caption Generator;
-- policy validator;
-- Hub com legenda + links;
-- compatibilidade com publicações legadas;
-- tratamento de falhas V2/Caption como `WAITING_VISION`.
-
-As flags continuam desativadas por padrão.
-
-Ainda pendente antes do CATCH-UP histórico:
+O Hub não gera nem altera a legenda. Ele apenas monta o pacote persistido e publica:
 
 ```text
-⏳ auditoria com produtos reais da Shopee
-⏳ ajuste fino dos gates de identidade com dados reais
-⏳ validação real do Caption Generator
-⏳ ativação controlada V2 + Caption
-⏳ CATCH-UP histórico completo
+vídeo
++
+legenda + hashtags
++
+link afiliado
 ```
 
-**O CATCH-UP dos ~308 conteúdos permanece bloqueado até essa nova camada ser validada em ambiente real.**
+A V1 continua sendo a única fonte de identidade e de link do produto.
 
-# 45. Fase de validação real — Vision V2 + Caption
+
+# 45. Validação futura da Vision V2
 
 A fundação já está no `main`. A próxima etapa **não é o CATCH-UP**.
 
@@ -2543,4 +2556,103 @@ A auditoria deve responder, com dados reais:
 9. O pacote final fica pronto para o Hub sem geração adicional?
 ```
 
-Somente depois dessa auditoria e dos ajustes necessários a V2 + Caption devem ser ativadas para o histórico.
+A Vision V2 só deverá ser ativada em uma fase futura, após auditoria própria. A Caption V1 já está ativa e não depende da ativação da V2.
+
+
+# 46. Regra de afiliado — URL de entrada nunca é URL final (24/09/2026)
+
+A validação real identificou uma regra crítica que fica explícita a partir desta fase:
+
+> **O link recebido de outra afiliada serve somente para identificar o produto. Ele nunca deve ser preservado como o affiliate link final.**
+
+Fluxo canônico:
+
+```text
+link recebido de terceiros
+        ↓
+resolve_short_url()
+        ↓
+shop_id + item_id
+        ↓
+Shopee Affiliate API
+        ↓
+productLink / offerLink do produto
+        ↓
+affiliate_link_for_product()
+        ↓
+SEU affiliate link
+```
+
+## 46.1 Produto original
+
+A Vision consulta o produto exato pela identidade:
+
+```text
+shop_id + item_id
+```
+
+Se a API retornar `offerLink`, ele é usado.
+
+Se não retornar `offerLink`, o fallback chama `generateShortLink` usando o **productLink canônico do produto**, nunca o short link recebido de outra afiliada.
+
+Portanto o fluxo não faz:
+
+```text
+URL da outra afiliada
+→ generateShortLink(URL da outra afiliada)
+```
+
+## 46.2 Candidatos V2
+
+A mesma regra vale para todos os candidatos:
+
+```text
+candidato
+→ shop_id + item_id
+→ revalidação
+→ offerLink
+ou
+→ generateShortLink(productLink)
+→ affiliate link final
+```
+
+O pacote final da V2 não deve conter o affiliate link de terceiros usado apenas como entrada.
+
+## 46.3 Auditoria
+
+O script:
+
+```text
+scripts/validate_vision_v2_real.py
+```
+
+também passou a usar a mesma função canônica de resolução do affiliate link.
+
+A auditoria continua sem escrever no SQLite e sem publicar no Telegram.
+
+## 46.4 Estado
+
+A correção foi implementada no branch:
+
+```text
+fix/affiliate-link-canonicalization
+```
+
+Arquivos envolvidos:
+
+```text
+ArmoredVision/modules/v1/shopee_api.py
+ArmoredVision/modules/v2/shopee_search.py
+ArmoredVision/modules/v2/service.py
+scripts/validate_vision_v2_real.py
+```
+
+A V1 continua intacta em seu comportamento de identificação. A alteração apenas garante que a **autoria do affiliate link final** seja derivada da conta/API configurada no laboratório.
+
+Antes de ativar V2 globalmente, executar a auditoria real novamente e conferir explicitamente o campo:
+
+```text
+original.affiliate_url
+```
+
+e os links finais retornados pelo script.

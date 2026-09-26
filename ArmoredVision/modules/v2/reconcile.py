@@ -4,7 +4,7 @@ from difflib import SequenceMatcher
 from typing import Any, Callable
 import requests
 
-from .normalize import category_overlap, normalized_name, quantity_facts, tokens
+from .normalize import category_overlap, normalized_name, quantity_facts, structural_compare, tokens
 
 def _as_float(value: object) -> float | None:
     try:
@@ -96,11 +96,23 @@ class CandidateReconciler:
             else:
                 matches.append(key)
 
+        structural_matches, structural_conflicts = structural_compare(original, candidate)
+        for key in structural_conflicts:
+            if key not in conflicts:
+                conflicts.append(key)
+        for key in structural_matches:
+            if key not in matches:
+                matches.append(key)
+
         cat_score = category_overlap(original.get("productCatIds"), candidate.get("productCatIds"))
         same_shop = str(original.get("shopId") or "") == str(candidate.get("shopId") or "")
         price_score = _price_score(original, candidate)
         image_score = None
-        if name_score >= 0.55:
+        # A conservative text gate alone can hide the strongest evidence:
+        # equivalent ads often use very different titles. If explicit
+        # structure agrees, inspect the image even when the name is weak.
+        image_gate = name_score >= 0.55 or len(structural_matches) >= 1
+        if image_gate:
             original_image_url = str(original.get("imageUrl") or "")
             candidate_image_url = str(candidate.get("imageUrl") or "")
             image_key = (original_image_url, candidate_image_url)
@@ -116,6 +128,8 @@ class CandidateReconciler:
             "same_shop": same_shop,
             "attribute_matches": matches,
             "attribute_conflicts": conflicts,
+            "structural_matches": structural_matches,
+            "structural_conflicts": structural_conflicts,
             "price_score": None if price_score is None else round(price_score, 4),
             "image_score": None if image_score is None else round(image_score, 4),
         }
@@ -126,6 +140,8 @@ class CandidateReconciler:
         compatible_category = cat_score is not None and cat_score >= 0.50
         strong_name = name_score >= 0.80
         strong_image = image_score is not None and image_score >= 0.88
+        strong_visual = image_score is not None and image_score >= 0.70
+        strong_structure = len(structural_matches) >= 2
         weighted = (
             0.55 * name_score
             + 0.18 * (cat_score if cat_score is not None else 0.0)
@@ -136,6 +152,16 @@ class CandidateReconciler:
         )
         weighted = max(0.0, min(1.0, weighted))
 
+        # Prefer the calibrated structural path whenever multiple explicit
+        # identity features agree. This keeps the reason auditable instead of
+        # hiding structural evidence behind the generic name path.
+        if (
+            name_score >= 0.68
+            and compatible_category
+            and strong_structure
+            and (strong_visual or same_shop or len(matches) >= 3)
+        ):
+            return True, weighted, "nome moderado + estrutura forte + evidência adicional", evidence
         if strong_name and compatible_category and (matches or same_shop or strong_image):
             return True, weighted, "nome forte + categoria + evidência adicional", evidence
         if name_score >= 0.90 and (matches or strong_image):
