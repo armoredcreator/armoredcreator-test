@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import unittest
 
-from ArmoredVision.modules.caption.generator import CaptionGenerator
-from ArmoredVision.modules.caption.policy import CaptionPolicyError, validate_caption
+from ArmoredVision.modules.v1.caption.generator import CaptionGenerator
+from ArmoredVision.modules.v1.caption.policy import CaptionPolicyError, validate_caption
 
 
 class CaptionPolicyTests(unittest.TestCase):
@@ -32,6 +32,15 @@ class CaptionPolicyTests(unittest.TestCase):
             with self.subTest(caption=caption):
                 with self.assertRaises(CaptionPolicyError):
                     validate_caption(caption, product_name="Organizador de cozinha")
+
+        product_leaks = (
+            ("Batom lindo ✨\n#beleza", "Batom Matte Vermelho"),
+            ("Olha isso ✨\n#batommatte", "Batom Matte Vermelho"),
+        )
+        for caption, product_name in product_leaks:
+            with self.subTest(caption=caption):
+                with self.assertRaises(CaptionPolicyError):
+                    validate_caption(caption, product_name=product_name)
 
     def test_generator_falls_back_when_gemini_times_out(self):
         os.environ["ARMORED_CAPTION_ENABLED"] = "1"

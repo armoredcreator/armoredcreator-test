@@ -79,8 +79,9 @@ class HubPublicationPackageTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             db = Database(Path(td) / "armoredcreator.db")
             try:
+                item = make_item()
                 result_path = Path(td) / "result.mp4"
-                result_path.write_bytes(b"fake-video")
+                result_path.write_bytes(b"test-video")
                 item = make_item(result_path=result_path)
                 hub = ArmoredHub(Path(td), db)
                 calls = []

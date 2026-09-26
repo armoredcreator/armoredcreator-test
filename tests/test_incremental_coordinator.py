@@ -32,7 +32,7 @@ class IncrementalSource:
             source_id="telegram",
             topic_id=228,
             topic_name="Telegram 228",
-            original_url="https://shopee.com.br/example/final",
+            original_url=("https://shopee.com.br/example/final/telegram-1" if message_id == "telegram-1" else "https://shopee.com.br/example/final/telegram-2"),
             source_path=None,
             materialize=materialize,
         )

@@ -244,7 +244,7 @@ class SyncLifecycleTests(unittest.TestCase):
                     return [SyncMessage(
                         value, source_id="telegram", topic_id=228,
                         topic_name="topic",
-                        original_url="https://shopee.com.br/x/live",
+                        original_url=f"https://shopee.com.br/x/live/{value}",
                         materialize=materialize,
                     )], {228: 99 + self.index}
 
@@ -354,6 +354,41 @@ class SyncLifecycleTests(unittest.TestCase):
                 "SELECT 1 FROM items WHERE content_id='103'"
             ).fetchone())
             coordinator.close()
+
+
+    def test_different_telegram_ids_with_same_shopee_url_remain_distinct(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            first_path = root / "100.mp4"
+            second_path = root / "101.mp4"
+            first_path.write_bytes(b"first")
+            second_path.write_bytes(b"second")
+
+            from armored_core.services import SyncService
+            sync = SyncService(db, storage)
+            first = sync.ingest(
+                first_path,
+                "100",
+                source_id="telegram",
+                original_url="https://s.shopee.com.br/AUuG5phvYW",
+            )
+            second = sync.ingest(
+                second_path,
+                "101",
+                source_id="telegram",
+                original_url="https://s.shopee.com.br/AUuG5phvYW",
+            )
+
+            self.assertNotEqual(first, second)
+            self.assertEqual(
+                len(db.conn.execute("SELECT * FROM items").fetchall()),
+                2,
+            )
+            self.assertEqual(db.get(first).telegram_message_id, "100")
+            self.assertEqual(db.get(second).telegram_message_id, "101")
+            db.close()
 
 
     def test_history_and_live_same_id_is_idempotent(self):

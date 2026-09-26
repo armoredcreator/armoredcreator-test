@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 
@@ -7,7 +7,7 @@ from armored_core.services import VisionResult, VisionUnresolvedError
 
 from .modules.v1.shopee_api import ShopeeAffiliateAPI, ShopeeProductNotFoundError
 from .modules.v1.shopee_resolver import resolve_short_url
-from .modules.caption.generator import CaptionGenerator, CaptionGenerationError
+from .modules.v1.caption.generator import CaptionGenerator, CaptionGenerationError
 
 
 class ArmoredVision:
@@ -32,9 +32,9 @@ class ArmoredVision:
             product = api.get_exact_product(resolved.shop_id, resolved.item_id)
         except ShopeeProductNotFoundError as exc:
             raise VisionUnresolvedError(
-                f"Vision V1 não resolveu o produto Shopee "
+                f"Vision V1 n�o resolveu o produto Shopee "
                 f"{resolved.shop_id}:{resolved.item_id}; "
-                "item preservado para futura recuperação"
+                "item preservado para futura recupera��o"
             ) from exc
 
         affiliate_url = str(product.get("offerLink") or "").strip()
