@@ -70,7 +70,6 @@ class Pipeline:
                     v.affiliate_url,
                     affiliate_urls=getattr(v, "affiliate_urls", ()),
                     publication_caption=getattr(v, "publication_caption", None),
-                    candidate_records=getattr(v, "candidate_records", ()),
                 )
                 self.log.info("[PIPELINE][ITEM %s] VISION concluída", item_id)
                 self.db.transition(item_id, State.STUDIO, "vision-complete")

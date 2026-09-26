@@ -24,12 +24,12 @@ Este README descreve o estado do código no **main após o merge da correção d
 
 ### Regra de congelamento
 
-A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A **Caption** está integrada à V1 e ativa no rollout atual. A descoberta de candidatos não faz parte do fluxo operacional atual.
+A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A **Caption** está integrada à V1 e ativa no rollout atual.
 
 ### Decisão operacional — 25/09/2026
 
 
-A Caption foi retirada conceitualmente da V2 e pertence à **Vision V1**. O fluxo atual é:
+A Caption pertence à **Vision V1**. O fluxo atual é:
 
 ```text
 Vision V1
@@ -44,8 +44,6 @@ Vision V1
 
 A V1 continua sendo a única autoridade sobre identidade e affiliate link. Caption não identifica produto, não altera identidade e não participa da descoberta de candidatos.
 
-
-A Vision V1 + Caption é a implementação funcional atual e não existe uma segunda etapa de descoberta de candidatos.
 
 Com a Caption fechada, o código volta a ser tratado como congelado durante o CATCH-UP histórico, salvo correção bloqueadora descoberta pelo próprio teste.
 
@@ -1621,7 +1619,7 @@ O relatório final deve registrar:
 
 A arquitetura Core/Sync/Studio/Hub está congelada. A Vision V1 + Caption são a implementação funcional atual.
 
-Depois da validação da Vision V1 + Caption:
+Depois da validação da V1 + Caption:
 
 1. congelar novamente o código;
 2. resetar o laboratório;
@@ -1802,7 +1800,7 @@ O teste de novo vídeo em LIVE permanece uma **limitação do laboratório**, n�
 
 ---
 
-# 38. Ordem de execução daqui para frente
+# 40. Ordem de execução daqui para frente
 
 A ordem operacional passa a ser:
 
@@ -1830,7 +1828,7 @@ Não iniciar o CATCH-UP completo antes da versão final certificada da lógica a
 
 ---
 
-# 39. Critério de fechamento final
+# 41. Critério de fechamento final
 
 O laboratório poderá ser considerado **operacionalmente fechado** somente quando todos estes blocos estiverem concluídos:
 
@@ -1890,7 +1888,7 @@ O principal trabalho funcional restante antes do histórico é a certificação 
 
 ---
 
-# 40. Declaração de estado para a próxima sessão
+# 43. Declaração de estado para a próxima sessão
 
 Ao iniciar a próxima etapa deste projeto, o ponto de partida é:
 
@@ -1929,7 +1927,7 @@ Novo candidato LIVE
 
 Esse é o estado de referência para a implementação seguinte.
 
-# 41. Regra de afiliado — URL de entrada nunca é URL final (25/09/2026)
+# 46. Regra de afiliado — URL de entrada nunca é URL final (24/09/2026)
 
 A validação real identificou uma regra crítica que fica explícita a partir desta fase:
 
@@ -1953,7 +1951,7 @@ affiliate_link_for_product()
 SEU affiliate link
 ```
 
-## 41.1 Produto original
+## 46.1 Produto original
 
 A Vision consulta o produto exato pela identidade:
 
@@ -1972,7 +1970,7 @@ URL da outra afiliada
 → generateShortLink(URL da outra afiliada)
 ```
 
-## 41.2 Auditoria da Vision V1
+## 46.2 Auditoria da Vision V1
 
 A validação deve confirmar:
 
@@ -1983,7 +1981,7 @@ A validação deve confirmar:
 
 A auditoria continua sem escrever no SQLite e sem publicar no Telegram.
 
-## 41.4 Estado
+## 46.4 Estado
 
 A correção foi implementada no branch:
 
@@ -2000,7 +1998,7 @@ scripts/validate_vision_v1_real.py
 
 A V1 continua intacta em seu comportamento de identificação. A alteração apenas garante que a **autoria do affiliate link final** seja derivada da conta/API configurada no laboratório.
 
-Antes de ativar o fluxo operacional, executar a auditoria real novamente e conferir explicitamente o campo:
+Antes do rollout operacional, executar a auditoria real novamente e conferir explicitamente o campo:
 
 ```text
 original.affiliate_url

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from armored_core.models import Item
 from armored_core.services import VisionResult, VisionUnresolvedError
@@ -18,11 +17,8 @@ class ArmoredVision:
     armored_core and no JSON state from the legacy Vision is used.
     """
 
-    def __init__(self, api=None, candidate_discovery=None, caption_generator=None):
+    def __init__(self, api=None, caption_generator=None):
         self.api = api
-        # Kept only for constructor compatibility with the frozen V2 surface.
-        # Vision V2 is intentionally not part of the active V1 pipeline.
-        self.candidate_discovery = candidate_discovery
         self.caption_generator = caption_generator
 
     def identify(self, item: Item) -> VisionResult:
@@ -36,8 +32,9 @@ class ArmoredVision:
             product = api.get_exact_product(resolved.shop_id, resolved.item_id)
         except ShopeeProductNotFoundError as exc:
             raise VisionUnresolvedError(
-                f"Vision V1 não resolveu o produto Shopee {resolved.shop_id}:{resolved.item_id}; "
-                "item preservado para futura resolução"
+                f"Vision V1 não resolveu o produto Shopee "
+                f"{resolved.shop_id}:{resolved.item_id}; "
+                "item preservado para futura recuperação"
             ) from exc
 
         affiliate_url = str(product.get("offerLink") or "").strip()
@@ -51,11 +48,6 @@ class ArmoredVision:
             or f"{resolved.shop_id}_{resolved.item_id}"
         )
 
-        # V1 remains the sole authority for product identity and affiliate URL.
-        # Vision V2 is frozen and is deliberately not invoked here.
-        affiliate_urls = (affiliate_url,)
-        candidate_records: tuple[dict, ...] = ()
-
         publication_caption = None
         if os.getenv("ARMORED_CAPTION_ENABLED", "0") == "1":
             try:
@@ -65,15 +57,15 @@ class ArmoredVision:
                 raise VisionUnresolvedError(str(exc)) from exc
             except Exception as exc:
                 raise VisionUnresolvedError(
-                    f"Caption Generator indisponível: {type(exc).__name__}: {exc}"
+                    f"Caption Generator indisponível: "
+                    f"{type(exc).__name__}: {exc}"
                 ) from exc
 
         return VisionResult(
             identifier,
             affiliate_url,
-            affiliate_urls=tuple(affiliate_urls),
+            affiliate_urls=(affiliate_url,),
             publication_caption=publication_caption,
-            candidate_records=tuple(candidate_records),
         )
 
 
