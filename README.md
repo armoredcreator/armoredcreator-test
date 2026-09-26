@@ -24,12 +24,12 @@ Este README descreve o estado do código no **main após o merge da correção d
 
 ### Regra de congelamento
 
-A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A **Caption** está integrada à V1 e ativa no rollout atual. A descoberta de candidatos V2 não faz parte do fluxo operacional atual.
+A arquitetura do Core/Sync/Studio/Hub está considerada congelada para a certificação histórica. A **Caption** está integrada à V1 e ativa no rollout atual.
 
 ### Decisão operacional — 25/09/2026
 
 
-A Caption foi retirada conceitualmente da V2 e pertence à **Vision V1**. O fluxo atual é:
+A Caption pertence à **Vision V1**. O fluxo atual é:
 
 ```text
 Vision V1
@@ -44,8 +44,6 @@ Vision V1
 
 A V1 continua sendo a única autoridade sobre identidade e affiliate link. Caption não identifica produto, não altera identidade e não participa da descoberta de candidatos.
 
-
-As seções posteriores que descrevem expansão/reconciliação V2 devem ser lidas como **registro histórico de projeto futuro congelado**, não como requisitos para o fluxo atual.
 
 Com a Caption fechada, o código volta a ser tratado como congelado durante o CATCH-UP histórico, salvo correção bloqueadora descoberta pelo próprio teste.
 
@@ -1621,7 +1619,7 @@ O relatório final deve registrar:
 
 A arquitetura Core/Sync/Studio/Hub está congelada. A Vision V1 + Caption são a implementação funcional atual.
 
-Depois do merge e da validação da V2:
+Depois da validação da V1 + Caption:
 
 1. congelar novamente o código;
 2. resetar o laboratório;
@@ -1921,7 +1919,7 @@ Vision V1
 └── validação real Shopee pendente
 
 CATCH-UP histórico ~308
-└── V2 congelada; Caption V1 ativa
+└── Vision V1 + Caption ativas
 
 Novo candidato LIVE
 └── teste manual limitado pela fonte de terceiros
@@ -1995,12 +1993,12 @@ Arquivos envolvidos:
 
 ```text
 ArmoredVision/modules/v1/shopee_api.py
-scripts/validate_vision_v2_real.py
+scripts/validate_vision_v1_real.py
 ```
 
 A V1 continua intacta em seu comportamento de identificação. A alteração apenas garante que a **autoria do affiliate link final** seja derivada da conta/API configurada no laboratório.
 
-Antes de ativar V2 globalmente, executar a auditoria real novamente e conferir explicitamente o campo:
+Antes do rollout operacional, executar a auditoria real novamente e conferir explicitamente o campo:
 
 ```text
 original.affiliate_url
