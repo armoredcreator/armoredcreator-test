@@ -35,11 +35,44 @@ def _deterministic_caption(product: dict[str, Any]) -> str:
 
     for candidate in candidates:
         try:
-            return validate_caption(candidate, product_name=product_name)
+            return validate_caption(candidate, product_name=product_name, product_context=product)
         except CaptionPolicyError:
             continue
 
     raise CaptionGenerationError("nenhum fallback determinístico passou pela política")
+
+
+def _gemini_context(product: dict[str, Any]) -> str:
+    """Build context from V1 data without asking Gemini to identify the product.
+
+    productOfferV2 exposes commercial/product metadata, not a full catalog
+    description. Optional richer fields are accepted when a future/alternate
+    V1 source provides them, but the V1 product identity remains authoritative.
+    """
+    fields = (
+        ("Nome interno", "productName"),
+        ("ID do item", "itemId"),
+        ("ID da loja", "shopId"),
+        ("Loja", "shopName"),
+        ("Categorias", "productCatIds"),
+        ("Preço mínimo", "priceMin"),
+        ("Preço máximo", "priceMax"),
+        ("Vendas", "sales"),
+        ("Avaliação", "ratingStar"),
+        ("Marca", "brand"),
+        ("Marca alternativa", "brandName"),
+        ("Modelo", "model"),
+        ("Modelo alternativo", "modelName"),
+        ("Descrição", "description"),
+        ("Atributos", "attributes"),
+        ("Características", "technicalCharacteristics"),
+    )
+    lines = []
+    for label, key in fields:
+        value = product.get(key)
+        if value not in (None, "", [], {}):
+            lines.append(f"{label}: {value}")
+    return "\n".join(lines)
 
 
 class CaptionGenerator:
@@ -54,6 +87,7 @@ class CaptionGenerator:
         return validate_caption(
             _deterministic_caption(product),
             product_name=str(product.get("productName") or ""),
+            product_context=product,
         )
 
     def generate(self, product: dict[str, Any]) -> str:
@@ -64,25 +98,40 @@ class CaptionGenerator:
         if not api_key:
             return self._fallback(product)
 
-        model = os.getenv("ARMORED_CAPTION_MODEL", "gemini-3.8-flash")
+        model = os.getenv("ARMORED_CAPTION_MODEL", "gemini-3.1-flash-lite")
         prompt = """
-Crie uma legenda em português do Brasil para um vídeo curto de descoberta.
-Ela deve soar como uma reação espontânea a um detalhe visual, acabamento ou
-sensação transmitida pelo conteúdo. NÃO mencione explicitamente o produto,
-nome, marca ou modelo. Texto principal: EXATAMENTE 2 ou 3 palavras e
-exatamente 1 emoji. Segunda linha: exatamente 1 ou 2 hashtags curtas e
-compatíveis com o público/contexto. NUNCA use embalagem, tampa, frasco ou
-lacre. NUNCA use linguagem de venda, urgência, promoção ou desconto.
-Retorne somente as duas linhas finais, sem aspas e sem explicações.
+Você recebe contexto de um produto que JÁ FOI identificado pela Vision V1.
+A identidade definida pela Vision V1 é a fonte de verdade. Você NÃO deve
+identificar, corrigir, substituir ou renomear o produto.
+
+Sua tarefa é apenas interpretar o contexto e criar uma reação curta e natural
+para um vídeo de descoberta. Pode se inspirar em aparência, estilo, acabamento,
+utilidade percebida ou sensação visual, mas NÃO transforme a legenda em
+descrição de catálogo.
+
+REGRAS:
+- Português do Brasil.
+- Texto principal: EXATAMENTE 2 ou 3 palavras.
+- Exatamente 1 emoji.
+- Segunda linha: exatamente 1 ou 2 hashtags relevantes ao contexto.
+- NÃO escreva o nome literal do produto.
+- NÃO escreva marca ou modelo.
+- NÃO repita descrição, atributos ou características técnicas.
+- NÃO revele quantidade, medidas, voltagem, embalagem ou termos comerciais.
+- NÃO use linguagem de venda, urgência, promoção ou desconto.
+- NÃO use: compre, comprar, garanta, aproveite, oferta, promoção, desconto,
+  imperdível, corra ou equivalentes.
+- Não use hashtags para contornar essas regras.
+- Retorne somente as duas linhas finais, sem aspas e sem explicações.
 """.strip()
 
+        context = _gemini_context(product)
         parts: list[dict[str, Any]] = [{
             "text": (
                 prompt
-                + f"\n\nNome interno (não repetir): {product.get('productName', '')}"
-                + f"\nCategoria/contexto: {product.get('category_name', '') or product.get('category', '')}"
+                + "\n\nCONTEXTO V1 — NÃO REIDENTIFICAR:\n"
+                + context
                 + f"\nPúblico-alvo: {os.getenv('ARMORED_CAPTION_AUDIENCE', 'público brasileiro de descoberta e lifestyle')}"
-                + f"\nLoja (não repetir): {product.get('shopName', '')}"
             )
         }]
         image_url = str(product.get("imageUrl") or "").strip()
@@ -112,7 +161,7 @@ Retorne somente as duas linhas finais, sem aspas e sem explicações.
                     "contents": [{"parts": parts}],
                     "generationConfig": {"maxOutputTokens": 80},
                 },
-                timeout=int(os.getenv("ARMORED_CAPTION_API_TIMEOUT", "30")),
+                timeout=int(os.getenv("ARMORED_CAPTION_API_TIMEOUT", "90")),
             )
             response.raise_for_status()
             data = response.json()
@@ -125,6 +174,7 @@ Retorne somente as duas linhas finais, sem aspas e sem explicações.
                 return validate_caption(
                     generated,
                     product_name=str(product.get("productName") or ""),
+                    product_context=product,
                 )
             except CaptionPolicyError as exc:
                 raise CaptionGenerationError(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Any
 
 FORBIDDEN_WORDS = {"embalagem", "tampa", "frasco", "lacre"}
 SALES_WORDS = {
@@ -13,17 +14,21 @@ EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF]")
 HASHTAG_RE = re.compile(r"(?<!\w)#([\wÀ-ÿ]+)", re.UNICODE)
 WORD_RE = re.compile(r"[A-Za-zÀ-ÿ0-9]+(?:['-][A-Za-zÀ-ÿ0-9]+)?", re.UNICODE)
 
+
 class CaptionPolicyError(ValueError):
     pass
+
 
 def _fold(text: str) -> str:
     value = unicodedata.normalize("NFKD", str(text or ""))
     return "".join(ch for ch in value if not unicodedata.combining(ch)).casefold()
 
+
 def _meaningful_product_tokens(product_name: str) -> set[str]:
     stop = {
-        "a","as","ao","aos","com","da","das","de","do","dos","e","em",
-        "para","por","sem","um","uma","kit","conjunto","original","novo","nova",
+        "a", "as", "ao", "aos", "com", "da", "das", "de", "do", "dos", "e",
+        "em", "para", "por", "sem", "um", "uma", "kit", "conjunto",
+        "original", "novo", "nova",
     }
     return {
         token for token in re.findall(r"[a-z0-9]+", _fold(product_name))
@@ -33,8 +38,9 @@ def _meaningful_product_tokens(product_name: str) -> set[str]:
 
 def _meaningful_product_token_sequences(product_name: str) -> set[str]:
     stop = {
-        "a","as","ao","aos","com","da","das","de","do","dos","e","em",
-        "para","por","sem","um","uma","kit","conjunto","original","novo","nova",
+        "a", "as", "ao", "aos", "com", "da", "das", "de", "do", "dos", "e",
+        "em", "para", "por", "sem", "um", "uma", "kit", "conjunto",
+        "original", "novo", "nova",
     }
     tokens = [
         token for token in re.findall(r"[a-z0-9]+", _fold(product_name))
@@ -48,11 +54,50 @@ def _meaningful_product_token_sequences(product_name: str) -> set[str]:
                 return
             for index in range(start, len(tokens)):
                 add_subsequences(index + 1, chosen + [tokens[index]])
-
         add_subsequences(0, [])
     return sequences
 
-def validate_caption(caption: str, *, product_name: str = "") -> str:
+
+def _context_leak_tokens(product_context: dict[str, Any] | None) -> set[str]:
+    if not product_context:
+        return set()
+    leaked: set[str] = set()
+    for key in ("brand", "brandName", "model", "modelName"):
+        value = product_context.get(key)
+        if value:
+            leaked.update(
+                token for token in re.findall(r"[a-z0-9]+", _fold(value))
+                if len(token) >= 4
+            )
+    return leaked
+
+
+def _context_leak_phrases(product_context: dict[str, Any] | None) -> set[str]:
+    if not product_context:
+        return set()
+    phrases: set[str] = set()
+    for key in ("description", "technicalCharacteristics"):
+        value = product_context.get(key)
+        if not isinstance(value, str):
+            continue
+        tokens = [
+            token for token in re.findall(r"[a-z0-9]+", _fold(value))
+            if len(token) >= 4
+        ]
+        for size in (2, 3):
+            phrases.update(
+                " ".join(tokens[index:index + size])
+                for index in range(0, max(0, len(tokens) - size + 1))
+            )
+    return phrases
+
+
+def validate_caption(
+    caption: str,
+    *,
+    product_name: str = "",
+    product_context: dict[str, Any] | None = None,
+) -> str:
     text = str(caption or "").replace("\r", "").strip()
     text = re.sub(r"^[*_~\s]+|[*_~\s]+$", "", text)
     if not text:
@@ -86,8 +131,7 @@ def validate_caption(caption: str, *, product_name: str = "") -> str:
 
     product_tokens = _meaningful_product_tokens(product_name)
     caption_tokens = set(re.findall(r"[a-z0-9]+", _fold(EMOJI_RE.sub("", text))))
-    overlap = caption_tokens & product_tokens
-    if overlap:
+    if caption_tokens & product_tokens:
         raise CaptionPolicyError("legenda menciona explicitamente o produto")
 
     hashtag_tokens = {_fold(tag) for tag in hashtags}
@@ -97,5 +141,14 @@ def validate_caption(caption: str, *, product_name: str = "") -> str:
     product_sequences = _meaningful_product_token_sequences(product_name)
     if hashtag_tokens & product_sequences:
         raise CaptionPolicyError("hashtag recompõe explicitamente o produto")
+
+    context_tokens = _context_leak_tokens(product_context)
+    if caption_tokens & context_tokens:
+        raise CaptionPolicyError("legenda revela marca ou modelo do contexto V1")
+
+    context_phrases = _context_leak_phrases(product_context)
+    folded_caption = _fold(EMOJI_RE.sub("", text))
+    if any(phrase in folded_caption for phrase in context_phrases):
+        raise CaptionPolicyError("legenda repete trecho da descrição do contexto V1")
 
     return f"{main}\n{' '.join('#' + tag for tag in hashtags)}"

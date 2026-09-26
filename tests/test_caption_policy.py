@@ -12,6 +12,8 @@ class CaptionPolicyTests(unittest.TestCase):
         os.environ.pop("ARMORED_CAPTION_ENABLED", None)
         os.environ.pop("GEMINI_API_KEY", None)
         os.environ.pop("ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK", None)
+        os.environ.pop("ARMORED_CAPTION_API_TIMEOUT", None)
+        os.environ.pop("ARMORED_CAPTION_MODEL", None)
 
     def test_accepts_required_shape(self):
         result = validate_caption(
@@ -60,6 +62,67 @@ class CaptionPolicyTests(unittest.TestCase):
             caption,
         )
 
+    def test_rejects_brand_model_and_description_leaks(self):
+        context = {
+            "brand": "Tramontina",
+            "model": "Pro 900",
+            "description": "estrutura de aço carbono resistente",
+        }
+        invalid = (
+            "Tramontina linda ✨\n#casa",
+            "Pro 900 lindo ✨\n#casa",
+            "Carbono resistente ✨\n#casa",
+        )
+        for caption in invalid:
+            with self.subTest(caption=caption):
+                with self.assertRaises(CaptionPolicyError):
+                    validate_caption(caption, product_name="Bancada Suspensa", product_context=context)
+
+    def test_gemini_receives_richer_v1_context_without_affiliate_fields(self):
+        os.environ["ARMORED_CAPTION_ENABLED"] = "1"
+        os.environ["GEMINI_API_KEY"] = "configured"
+        os.environ["ARMORED_CAPTION_ALLOW_DETERMINISTIC_FALLBACK"] = "0"
+        captured = {}
+
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"candidates": [{"content": {"parts": [{"text": "Que design clean ✨\n#casa #decoracao"}]}}]}
+
+        def requester(*args, **kwargs):
+            captured["json"] = kwargs["json"]
+            captured["timeout"] = kwargs["timeout"]
+            return Response()
+
+        product = {
+            "productName": "Bancada Suspensa",
+            "itemId": "123",
+            "shopId": "456",
+            "shopName": "Loja Exemplo",
+            "productCatIds": [100, 200],
+            "priceMin": "199.90",
+            "priceMax": "299.90",
+            "sales": 42,
+            "ratingStar": "4.9",
+            "brand": "Marca Exemplo",
+            "model": "Modelo X",
+            "description": "estrutura de aço carbono resistente",
+            "offerLink": "https://affiliate.invalid/secret",
+            "productLink": "https://shopee.invalid/product",
+        }
+        caption = CaptionGenerator(requester=requester).generate(product)
+
+        self.assertEqual(caption, "Que design clean ✨\n#casa #decoracao")
+        prompt_text = captured["json"]["contents"][0]["parts"][0]["text"]
+        self.assertIn("Categorias: [100, 200]", prompt_text)
+        self.assertIn("Marca: Marca Exemplo", prompt_text)
+        self.assertIn("Modelo: Modelo X", prompt_text)
+        self.assertIn("Descrição: estrutura de aço carbono resistente", prompt_text)
+        self.assertNotIn("affiliate.invalid", prompt_text)
+        self.assertNotIn("shopee.invalid", prompt_text)
+        self.assertEqual(captured["timeout"], 90)
     def test_generator_falls_back_when_gemini_returns_invalid_caption(self):
         os.environ["ARMORED_CAPTION_ENABLED"] = "1"
         os.environ["GEMINI_API_KEY"] = "configured-but-invalid-response"
