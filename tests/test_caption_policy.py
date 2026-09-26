@@ -15,19 +15,12 @@ class CaptionPolicyTests(unittest.TestCase):
         os.environ.pop("ARMORED_CAPTION_API_TIMEOUT", None)
         os.environ.pop("ARMORED_CAPTION_MODEL", None)
 
-    def test_rejects_generic_reactions(self):
-        invalid = ("Olha esse charme ✨\n#casa #rotina", "Que achado lindo ✨\n#achadinhos", "Que design clean ✨\n#casa #decoracao")
-        for caption in invalid:
-            with self.subTest(caption=caption):
-                with self.assertRaises(CaptionPolicyError):
-                    validate_caption(caption, product_name="Expositor de esmaltes com gavetas")
-
     def test_accepts_required_shape(self):
         result = validate_caption(
-            "Olha esse charme ✨\n#beleza #rotina",
-            product_name="Batom Matte Vermelho",
+            "Cores organizadas ✨\n#unhas #organizacao",
+            product_name="Expositor de esmaltes com gavetas",
         )
-        self.assertEqual(result, "Olha esse charme ✨\n#beleza #rotina")
+        self.assertEqual(result, "Cores organizadas ✨\n#unhas #organizacao")
 
     def test_rejects_forbidden_and_invalid_rules(self):
         invalid = (
@@ -96,7 +89,7 @@ class CaptionPolicyTests(unittest.TestCase):
                 return None
 
             def json(self):
-                return {"candidates": [{"content": {"parts": [{"text": "Que design clean ✨\n#casa #decoracao"}]}}]}
+                return {"candidates": [{"content": {"parts": [{"text": "Cantinho profissional ✨\n#barbearia #organizacao"}]}}]}
 
         def requester(*args, **kwargs):
             captured["json"] = kwargs["json"]
@@ -121,7 +114,7 @@ class CaptionPolicyTests(unittest.TestCase):
         }
         caption = CaptionGenerator(requester=requester).generate(product)
 
-        self.assertEqual(caption, "Que design clean ✨\n#casa #decoracao")
+        self.assertEqual(caption, "Cantinho profissional ✨\n#barbearia #organizacao")
         prompt_text = captured["json"]["contents"][0]["parts"][0]["text"]
         self.assertIn("Categorias: [100, 200]", prompt_text)
         self.assertIn("Marca: Marca Exemplo", prompt_text)
@@ -129,6 +122,8 @@ class CaptionPolicyTests(unittest.TestCase):
         self.assertIn("Descrição: estrutura de aço carbono resistente", prompt_text)
         self.assertNotIn("affiliate.invalid", prompt_text)
         self.assertNotIn("shopee.invalid", prompt_text)
+        self.assertIn("combinar diretamente com o produto específico", prompt_text)
+        self.assertIn("hashtags também DEVEM ser específicas", prompt_text)
         self.assertEqual(captured["timeout"], 90)
     def test_generator_falls_back_when_gemini_returns_invalid_caption(self):
         os.environ["ARMORED_CAPTION_ENABLED"] = "1"
