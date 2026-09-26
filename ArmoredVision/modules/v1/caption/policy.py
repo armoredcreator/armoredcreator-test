@@ -76,13 +76,18 @@ def _context_leak_phrases(product_context: dict[str, Any] | None) -> set[str]:
     if not product_context:
         return set()
     phrases: set[str] = set()
-    for key in ("description", "technicalCharacteristics"):
+    for key in (
+        "model",
+        "modelName",
+        "description",
+        "technicalCharacteristics",
+    ):
         value = product_context.get(key)
         if not isinstance(value, str):
             continue
         tokens = [
             token for token in re.findall(r"[a-z0-9]+", _fold(value))
-            if len(token) >= 4
+            if key in ("model", "modelName") or len(token) >= 4
         ]
         for size in (2, 3):
             phrases.update(
