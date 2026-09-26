@@ -15,6 +15,13 @@ class CaptionPolicyTests(unittest.TestCase):
         os.environ.pop("ARMORED_CAPTION_API_TIMEOUT", None)
         os.environ.pop("ARMORED_CAPTION_MODEL", None)
 
+    def test_rejects_generic_reactions(self):
+        invalid = ("Olha esse charme ✨\n#casa #rotina", "Que achado lindo ✨\n#achadinhos", "Que design clean ✨\n#casa #decoracao")
+        for caption in invalid:
+            with self.subTest(caption=caption):
+                with self.assertRaises(CaptionPolicyError):
+                    validate_caption(caption, product_name="Expositor de esmaltes com gavetas")
+
     def test_accepts_required_shape(self):
         result = validate_caption(
             "Olha esse charme ✨\n#beleza #rotina",
