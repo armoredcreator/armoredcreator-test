@@ -123,6 +123,7 @@ class CaptionPolicyTests(unittest.TestCase):
         self.assertNotIn("affiliate.invalid", prompt_text)
         self.assertNotIn("shopee.invalid", prompt_text)
         self.assertIn("combinar diretamente com o produto específico", prompt_text)
+        self.assertIn("NUNCA copie o nome do produto", prompt_text)
         self.assertIn("hashtags também DEVEM ser específicas", prompt_text)
         self.assertEqual(captured["timeout"], 90)
     def test_generator_falls_back_when_gemini_returns_invalid_caption(self):
