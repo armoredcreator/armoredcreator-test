@@ -32,9 +32,9 @@ class ArmoredVision:
             product = api.get_exact_product(resolved.shop_id, resolved.item_id)
         except ShopeeProductNotFoundError as exc:
             raise VisionUnresolvedError(
-                f"Vision V1 n�o resolveu o produto Shopee "
+                f"Vision V1 não resolveu o produto Shopee "
                 f"{resolved.shop_id}:{resolved.item_id}; "
-                "item preservado para futura recupera��o"
+                "item preservado para futura recuperação"
             ) from exc
 
         affiliate_url = str(product.get("offerLink") or "").strip()
