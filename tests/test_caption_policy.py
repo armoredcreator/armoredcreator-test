@@ -71,7 +71,7 @@ class CaptionPolicyTests(unittest.TestCase):
         invalid = (
             "Tramontina linda ✨\n#casa",
             "Pro 900 lindo ✨\n#casa",
-            "Aço carbono ✨\n#casa",
+            "Carbono resistente ✨\n#casa",
         )
         for caption in invalid:
             with self.subTest(caption=caption):
