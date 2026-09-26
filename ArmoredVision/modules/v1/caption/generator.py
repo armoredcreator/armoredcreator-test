@@ -111,6 +111,10 @@ descrição de catálogo.
 
 REGRAS:
 - Português do Brasil.
+- A legenda DEVE ser uma reação ao produto específico identificado no contexto V1.
+- Use o nome do produto recebido como âncora sem repeti-lo literalmente: compreenda o que o item é e reaja ao seu uso, aparência, função ou contexto.
+- Evite reações genéricas que poderiam servir para praticamente qualquer produto.
+- Se houver imagem, use-a apenas para reforçar a compreensão do produto já identificado pela V1; não invente outro produto.
 - Texto principal: EXATAMENTE 2 ou 3 palavras.
 - Exatamente 1 emoji.
 - Segunda linha: exatamente 1 ou 2 hashtags relevantes ao contexto.
@@ -129,7 +133,7 @@ REGRAS:
         parts: list[dict[str, Any]] = [{
             "text": (
                 prompt
-                + "\n\nCONTEXTO V1 — NÃO REIDENTIFICAR:\n"
+                + "\n\nCONTEXTO V1 — IDENTIDADE JÁ RESOLVIDA; USE O NOME DO PRODUTO COMO ÂNCORA SEM REPETI-LO:\n"
                 + context
                 + f"\nPúblico-alvo: {os.getenv('ARMORED_CAPTION_AUDIENCE', 'público brasileiro de descoberta e lifestyle')}"
             )
