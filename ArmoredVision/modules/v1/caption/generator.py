@@ -111,9 +111,11 @@ descrição de catálogo.
 
 REGRAS:
 - Português do Brasil.
-- A legenda DEVE ser uma reação ao produto específico identificado no contexto V1.
-- Use o nome do produto recebido como âncora sem repeti-lo literalmente: compreenda o que o item é e reaja ao seu uso, aparência, função ou contexto.
-- Evite reações genéricas que poderiam servir para praticamente qualquer produto.
+- A legenda DEVE combinar diretamente com o produto específico identificado no contexto V1.
+- Use o nome do produto como âncora sem repeti-lo literalmente: compreenda claramente o que ele é, para que serve, onde é usado e qual característica visual/funcional é mais evidente.
+- O texto principal deve transmitir uma reação que só faça sentido para aquele tipo de produto, evitando frases coringa que serviriam para qualquer item.
+- As hashtags também DEVEM ser específicas e diretamente relacionadas ao produto, à sua categoria, ao uso ou ao ambiente em que ele é usado; NÃO use hashtags genéricas como #achadinhos, #rotina ou #casa quando houver uma opção mais específica.
+- Antes de responder, confira internamente se tanto a frase quanto as hashtags combinam com o produto recebido. Não explique seu raciocínio; retorne somente a legenda final.
 - Se houver imagem, use-a apenas para reforçar a compreensão do produto já identificado pela V1; não invente outro produto.
 - Texto principal: EXATAMENTE 2 ou 3 palavras.
 - Exatamente 1 emoji.
