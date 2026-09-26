@@ -5,6 +5,12 @@ import unicodedata
 from typing import Any
 
 FORBIDDEN_WORDS = {"embalagem", "tampa", "frasco", "lacre"}
+GENERIC_MAIN_PHRASES = {
+    "olha esse charme", "que achado lindo", "que charme aqui",
+    "olha esse look", "olha que pratico", "fiquei encantada",
+    "que design clean", "olha isso", "que coisa linda",
+}
+
 SALES_WORDS = {
     "compre", "comprar", "garanta", "garantir", "imperdivel", "imperdível",
     "aproveite", "oferta", "ofertas", "promocao", "promoção", "desconto",
@@ -130,6 +136,9 @@ def validate_caption(
         raise CaptionPolicyError("texto principal deve ocupar uma única linha")
 
     main = main_lines[0]
+    folded_main = _fold(EMOJI_RE.sub("", main))
+    if folded_main in GENERIC_MAIN_PHRASES:
+        raise CaptionPolicyError("reação genérica demais para o produto identificado")
     words = WORD_RE.findall(EMOJI_RE.sub("", main))
     if not 2 <= len(words) <= 3:
         raise CaptionPolicyError("texto principal deve conter 2 ou 3 palavras")
